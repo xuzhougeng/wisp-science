@@ -789,6 +789,12 @@ pub struct Workspace {
     /// the card shows, worked out again whenever the rows or the
     /// conversation's runs change.
     run_card_rows: HashMap<usize, (String, u64)>,
+    /// The cards of runs that no row names, by the row they are drawn with:
+    /// where, the run and the shape of what the card shows.
+    own_run_cards: HashMap<usize, Vec<(crate::run_cards::Anchor, String, u64)>>,
+    /// Ended runs whose card of its own was dismissed while the window is
+    /// open, as the WebView keeps them.
+    dismissed_runs: HashSet<String>,
     /// Runs the user moved to the background here, until a snapshot says so.
     backgrounded_runs: HashSet<String>,
     /// The latest work over many items the open conversation ran.
@@ -994,6 +1000,41 @@ pub struct Workspace {
     poll: Option<Task<()>>,
     watching: bool,
     watch: Option<Task<()>>,
+}
+
+/// Tells the user that a Run moved to the background ended, through the
+/// notification and sound chosen in Settings, unless its conversation is on
+/// screen in the focused window: one notification for the whole app,
+/// however many windows are open.
+fn tell_run_ended(ended: &wisp_server::desktop::BackgroundRunEnded, cx: &mut App) {
+    let mut on_screen = false;
+    let mut teller = None;
+    for handle in cx.windows() {
+        let seen = handle.update(cx, |root, window, cx| {
+            let root = root.downcast::<gpui_component::Root>().ok()?;
+            let workspace = root.read(cx).view().clone().downcast::<Workspace>().ok()?;
+            Some((window.is_window_active(), workspace))
+        });
+        let Ok(Some((active, workspace))) = seen else {
+            continue;
+        };
+        on_screen |= active && workspace.read(cx).shows(&ended.session);
+        teller.get_or_insert(workspace);
+    }
+    let Some(teller) = teller else {
+        return;
+    };
+    let teller = teller.read(cx);
+    if !crate::notify::run_end_wanted(teller.notify, on_screen) {
+        return;
+    }
+    crate::notify::post_run_end(
+        teller.notify,
+        teller.notify_tone,
+        &ended.status,
+        &present::one_line(&ended.conversation),
+        &ended.title,
+    );
 }
 
 fn tone_color(tone: Tone, cx: &App) -> Hsla {
@@ -1967,6 +2008,8 @@ impl Workspace {
             batches_for: None,
             agent_cards: HashMap::new(),
             run_card_rows: HashMap::new(),
+            own_run_cards: HashMap::new(),
+            dismissed_runs: HashSet::new(),
             backgrounded_runs: HashSet::new(),
             swarm: None,
             batches_request: 0,
@@ -2689,6 +2732,9 @@ impl Workspace {
                         this.load_environments(window, cx);
                         // The desk display can ask for a conversation.
                         this.follow_device_focus(window, cx);
+                        // A Run moved to the background is told about
+                        // when it ends.
+                        this.listen_for_run_endings(cx);
                     }
                     Err(error) => this.error = Some(error),
                 }
@@ -2696,6 +2742,42 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    /// Has the app tell the user, once whatever window asks first, each
+    /// time a Run moved to the background ends, as the WebView does.
+    fn listen_for_run_endings(&self, cx: &mut Context<Self>) {
+        /// Set once the app listens.
+        struct Listening;
+        impl Global for Listening {}
+        if cx.has_global::<Listening>() {
+            return;
+        }
+        let Some(mut endings) = self.backend.background_run_endings() else {
+            return;
+        };
+        cx.set_global(Listening);
+        let app: &App = cx;
+        app.spawn(async move |cx| {
+            use tokio::sync::broadcast::error::RecvError;
+            loop {
+                match endings.recv().await {
+                    Ok(ended) => {
+                        if cx.update(|cx| tell_run_ended(&ended, cx)).is_err() {
+                            return;
+                        }
+                    }
+                    Err(RecvError::Lagged(_)) => {}
+                    Err(RecvError::Closed) => return,
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Whether `session` is the conversation open here.
+    fn shows(&self, session: &str) -> bool {
+        self.state.session.as_deref() == Some(session)
     }
 
     /// Opens each conversation the StickS3 desk display asks for, and
@@ -3043,6 +3125,7 @@ impl Workspace {
         self.batches_for = None;
         self.agent_cards.clear();
         self.run_card_rows.clear();
+        self.own_run_cards.clear();
         self.backgrounded_runs.clear();
         self.swarm = None;
         self.drop_history();
@@ -3802,6 +3885,12 @@ impl Workspace {
             parent.map(String::as_str),
             source.map(String::as_str),
         )
+    }
+
+    /// What the open conversation's messages and menu offer that would
+    /// change it or start from it, as the host allows it.
+    pub(super) fn offered(&self) -> compose::Offered {
+        compose::offered(self.read_only().as_ref(), self.open_is_branch())
     }
 
     /// What is attached to the message being written in this conversation.

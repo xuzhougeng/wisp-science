@@ -114,7 +114,8 @@ pub use sessions::{
     ModelTokenUsage, ProjectTokenUsage, SessionBranchDeltaMessage, SessionBranchLink,
     SessionBranchMerge, SessionBranchMergeCard, SessionBranchMergePreview, SessionDescendant,
     SessionTokenUsage, SessionTokenUsagePage, SessionTranscriptPage, SessionUiEventRecord,
-    SessionUiEventSnapshot, TokenUsageDay, ToolCallUsage, FROZEN_BRANCH_REFUSAL,
+    SessionUiEventSnapshot, TokenUsageDay, ToolCallUsage, BRANCH_AGAIN_REFUSAL,
+    FROZEN_BRANCH_CHANGE_REFUSAL, FROZEN_BRANCH_REFUSAL,
 };
 pub use storage_prefs::{
     validate_local_results_dir, validate_remote_data_root, validate_remote_workdir_root,

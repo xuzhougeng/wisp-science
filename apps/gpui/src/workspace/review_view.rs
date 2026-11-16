@@ -51,6 +51,15 @@ impl Workspace {
             return;
         };
         self.layers.close(Layer::Palette);
+        // A frozen branch is not reviewed; asked from the palette, it says
+        // so in the host's words instead.
+        if !self.offered().review {
+            self.notice = Some(crate::i18n::host(
+                wisp_server::desktop::FROZEN_BRANCH_CHANGE_REFUSAL,
+            ));
+            cx.notify();
+            return;
+        }
         self.layers.open(Layer::Review);
         self.review = Some(Asked::Reading);
         let reply = match self.review_turn.clone() {

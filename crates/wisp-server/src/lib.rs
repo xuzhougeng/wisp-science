@@ -203,6 +203,10 @@ struct Inner {
     delivering: std::sync::Mutex<HashSet<String>>,
     /// Runs moved to the background that a watcher here reports on.
     background_runs: std::sync::Mutex<HashSet<String>>,
+    /// Told each time a Run moved to the background ended and its
+    /// conversation got its message, so the desktop can raise a system
+    /// notification.
+    background_endings: tokio::sync::broadcast::Sender<background_runs::BackgroundRunEnded>,
     /// Conversations whose running turn corrects what an automatic review
     /// found; the review after it is not corrected again.
     corrections: std::sync::Mutex<HashSet<String>>,
@@ -520,6 +524,7 @@ impl Server {
             subagent_resumes: Default::default(),
             delivering: Default::default(),
             background_runs: Default::default(),
+            background_endings: tokio::sync::broadcast::channel(64).0,
             corrections: Default::default(),
             stop_continued: Default::default(),
             to_correct,
@@ -1707,6 +1712,17 @@ impl Server {
         ensure!(
             !self.0.store.session_branch_frozen(session).await?,
             wisp_store::FROZEN_BRANCH_REFUSAL
+        );
+        Ok(())
+    }
+
+    /// Refuses, with the Tauri desktop's words for its native clients, to
+    /// hand off, review or move away a branch frozen as read-only history.
+    /// The rule is the store's, which that desktop shares.
+    pub(crate) async fn ensure_branch_changeable(&self, session: &str) -> Result<()> {
+        ensure!(
+            !self.0.store.session_branch_frozen(session).await?,
+            wisp_store::FROZEN_BRANCH_CHANGE_REFUSAL
         );
         Ok(())
     }

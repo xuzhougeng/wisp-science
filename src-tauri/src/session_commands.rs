@@ -150,12 +150,11 @@ pub(crate) async fn require_branchable(store: &Store, source: &str) -> Result<()
         .ok_or_else(|| "Session state scope was not found.".to_string())?;
     exploration_commands::require_writable_scope(store, &scope).await?;
     if store
-        .session_branch_state(source)
+        .session_is_branch(source)
         .await
         .map_err(|error| error.to_string())?
-        .is_some()
     {
-        return Err("Conversation branches cannot be branched again.".into());
+        return Err(wisp_store::BRANCH_AGAIN_REFUSAL.into());
     }
     if matches!(scope, wisp_store::StateScope::Exploration { .. }) {
         return Err("Conversation branches cannot be created inside an exploration.".into());

@@ -574,6 +574,9 @@ impl Workspace {
         };
         let archived = self.current_row().is_none_or(|row| row.shelved);
         let idle = !running && !self.pending;
+        // A read-only conversation's messages are not edited, a branch is
+        // not branched again, and a frozen one is not reviewed.
+        let offered = self.offered();
         // What the turn cost, after its last answer.
         let actions = match controls::turn_tokens_at(&self.rows, index, &self.turn_tokens) {
             Some(tokens) => {
@@ -597,29 +600,33 @@ impl Workspace {
             None => actions,
         };
         match self.rows.get(index).map(|row| row.role.as_str()) {
-            Some("user") if !archived => actions.child(
+            Some("user") if !archived && offered.edit => actions.child(
                 icon_button(("edit-row", index), "edit", tr("Edit and send again"))
                     .xsmall()
                     .disabled(!idle)
                     .on_click(cx.listener(move |this, _, _, cx| this.ask_rewind(index, cx))),
             ),
             Some("assistant") if controls::turn_of(&self.rows, index).is_some() => actions
-                .child(
-                    icon_button(("branch-row", index), "branch", tr("Branch from here"))
-                        .xsmall()
-                        .disabled(!idle)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.branch_from(index, window, cx)
-                        })),
-                )
-                .child(
-                    icon_button(("review-row", index), "review", tr("Review this turn"))
-                        .xsmall()
-                        .disabled(!idle)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_review_of(index, window, cx)
-                        })),
-                )
+                .when(offered.branch, |actions| {
+                    actions.child(
+                        icon_button(("branch-row", index), "branch", tr("Branch from here"))
+                            .xsmall()
+                            .disabled(!idle)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.branch_from(index, window, cx)
+                            })),
+                    )
+                })
+                .when(offered.review, |actions| {
+                    actions.child(
+                        icon_button(("review-row", index), "review", tr("Review this turn"))
+                            .xsmall()
+                            .disabled(!idle)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_review_of(index, window, cx)
+                            })),
+                    )
+                })
                 .when(self.can_explore(), |actions| {
                     actions.child(
                         icon_button(
@@ -859,14 +866,32 @@ impl Workspace {
         div().w_full().px_6().py_2().child(card).into_any_element()
     }
 
-    /// One transcript row. Your messages sit in a bubble on the right, Wisp's
-    /// answers are plain text, and tool calls fold into one line each.
+    /// One transcript row, with the cards of runs no row names that are
+    /// placed with it: above a message of yours sent after the run was
+    /// made, or below the last row.
     pub(super) fn row(
         &self,
         index: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let body = self.row_body(index, window, cx);
+        if !self.own_run_cards.contains_key(&index) {
+            return body;
+        }
+        let (above, below) = self.own_run_cards_at(index, window, cx);
+        div()
+            .w_full()
+            .v_flex()
+            .children(above)
+            .child(body)
+            .children(below)
+            .into_any_element()
+    }
+
+    /// One transcript row. Your messages sit in a bubble on the right, Wisp's
+    /// answers are plain text, and tool calls fold into one line each.
+    fn row_body(&self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(item) = self.rows.get(index) else {
             return div().into_any_element();
         };
@@ -991,7 +1016,7 @@ impl Workspace {
                 // one card per run, under the call that waits on it while
                 // it goes on and under the call that submitted it after.
                 if let Some((run, _)) = self.run_card_rows.get(&index) {
-                    card = card.child(self.run_card(index, run, open, window, cx));
+                    card = card.child(self.run_card(Some(index), run, open, window, cx));
                 }
                 if open {
                     card = card.child(div().px_3().pb_3().child(

@@ -3132,6 +3132,12 @@ async fn legacy_branch_lineage_is_not_treated_as_a_mergeable_branch() {
         .preview_session_branch_merge("legacy", "p")
         .await
         .is_err());
+    // Only a branch with a turn it split after is one that cannot be
+    // branched again; a plain copy and its source can be.
+    assert!(store.session_is_branch("new").await.unwrap());
+    assert!(!store.session_is_branch("legacy").await.unwrap());
+    assert!(!store.session_is_branch("main").await.unwrap());
+    assert!(!store.session_is_branch("missing").await.unwrap());
     let _ = std::fs::remove_file(tmp);
 }
 
@@ -3323,8 +3329,9 @@ async fn rewinding_past_a_branch_checkpoint_keeps_it_as_frozen_history() {
         .set_session_branch_point("branch", "main", 1, "before_user")
         .await
         .unwrap();
-    // An active branch still takes messages.
+    // An active branch still takes messages, but is a branch all the same.
     assert!(!store.session_branch_frozen("branch").await.unwrap());
+    assert!(store.session_is_branch("branch").await.unwrap());
 
     store.truncate_messages("main", 2).await.unwrap();
     assert_eq!(
@@ -3332,6 +3339,7 @@ async fn rewinding_past_a_branch_checkpoint_keeps_it_as_frozen_history() {
         Some("orphaned")
     );
     assert!(store.session_branch_frozen("branch").await.unwrap());
+    assert!(store.session_is_branch("branch").await.unwrap());
     assert!(store
         .list_session_branches("main", "p")
         .await

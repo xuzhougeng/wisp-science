@@ -454,7 +454,7 @@ pub(crate) async fn require_mutable_session(
         .await
         .map_err(|e| e.to_string())?
     {
-        return Err("Frozen conversation branches cannot be changed".into());
+        return Err(wisp_store::FROZEN_BRANCH_CHANGE_REFUSAL.into());
     }
     Ok(())
 }

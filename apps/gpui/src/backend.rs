@@ -893,8 +893,10 @@ impl Backend {
         self.local(move |host| async move { host.reply_artifacts(&project, &session).await })
     }
 
-    pub fn cancel_run(&self, project: String, run: String) -> Reply<()> {
-        self.local(move |host| async move { host.cancel_run(&project, &run).await })
+    /// Cancels a run as the button meant it: `force` finishes one already
+    /// stopping, and a button drawn for the other state is refused.
+    pub fn cancel_run(&self, project: String, run: String, force: bool) -> Reply<()> {
+        self.local(move |host| async move { host.cancel_run_as_meant(&project, &run, force).await })
     }
 
     /// Stops a turn's wait on a run without touching the run; its
@@ -2323,6 +2325,14 @@ impl Backend {
 
     pub fn rotate_device_bridge_token(&self) -> Reply<String> {
         self.local(|host| async move { host.rotate_device_bridge_token() })
+    }
+
+    /// Hears of each Run moved to the background that ends from now on;
+    /// nothing before the host is ready.
+    pub fn background_run_endings(
+        &self,
+    ) -> Option<tokio::sync::broadcast::Receiver<wisp_server::desktop::BackgroundRunEnded>> {
+        self.host.get().map(|host| host.background_run_endings())
     }
 
     /// Waits until the desk display asks for a conversation.

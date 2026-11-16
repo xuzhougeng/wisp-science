@@ -21,6 +21,11 @@ pub enum Event {
     /// A conversation that is not open stopped working and waits for you:
     /// an answer to read or a question to answer.
     NeedsYou,
+    /// A Run moved to the background succeeded.
+    RunDone,
+    /// A Run moved to the background ended otherwise: failed, cancelled,
+    /// timed out or lost.
+    RunEnded,
 }
 
 /// What the user chose in Settings.
@@ -70,7 +75,37 @@ pub fn title(event: Event) -> &'static str {
         Event::Failed => tr("A turn stopped with an error"),
         Event::Approval => tr("Wisp needs your approval"),
         Event::NeedsYou => tr("A conversation needs you"),
+        // The WebView's titles for the end of a background Run.
+        Event::RunDone => tr("Task completed"),
+        Event::RunEnded => tr("Task failed"),
     }
+}
+
+/// What to tell when a Run moved to the background has ended, as the
+/// WebView tells it: the event, and the line that names the conversation
+/// and the run.
+pub fn run_ended(status: &str, conversation: &str, run: &str) -> (Event, String) {
+    use crate::i18n::fill;
+    let (event, line) = if status == "succeeded" {
+        (Event::RunDone, tr("Background run finished: {}"))
+    } else {
+        (Event::RunEnded, tr("Background run ended: {}"))
+    };
+    let line = fill(line, &[&run]);
+    let conversation = conversation.trim();
+    if conversation.is_empty() {
+        (event, line)
+    } else {
+        (event, format!("{conversation} · {line}"))
+    }
+}
+
+/// Whether to tell that a background Run ended: never while its
+/// conversation is on screen in the focused window, as in the WebView, and
+/// only when the user asked for some way of being told. A window that is
+/// focused but shows another conversation is told.
+pub fn run_end_wanted(choice: Choice, on_screen: bool) -> bool {
+    !on_screen && (choice.banner || choice.sound)
 }
 
 /// The notification's body: which conversation, cut to a line.
@@ -286,13 +321,19 @@ pub fn commands_with(
 /// Tells the user. A system without the program simply does not tell; the
 /// app goes on either way.
 pub fn post(choice: Choice, sound: &str, event: Event, conversation: &str) {
-    for (program, arguments) in commands_with(
-        System::current(),
-        choice,
-        sound,
-        title(event),
-        &body(conversation),
-    ) {
+    post_text(choice, sound, title(event), &body(conversation));
+}
+
+/// Tells the user that a Run moved to the background ended with `status`,
+/// naming its conversation and the run.
+pub fn post_run_end(choice: Choice, sound: &str, status: &str, conversation: &str, run: &str) {
+    let (event, line) = run_ended(status, conversation, run);
+    post_text(choice, sound, title(event), &body(&line));
+}
+
+/// [`post`] with the body as it is to be shown.
+fn post_text(choice: Choice, sound: &str, title: &str, body: &str) {
+    for (program, arguments) in commands_with(System::current(), choice, sound, title, body) {
         let _ = std::process::Command::new(program)
             .args(arguments)
             .stdin(std::process::Stdio::null())
@@ -413,6 +454,35 @@ mod tests {
         for system in [System::Mac, System::Linux, System::Windows] {
             assert!(!sounds(system).is_empty());
         }
+    }
+
+    #[test]
+    fn the_end_of_a_background_run_is_told_as_the_webview_tells_it() {
+        assert_eq!(
+            run_ended("succeeded", " Count the reads ", "Align"),
+            (
+                Event::RunDone,
+                "Count the reads · Background run finished: Align".to_string()
+            )
+        );
+        for status in ["failed", "cancelled", "timed_out", "lost"] {
+            assert_eq!(
+                run_ended(status, "", "Align"),
+                (Event::RunEnded, "Background run ended: Align".to_string()),
+                "{status}"
+            );
+        }
+        assert_eq!(title(Event::RunDone), "Task completed");
+        assert_eq!(title(Event::RunEnded), "Task failed");
+        // Not while its conversation is on screen in the focused window,
+        // and only as the user chose.
+        assert!(run_end_wanted(Choice::default(), false));
+        assert!(!run_end_wanted(Choice::default(), true));
+        let quiet = Choice {
+            banner: false,
+            sound: false,
+        };
+        assert!(!run_end_wanted(quiet, false));
     }
 
     #[test]

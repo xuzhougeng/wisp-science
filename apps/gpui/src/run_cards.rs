@@ -19,6 +19,9 @@ pub enum Action {
     Background,
     /// Ask the run to stop.
     Cancel,
+    /// Finish a run already stopping whose stop never came back, as
+    /// cancelled: the WebView's Force cancel.
+    ForceCancel,
     /// Look through what a finished run left on its SSH host, bring files
     /// back and clean up: the Run review dialog.
     Review,
@@ -60,7 +63,7 @@ pub fn backgrounded(run: &RunRecord, just_asked: bool) -> bool {
 /// What the card of `run` offers. As in the WebView: Move to background
 /// while a conversation's run is going and not already moved; review of a
 /// finished run on an SSH host whose workspace is still there. Cancel
-/// follows the Runs tab.
+/// and Force cancel follow the Runs tab.
 pub fn actions(run: &RunRecord, backgrounded: bool) -> Vec<Action> {
     let mut offered = vec![Action::Ask];
     if going(&run.status) && !backgrounded && run.frame_id.is_some() {
@@ -68,6 +71,8 @@ pub fn actions(run: &RunRecord, backgrounded: bool) -> Vec<Action> {
     }
     if crate::panel::can_cancel(&run.status) {
         offered.push(Action::Cancel);
+    } else if crate::panel::can_force_cancel(run) {
+        offered.push(Action::ForceCancel);
     }
     if ended(&run.status) && run.kind == "ssh_direct" && crate::panel::can_clean(run) {
         offered.push(Action::Review);
@@ -186,6 +191,69 @@ pub fn placed(rows: &[Item], runs: &[RunRecord], turn_running: bool) -> HashMap<
     cards
 }
 
+/// Where the card of a run that no loaded row names is drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Anchor {
+    /// Above the row, a message of yours sent after the run was made.
+    Before(usize),
+    /// Below the row, the last one: no message of yours came after it.
+    After(usize),
+}
+
+impl Anchor {
+    /// The row the card is drawn with.
+    pub fn row(self) -> usize {
+        match self {
+            Anchor::Before(row) | Anchor::After(row) => row,
+        }
+    }
+}
+
+/// How long, in seconds, an ended run keeps a card of its own, as in the
+/// WebView.
+pub const JUST_ENDED: i64 = 60;
+
+/// The conversation's runs whose card no row draws, each with where its
+/// card goes, oldest first, as the WebView draws its standalone run cards
+/// (`automatic_session_runs` in `ui/src/main.rs`): a run that is going, or
+/// that ended within the last minute, and was not dismissed. Like the
+/// WebView, a card is placed by when its run was made, before the first
+/// message of yours sent after that, or else after the last row.
+/// `on_rows` are the runs [`placed`] under rows; `now` is Unix seconds.
+pub fn standalone<'a>(
+    rows: &[Item],
+    runs: &[RunRecord],
+    on_rows: impl IntoIterator<Item = &'a String>,
+    dismissed: &std::collections::HashSet<String>,
+    now: i64,
+) -> Vec<(Anchor, String)> {
+    let Some(last) = rows.len().checked_sub(1) else {
+        return Vec::new();
+    };
+    let on_rows: std::collections::HashSet<&str> =
+        on_rows.into_iter().map(String::as_str).collect();
+    let mut own: Vec<&RunRecord> = runs
+        .iter()
+        .filter(|run| !on_rows.contains(run.id.as_str()) && !dismissed.contains(&run.id))
+        .filter(|run| {
+            going(&run.status)
+                || run
+                    .ended_at
+                    .is_some_and(|ended| now.saturating_sub(ended) <= JUST_ENDED)
+        })
+        .collect();
+    own.sort_by_key(|run| run.created_at);
+    own.into_iter()
+        .map(|run| {
+            let next = rows.iter().position(|row| {
+                row.role == "user" && row.timestamp.is_some_and(|sent| run.created_at < sent)
+            });
+            let anchor = next.map_or(Anchor::After(last), Anchor::Before);
+            (anchor, run.id.clone())
+        })
+        .collect()
+}
+
 /// What of a card changes its height, so the list measures its row again
 /// when it changes.
 pub fn shape(run: Option<&RunRecord>, backgrounded: bool) -> u64 {
@@ -260,9 +328,14 @@ mod tests {
             actions(&run("running", "local_detached"), false),
             [Action::Ask, Action::Background, Action::Cancel]
         );
-        // A stopping run can still be moved, no longer cancelled again.
+        // A stopping run can still be moved, and forced to an end when
+        // its stop does not come back; a method search is never forced.
         assert_eq!(
             actions(&run("cancelling", "ssh_direct"), false),
+            [Action::Ask, Action::Background, Action::ForceCancel]
+        );
+        assert_eq!(
+            actions(&run("cancelling", "method_search"), false),
             [Action::Ask, Action::Background]
         );
         // Only a conversation's run goes to the background.
@@ -429,6 +502,75 @@ mod tests {
             placed(&rows, &runs, false),
             HashMap::from([(1, "old".to_owned())])
         );
+    }
+
+    #[test]
+    fn a_run_no_row_names_gets_its_own_card_where_it_was_made() {
+        let sent = |at: i64| -> Item {
+            serde_json::from_value(json!({"role": "user", "text": "go", "timestamp": at})).unwrap()
+        };
+        let made = |id: &str, status: &str, at: i64| {
+            let mut made = run(status, "ssh_direct");
+            made.id = id.into();
+            made.created_at = at;
+            made
+        };
+        let rows = vec![
+            sent(100),
+            text("assistant"),
+            row("run_in_context", "named", "running"),
+            sent(200),
+            text("assistant"),
+        ];
+        let mut ended = made("ended", "succeeded", 150);
+        ended.ended_at = Some(990);
+        let mut long_ago = made("long-ago", "failed", 120);
+        long_ago.ended_at = Some(900);
+        let runs = [
+            made("late", "running", 250),
+            made("named", "running", 110),
+            made("early", "submitted", 130),
+            ended,
+            long_ago,
+            made("job", "cancelling", 50),
+        ];
+        let none = std::collections::HashSet::new();
+        let on_rows = placed(&rows, &runs, false);
+        assert_eq!(on_rows, HashMap::from([(2, "named".to_owned())]));
+        // Oldest first: before the first message of yours sent after it was
+        // made, or after the last row. One that ended over a minute ago,
+        // and one a row names, have none.
+        assert_eq!(
+            standalone(&rows, &runs, on_rows.values(), &none, 1_000),
+            [
+                (Anchor::Before(0), "job".to_owned()),
+                (Anchor::Before(3), "early".to_owned()),
+                (Anchor::Before(3), "ended".to_owned()),
+                (Anchor::After(4), "late".to_owned()),
+            ]
+        );
+        // A dismissed card stays away; a minute on, the ended one goes too.
+        let dismissed = std::collections::HashSet::from(["job".to_owned()]);
+        assert_eq!(
+            standalone(&rows, &runs, on_rows.values(), &dismissed, 1_051),
+            [
+                (Anchor::Before(3), "early".to_owned()),
+                (Anchor::After(4), "late".to_owned()),
+            ]
+        );
+        // A message not saved yet has no time, so it is not a place.
+        let mut unsaved = rows.clone();
+        unsaved[3].timestamp = None;
+        assert_eq!(
+            standalone(&unsaved, &runs[..1], [], &none, 1_000),
+            [(Anchor::After(4), "late".to_owned())]
+        );
+        assert_eq!(
+            standalone(&unsaved, &runs[2..3], [], &none, 1_000),
+            [(Anchor::After(4), "early".to_owned())]
+        );
+        assert!(standalone(&[], &runs, [], &none, 1_000).is_empty());
+        assert_eq!(Anchor::Before(3).row(), 3);
     }
 
     #[test]

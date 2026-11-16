@@ -421,6 +421,12 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Whether the transfer menu copies rather than moves: as it is set,
+    /// and always for a frozen branch, which is not moved away.
+    fn transfer_keeps(&self) -> bool {
+        self.transfer_copy || !self.offered().move_away
+    }
+
     /// Copies or moves the open conversation to `target`, as the transfer
     /// menu is set.
     fn transfer(&mut self, target: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -429,7 +435,7 @@ impl Workspace {
         else {
             return;
         };
-        let keep = self.transfer_copy;
+        let keep = self.transfer_keeps();
         let name = self
             .projects
             .iter()
@@ -1309,7 +1315,9 @@ impl Workspace {
             return button;
         }
         let muted = cx.theme().muted_foreground;
-        let copy = self.transfer_copy;
+        let copy = self.transfer_keeps();
+        // A frozen branch is copied, never moved away: the host refuses it.
+        let movable = self.offered().move_away;
         let mode = |id: &'static str, label: &'static str, value: bool| {
             Button::new(id)
                 .label(label)
@@ -1326,7 +1334,9 @@ impl Workspace {
                 .h_flex()
                 .gap_1()
                 .px_1()
-                .child(mode("transfer-move", tr("Move"), false))
+                .when(movable, |modes| {
+                    modes.child(mode("transfer-move", tr("Move"), false))
+                })
                 .child(mode("transfer-copy", tr("Copy"), true)),
         );
         // A move waiting for its artifacts' preview to be confirmed.

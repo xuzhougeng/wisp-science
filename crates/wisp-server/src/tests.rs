@@ -1355,6 +1355,119 @@ async fn a_merged_or_orphaned_branch_is_read_only_history_and_its_source_is_not(
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn a_branch_is_not_branched_again_and_a_frozen_one_is_not_handed_off_reviewed_or_moved() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(tmp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let main = create(&server).await;
+    let branch = create(&server).await;
+    let store = &server.0.store;
+    // Both hold the same two turns; the branch split before the second.
+    for id in [&main, &branch] {
+        store
+            .append_message(id, 1, &Message::user("Look at the counts"))
+            .await
+            .unwrap();
+        store
+            .append_message(id, 2, &Message::assistant("They look fine."))
+            .await
+            .unwrap();
+        store
+            .append_message(id, 3, &Message::user("Now plot them"))
+            .await
+            .unwrap();
+    }
+    store
+        .set_session_branch_point(&branch, &main, 1, "before_user")
+        .await
+        .unwrap();
+    let says = |result: anyhow::Result<String>, words: &str| {
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains(words), "{error}");
+    };
+
+    // An active branch takes messages but is not branched again, in the
+    // WebView's words.
+    assert!(!store.session_branch_frozen(&branch).await.unwrap());
+    says(
+        server.branch_conversation(PROJECT, &branch, None).await,
+        wisp_store::BRANCH_AGAIN_REFUSAL,
+    );
+
+    // Its source loses the turn it split before: it is frozen history.
+    store.truncate_messages(&main, 2).await.unwrap();
+    assert!(store.session_branch_frozen(&branch).await.unwrap());
+    says(
+        server.branch_conversation(PROJECT, &branch, None).await,
+        wisp_store::BRANCH_AGAIN_REFUSAL,
+    );
+    // It is not handed off, reviewed or moved away, in the words the Tauri
+    // desktop gives its native clients.
+    let refused = wisp_store::FROZEN_BRANCH_CHANGE_REFUSAL;
+    says(
+        server
+            .draft_handoff(
+                PROJECT,
+                dto::HandoffRequest {
+                    session_id: branch.clone(),
+                    instruction: None,
+                },
+            )
+            .await
+            .map(|response| response.note),
+        refused,
+    );
+    says(
+        server
+            .review_conversation(PROJECT, &branch)
+            .await
+            .map(|review| review.summary),
+        refused,
+    );
+    let turn = desktop::TurnRef {
+        from_end: 0,
+        text: "Now plot them".into(),
+    };
+    says(
+        server
+            .review_turn(PROJECT, &branch, &turn)
+            .await
+            .map(|review| review.summary),
+        refused,
+    );
+    let folder = tmp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    says(
+        server
+            .transfer_conversation(PROJECT, &branch, &lab, false)
+            .await,
+        refused,
+    );
+    says(
+        server
+            .preview_move_with_artifacts(PROJECT, &branch, &lab)
+            .await
+            .map(|preview| preview.fingerprint),
+        refused,
+    );
+    // A copy of it can still be taken elsewhere, and it is still there.
+    server
+        .transfer_conversation(PROJECT, &branch, &lab, true)
+        .await
+        .unwrap();
+    assert!(store.session_branch_frozen(&branch).await.unwrap());
+
+    // The conversation it came from is no branch and is branched as before.
+    server
+        .branch_conversation(PROJECT, &main, None)
+        .await
+        .unwrap();
+    server.shutdown().await;
+}
+
 /// Proposes a fresh plan, then answers whatever the plan tool said.
 struct Planner;
 #[async_trait]
@@ -7086,6 +7199,73 @@ async fn files_a_turn_writes_become_artifacts_of_its_conversation() {
         assert!(!server.commands().contains(&command));
         assert!(call(&server, command, PROJECT, json!({})).await.is_err());
     }
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_stopping_run_is_forced_only_by_the_button_meant_for_it() {
+    use wisp_store::RunStatus;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let store = &server.0.store;
+    // A transfer whose stop never came back, and one still going. Both are
+    // held, so the run manager does not recover them meanwhile.
+    for (id, state) in [
+        ("stuck", RunStatus::Cancelling),
+        ("going", RunStatus::Running),
+    ] {
+        let mut run =
+            wisp_store::RunRecord::new(id, PROJECT, "local", "Copy reads", "file_transfer");
+        run.status = state;
+        store.create_run(&run).await.unwrap();
+        assert!(store.claim_run_lifecycle(id, "test", 600).await.unwrap());
+    }
+    // A Cancel drawn before it began to stop does not force it.
+    let refused = server
+        .cancel_run_as_meant(PROJECT, "stuck", false)
+        .await
+        .unwrap_err();
+    assert!(
+        refused.to_string().contains("refresh before cancelling"),
+        "{refused}"
+    );
+    assert_eq!(
+        store.get_run("stuck").await.unwrap().unwrap().status,
+        RunStatus::Cancelling
+    );
+    // Unknown runs and other projects are refused.
+    assert!(server
+        .cancel_run_as_meant(PROJECT, "ghost", true)
+        .await
+        .is_err());
+    assert!(server
+        .cancel_run_as_meant("missing", "stuck", true)
+        .await
+        .is_err());
+    // Force cancel finishes it as cancelled.
+    server
+        .cancel_run_as_meant(PROJECT, "stuck", true)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_run("stuck").await.unwrap().unwrap().status,
+        RunStatus::Cancelled
+    );
+    // A run that is going is asked to stop, never forced.
+    let refused = server
+        .cancel_run_as_meant(PROJECT, "going", true)
+        .await
+        .unwrap_err();
+    assert!(
+        refused.to_string().contains("refresh before cancelling"),
+        "{refused}"
+    );
+    assert_eq!(
+        store.get_run("going").await.unwrap().unwrap().status,
+        RunStatus::Running
+    );
     server.shutdown().await;
 }
 
@@ -18287,6 +18467,60 @@ async fn a_run_moved_to_the_background_frees_the_turn_and_reports_its_end() {
         .await
         .unwrap()
         .is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_end_of_a_run_moved_to_the_background_is_told_to_the_desktop_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    let store = &server.0.store;
+    let mut run =
+        wisp_store::RunRecord::new("align", PROJECT, "local", "Align reads", "local_detached");
+    run.frame_id = Some(session.clone());
+    run.status = wisp_store::RunStatus::Running;
+    store.create_run(&run).await.unwrap();
+    // Held, so the run manager does not recover it meanwhile.
+    assert!(store
+        .claim_run_lifecycle("align", "test", 600)
+        .await
+        .unwrap());
+    // Moved to the background without a watcher of its own: the report is
+    // made here, in order, so nothing waits on the host's own tasks.
+    wisp_runs::background::request(store, &run).await.unwrap();
+    let mut endings = server.background_run_endings();
+    assert!(store
+        .finish_active_run_owned("align", "test", wisp_store::RunStatus::Failed, Some(1))
+        .await
+        .unwrap());
+    server.report_background_run("align", false).await.unwrap();
+    let conversation = store
+        .session_title(&session)
+        .await
+        .unwrap()
+        .unwrap_or_default();
+    assert_eq!(
+        endings.try_recv().unwrap(),
+        desktop::BackgroundRunEnded {
+            project: PROJECT.into(),
+            session: session.clone(),
+            conversation,
+            run: "align".into(),
+            title: "Align reads".into(),
+            status: "failed".into(),
+        }
+    );
+    // Its conversation has the message, and a second report tells nothing.
+    assert!(snapshot(&server, &session)
+        .await
+        .items
+        .iter()
+        .any(|item| item.role == "assistant" && item.text.contains("Align reads")));
+    server.report_background_run("align", false).await.unwrap();
+    assert!(endings.try_recv().is_err());
     server.shutdown().await;
 }
 

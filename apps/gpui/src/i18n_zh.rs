@@ -1047,6 +1047,7 @@ pub const ZH: &[(&str, &str)] = &[
     ("a conversation", "某个会话"),
     ("Written by {} in “{}”.", "由 {} 在“{}”中写入。"),
     ("It read:", "它读取了："),
+    ("It printed:", "它输出了："),
     // Sample project.
     ("Make a sample project to try Wisp on", "创建一个示例项目来试用 Wisp"),
     ("A plugin", "插件"),
@@ -1944,6 +1945,15 @@ pub const ZH: &[(&str, &str)] = &[
     ("The run's whole output, log and clean-up in the Runs tab", "在运行标签页查看这次运行的全部输出、日志和清理"),
     ("Move to background and get a message when it ends", "转到后台，结束时发消息提醒"),
     ("Cancel run", "取消运行"),
+    // The WebView's Force cancel of a run already stopping, and the
+    // dismissal of a run's card of its own.
+    ("Force cancel", "强制取消"),
+    ("Mark it cancelled without waiting for the host to confirm the stop", "不等主机确认停止，直接标记为已取消"),
+    ("Force cancel: mark it cancelled without waiting for the host to confirm the stop", "强制取消：不等主机确认停止，直接标记为已取消"),
+    ("Dismiss completed run card", "关闭已完成的运行卡"),
+    // The end of a background run, as the WebView notifies it.
+    ("Background run finished: {}", "后台任务已完成：{}"),
+    ("Background run ended: {}", "后台任务已结束：{}"),
     ("Running in the background. This conversation gets a message when it ends.", "已转到后台运行，结束时会在本对话发消息提醒。"),
     ("Remote workdir", "远端工作目录"),
     ("Elapsed {}", "已运行 {}"),
@@ -2424,6 +2434,9 @@ pub const ZH: &[(&str, &str)] = &[
     ("This conversation branch is frozen and cannot accept new messages.", "该分支已冻结，不能再接收新消息。"),
     ("A branch that was merged or lost its source cannot be rewound", "已合并或失去来源的分支不能回到之前的消息"),
     ("Frozen conversation branches cannot undo compaction.", "已冻结的分支不能撤销压缩。"),
+    ("Frozen conversation branches cannot be changed", "已冻结的分支不能更改"),
+    // The WebView's own Chinese for it.
+    ("Conversation branches cannot be branched again.", "对话分支不能再创建分支。"),
     ("Stopped", "已停止"),
     ("Unknown", "未知"),
     ("Waiting", "等待中"),

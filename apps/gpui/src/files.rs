@@ -567,12 +567,20 @@ pub fn origin_line(origin: Option<&wisp_server::desktop::FileOrigin>) -> String 
     }
 }
 
-/// What the call ran and what it read, as Markdown; nothing when the call
-/// kept neither.
+/// What the call ran, what it printed and what it read, as Markdown, as
+/// the WebView's provenance of a file shows its Code, Log and Inputs;
+/// nothing when the call kept none of them.
 pub fn origin_detail(origin: &wisp_server::desktop::FileOrigin) -> String {
     let mut parts = Vec::new();
     if !origin.source.trim().is_empty() {
         parts.push(crate::present::fenced(&origin.source, &origin.language));
+    }
+    if !origin.output.trim().is_empty() {
+        parts.push(format!(
+            "{}\n\n{}",
+            crate::i18n::tr("It printed:"),
+            crate::present::fenced(origin.output.trim_end(), "text")
+        ));
     }
     if !origin.read.is_empty() {
         let read = origin
@@ -1197,6 +1205,7 @@ mod tests {
             language: "python".into(),
             source: "df.to_csv('counts.csv')".into(),
             read: vec!["data/reads.fq".into(), "config.yml".into()],
+            output: String::new(),
         };
         assert_eq!(
             origin_line(Some(&origin)),
@@ -1206,11 +1215,21 @@ mod tests {
             origin_detail(&origin),
             "```python\ndf.to_csv('counts.csv')\n```\n\nIt read:\n\n- `data/reads.fq`\n- `config.yml`"
         );
+        // What it printed, the WebView's Log, comes between.
+        let printed = wisp_server::desktop::FileOrigin {
+            output: "wrote 12 rows\n".into(),
+            ..origin.clone()
+        };
+        assert_eq!(
+            origin_detail(&printed),
+            "```python\ndf.to_csv('counts.csv')\n```\n\nIt printed:\n\n```text\nwrote 12 rows\n```\n\nIt read:\n\n- `data/reads.fq`\n- `config.yml`"
+        );
         // A conversation without a title, and a call that kept nothing.
         let bare = wisp_server::desktop::FileOrigin {
             title: String::new(),
             source: "  ".into(),
             read: vec![],
+            output: " \n".into(),
             ..origin
         };
         assert_eq!(

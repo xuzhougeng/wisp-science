@@ -16,6 +16,10 @@ use wisp_llm::ProviderKind;
 pub use wisp_store::GlobalMemory;
 use wisp_store::Store;
 pub use wisp_store::{LibraryItem, LibraryItemSummary, LibraryItemVersion};
+/// What both hosts answer when a branch is branched again, or a frozen one
+/// is handed off, reviewed or moved away; a client saying so before it asks
+/// uses the same words.
+pub use wisp_store::{BRANCH_AGAIN_REFUSAL, FROZEN_BRANCH_CHANGE_REFUSAL};
 
 /// The saved model profiles: `{"profiles": [...], "default": "<id>"}`.
 const MODELS_SETTING: &str = "desktop.models";
@@ -2819,6 +2823,7 @@ impl Server {
         ensure!(project != target, "Choose a different project");
         self.own_conversation(project, session).await?;
         self.known_project(target).await?;
+        self.ensure_branch_changeable(session).await?;
         self.0
             .store
             .preview_session_artifacts(session, project, Some(target))
@@ -2865,6 +2870,8 @@ impl Server {
                 .copy_session_to_project(session, project, target, &id)
                 .await?;
         } else {
+            // A frozen branch can be copied, not moved away.
+            self.ensure_branch_changeable(session).await?;
             self.without_branches(project, session, "move").await?;
             match artifacts {
                 Some(fingerprint) => {
@@ -3042,6 +3049,11 @@ impl Server {
         self.ensure_idle(session, "branch")?;
         self.ensure_not_exploring(session, "branch").await?;
         let store = &self.0.store;
+        // A branch, frozen or not, is not branched again, as in the WebView.
+        ensure!(
+            !store.session_is_branch(session).await?,
+            wisp_store::BRANCH_AGAIN_REFUSAL
+        );
         let cut = match upto {
             Some(turn) => self.locate_turn(session, turn).await?.1,
             None => None,
@@ -4760,6 +4772,31 @@ impl Server {
         self.0
             .runs
             .cancel(&self.0.store, run)
+            .await
+            .map_err(anyhow::Error::msg)
+    }
+
+    /// Cancels a run as the button that was pressed meant it, as the Tauri
+    /// desktop does for its native clients (`cancel_with_intent`): `force`
+    /// off asks a run that is going to stop; on, it finishes a run already
+    /// stopping whose stop never came back, as cancelled. A button drawn
+    /// for the other state is refused, so a stale Cancel never forces.
+    pub async fn cancel_run_as_meant(&self, project: &str, run: &str, force: bool) -> Result<()> {
+        self.project_root(project).await?;
+        let record = self.0.store.get_run(run).await?.context("Run not found")?;
+        ensure!(
+            record.project_id == project,
+            "Run does not belong to the selected project"
+        );
+        // A method search ends through its own coordinator and is never
+        // forced, as in the Tauri desktop.
+        if record.kind == "method_search" {
+            ensure!(!force, "Run state changed; refresh before cancelling");
+            return self.cancel_method_search(project, run).await.map(drop);
+        }
+        self.0
+            .runs
+            .cancel_with_intent(&self.0.store, run, Some(force))
             .await
             .map_err(anyhow::Error::msg)
     }
@@ -6725,6 +6762,7 @@ impl Server {
     /// because half a turn cannot be judged.
     pub async fn review_conversation(&self, project: &str, session: &str) -> Result<Review> {
         self.own_conversation(project, session).await?;
+        self.ensure_branch_changeable(session).await?;
         let messages = self.numbered_transcript(session).await?;
         self.review_messages(session, messages).await
     }
@@ -6739,6 +6777,7 @@ impl Server {
         turn: &TurnRef,
     ) -> Result<Review> {
         self.own_conversation(project, session).await?;
+        self.ensure_branch_changeable(session).await?;
         let (_, next) = self.locate_turn(session, turn).await?;
         let mut messages = self.numbered_transcript(session).await?;
         if let Some(next) = next {
@@ -7933,6 +7972,7 @@ pub use crate::approvals::{ApprovalScope, ProjectApprovals, ToolRule};
 pub use crate::aside::Exchange as AsideExchange;
 pub use crate::aside::{Answer as AsideAnswer, Source as AsideSource};
 pub use crate::assistant::{is_assistant, ASSISTANT_FRAME_ID};
+pub use crate::background_runs::BackgroundRunEnded;
 pub use crate::browser::{BrowserSettings, BrowserStatus};
 pub use crate::browser_filters::{BrowserFilters, BrowserHostRule};
 pub use crate::channels::{

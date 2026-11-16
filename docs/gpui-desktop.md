@@ -198,7 +198,7 @@ which it only reads.
 | Transcript | Virtualized Markdown, selectable text, paginated history |
 | Tool calls | One folded line each with outcome and elapsed time; click for the verbatim input and output; interrupted calls stop claiming to run |
 | Agent cards | A call that hands work to other agents is a card in its place: `explore` with its question, status and folded findings; `dispatch_subagent` with the subagent conversation's title, status and task, and a button that opens it; `delegate_tasks` with the batch's goal, status, task counts and a line per task (status, instruction, its conversation), Show in Agents and Stop while it runs. `subagent_status`, `stop_subagent`, `get_delegated_result` and a background batch's result coming back are one folded line naming the subagent or batch. Until the batches or the conversation list are read the call stays a tool row |
-| Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and is followed until it ends. One that has ended and kept a workspace where it ran can have it deleted after a question (its logs are saved into the project first, and outputs never brought back are not lost without a second question); a cleaned run, or one whose cleanup failed, says so. A run that moves files between machines shows its phase, file, bytes, rate and time left on its card, and while it moves (and a few seconds after) in a Transfers tray above the composer that folds to one line. A finished run on an SSH host has a folder button: a dialog lists what it left there a folder at a time, with a name filter and More… for long folders, and the files and folders chosen (across folders) are brought into the project as the conversation's results, a folder as one archive, or deleted there after a question; the whole workspace can be deleted from it too. In the transcript each run has one card, under the call that waits on it while it goes on (a `run_in_context` still waiting on its run included) and under the call that submitted it once it has ended, so an explicit `monitor_run` leaves no second card: its state as an icon and a word, where and how long it ran, a transfer's meter, and, with the call opened, its remote folder, command and output tails; Ask, Move to background (a turn waiting on the run stops waiting with `wait_backgrounded` and finishes its reply while the run goes on; the conversation gets one message when the run ends, even after a restart), Cancel, the review dialog for a finished run on an SSH host, and Show in Runs for its whole output, log and clean-up |
+| Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and one already stopping whose stop never came back can be force-cancelled (marked cancelled, as the WebView's Force cancel), and is followed until it ends. One that has ended and kept a workspace where it ran can have it deleted after a question (its logs are saved into the project first, and outputs never brought back are not lost without a second question); a cleaned run, or one whose cleanup failed, says so. A run that moves files between machines shows its phase, file, bytes, rate and time left on its card, and while it moves (and a few seconds after) in a Transfers tray above the composer that folds to one line. A finished run on an SSH host has a folder button: a dialog lists what it left there a folder at a time, with a name filter and More… for long folders, and the files and folders chosen (across folders) are brought into the project as the conversation's results, a folder as one archive, or deleted there after a question; the whole workspace can be deleted from it too. In the transcript each run has one card, under the call that waits on it while it goes on (a `run_in_context` still waiting on its run included) and under the call that submitted it once it has ended, so an explicit `monitor_run` leaves no second card: its state as an icon and a word, where and how long it ran, a transfer's meter, and, with the call opened, its remote folder, command and output tails; Ask, Move to background (a turn waiting on the run stops waiting with `wait_backgrounded` and finishes its reply while the run goes on; the conversation gets one message when the run ends, even after a restart), Cancel (Force cancel once it is stopping), the review dialog for a finished run on an SSH host, and Show in Runs for its whole output, log and clean-up. A run of the conversation that no loaded call names, going or ended within the last minute, has a card of its own placed as the WebView places its standalone cards (above the first message of yours sent after the run was made, else below the last row) that shows its folder, command and output and, once ended, can be dismissed while the window is open |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them, and lists each one's versions, any of which can be saved as a copy from its snapshot (checked against its checksum, up to 512 MB); By folder puts them under their folders, and each one's trail button says which tool call wrote it, with the code and Open the conversation |
 | Side panel | Tabs: Files, Runs, Environments (this computer and the saved SSH hosts: attach one to the conversation so its runs may go there, take it away, check it, open a terminal or its folders, see the Python and R its last check found, list the project's runs there, list the files the project placed there and delete one no run needs after a question, and set where the project keeps things there: uploaded data, run folders and the results folder), Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside, each named in words, the open one in ink with a short teal line under it. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
 | Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found; the transcript draws those calls, and the subagents and batches the agent started, as cards |
@@ -215,7 +215,7 @@ which it only reads.
 | Import from Codex or Claude Code | The import button in the conversation list's header lists the conversations Codex CLI (`~/.codex/sessions`) and Claude Code (`~/.claude/projects`) keep on this computer, newest first, with the first thing asked and the folder it was had in. Import brings one into the project in a group named `codex` or `claude`, with its messages and tool calls; importing it again brings in only what was added since, and leaves a conversation continued here alone. Only this computer is looked at, not SSH or WSL hosts |
 | Delegated tasks | The model can hand a batch of dependent tasks to temporary agents and wait for their results; a plan card asks first when a task can change files, run code or use a remote model. Each task works in a watch-only conversation under the one that started it. The Agents tab lists the batches with each task's status, summary and conversation, and stops a running one |
 | Subagents | The model can start a subagent: a conversation of its own for one focused task, listed under the conversation that started it; in its composer's place a card says it is watched and offers Open the parent. When it ends, a report is added to the parent, whose agent goes on to handle it |
-| Read-only conversations | A conversation that cannot be written to shows, in place of the message box, one card in the composer's column that says why and offers the way on: a subagent's (Open the parent), one whose research is archived (View the archive / Continue research, which opens the research archive), the source of an exploration round that is not settled, an exploration that no longer runs (the bar over the conversation keeps the round's own actions), and a branch frozen as read-only history because it was brought back or its source lost the turn it split from ("This branch is frozen as read-only history", with Open the source conversation while the project's list names it). Send, the send key, Queue, typed and menu commands that write, attaching, dropping and pasting files and the add-context box all do nothing there |
+| Read-only conversations | A conversation that cannot be written to shows, in place of the message box, one card in the composer's column that says why and offers the way on: a subagent's (Open the parent), one whose research is archived (View the archive / Continue research, which opens the research archive), the source of an exploration round that is not settled, an exploration that no longer runs (the bar over the conversation keeps the round's own actions), and a branch frozen as read-only history because it was brought back or its source lost the turn it split from ("This branch is frozen as read-only history", with Open the source conversation while the project's list names it). Send, the send key, Queue, typed and menu commands that write, attaching, dropping and pasting files and the add-context box all do nothing there. Its messages offer no Edit and send again; a branch, frozen or not, offers no Branch from here; a frozen branch offers no Review (this turn or from the menu) and only Copy to another project, never Move |
 | Conversation timer | `/timer 30m <prompt>` gives the open conversation its timer (setting it again changes it: one per conversation). While it has one, a strip above the composer shows the prompt, how often it repeats and when it fires next (or that it is paused, and why its last firing failed), with Pause or Resume and Cancel timer; it is kept by the host, so it is there after a restart |
 | Explorations | On an answer, Start an exploration from here names one and continues the conversation in its own copy of the project; more candidates of the same round start from the same answer. The source shows a bar with each candidate and Abandon the round; a candidate shows its status, View changes and keep (what it changed, what the mainline changed meanwhile, why it cannot be kept), Discard, Back to the mainline and Abandon the round; when it cannot be kept, Show both folders and Finish by hand |
 | Bringing a branch back | In a branch, Bring back in the conversation's toolbar has the model summarise what the branch did since it split off; you read and change the summary, and Bring it back adds it to the conversation the branch came from, which reads it from then on, and opens that conversation, where it shows as a Merged branch result card naming the branch: press it for the summary and Open the branch. A branch is brought back once |
@@ -737,6 +737,17 @@ Limits of this slice:
   `notify-send` and `canberra-gtk-play`, silently doing nothing when
   those are missing. Windows gets the sound only. The sound cannot be
   chosen.
+- When a run moved to the background ends and its conversation has had
+  its message, the host tells the desktop
+  (`Server::background_run_endings`), and one notification is posted for
+  the whole app, as the WebView's: Task completed or Task failed, naming
+  the conversation and "Background run finished: …" (or "ended"). It is
+  posted even while Wisp is the active app, unless that conversation is on
+  screen in the focused window, and only as chosen in Settings
+  (notification, sound). A run that ended while Wisp was closed is told
+  about after the next start, once its message is added. The in-window
+  status line the WebView also sets is not shown; the message in the
+  conversation is.
 - In the window, a conversation of another project (any project, on the
   home page) whose turn ends gets a card in the lower right corner, as in
   the WebView: the project, the conversation, Task completed or Task
@@ -1003,11 +1014,19 @@ Limits of this slice:
   resuming it) and also queueing, guiding a running turn, compacting,
   undoing a compaction and rewinding; it is still read and quoted. As in
   the WebView, a subagent's report is still added to it as a reply; only
-  the turn that would follow is refused. Not yet as in the WebView: Edit
-  and send again is still offered on its messages and refused by the
-  host when used; this host lets any branch be branched again, which
-  the WebView refuses; and writing a handoff note, a review or moving
-  the conversation to another project are not refused here.
+  the turn that would follow is refused. A branch, frozen or not, is not
+  branched again ("Conversation branches cannot be branched again.", the
+  WebView's `require_branchable`, now `Store::session_is_branch` and
+  `BRANCH_AGAIN_REFUSAL` in `wisp-store`), and a frozen one is not handed
+  off, reviewed (a turn or the whole) or moved to another project ("Frozen
+  conversation branches cannot be changed", the Tauri desktop's
+  `require_mutable_session` for its native clients, now
+  `FROZEN_BRANCH_CHANGE_REFUSAL`); a copy of it can still be taken to
+  another project. GPUI does not offer what the host refuses: no Edit and
+  send again on a read-only conversation's messages, no Branch from here
+  on a branch's, no Review on a frozen branch, and only Copy in its Move
+  menu. The WebView itself offers Review on a frozen branch and its own
+  `review_session` allows it; only the Tauri native layer refuses it.
 - `/compact` asks which kind of compaction to run, then archives the
   conversation's whole history under the project's `.wisp/history/` and
   shortens what the model is sent: regular prunes old tool output and
@@ -1819,8 +1838,11 @@ Limits of this slice:
 - An artifact is a project file a tool wrote during a turn, recorded with the
   WebView's identity (`path:<relative path>`) and snapshot rules, so the two
   desktops would agree on the same database. Files outside the project, and
-  under `.wisp` or `.git`, are not recorded. Versions, download, starring and
-  provenance are not ported.
+  under `.wisp` or `.git`, are not recorded. Each says which tool call wrote
+  it, in which conversation, with the code it ran, what it printed and the
+  files it read (the WebView's Code, Log and Inputs). The WebView's
+  Environment (the kernel's package list) is not recorded by this host, and
+  its Inputs open a file another call wrote; here they are a list.
 - Status refreshes every two seconds while any turn is running and once more
   when the last one stops; it is not pushed by the host.
 - General has the language, appearance, send key, notifications, sound,
@@ -2138,7 +2160,15 @@ Ask for a long run that the model waits on (`monitor_run`, or
 bell button (Move to background) and a stop button (Cancel run). Press the
 bell: the turn ends with a short reply, the card says the run goes on in the
 background, and a new message can be sent. When the run ends, one message in
-the conversation names it, its outcome, exit code and time. With a run on an
+the conversation names it, its outcome, exit code and time; with another
+conversation open, or Wisp in the background, a notification says Task
+completed or Task failed with the conversation and the run. A run that is
+stopping and does not stop has a Force cancel button (a struck circle) on
+its card and in the Runs tab, which marks it cancelled. A run the
+conversation started that no call in the transcript names (a scheduler job
+followed through `shell`) has a card of its own, above the first message
+sent after it began or at the end, while it goes on and for a minute after
+it ends; an ended one has a close button that puts it away. With a run on an
 SSH host, once it has ended its card has a folder button that opens the run
 review dialog; Escape closes it.
 Open a PDF in the Files tab: after a moment its pages show as they look,

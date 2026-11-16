@@ -623,6 +623,42 @@ pub fn read_only_action(state: &ReadOnly) -> Option<(&'static str, ReadOnlyActio
     }
 }
 
+/// What the open conversation's messages and menu offer that would change
+/// it or start from it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Offered {
+    /// Edit and send again under a message of yours.
+    pub edit: bool,
+    /// Branch from here under an answer.
+    pub branch: bool,
+    /// Review this turn, and Review in the menu.
+    pub review: bool,
+    /// Moving it to another project; a copy is always offered.
+    pub move_away: bool,
+}
+
+/// What is offered, from why the conversation is read-only and whether it
+/// is a branch, as the hosts allow it. As in the WebView: no message of a
+/// read-only conversation is edited and sent again, and a branch, frozen or
+/// not, is not branched again ("Conversation branches cannot be branched
+/// again."). A frozen branch is not reviewed or moved away either, as the
+/// Tauri desktop refuses it to its native clients. An exploration's
+/// conversation that does not take messages is not branched, which the
+/// host refuses too.
+pub fn offered(read_only: Option<&ReadOnly>, branch: bool) -> Offered {
+    let frozen = matches!(read_only, Some(ReadOnly::FrozenBranch { .. }));
+    let exploring = matches!(
+        read_only,
+        Some(ReadOnly::FrozenMainline | ReadOnly::ClosedExploration { .. })
+    );
+    Offered {
+        edit: read_only.is_none(),
+        branch: !branch && !frozen && !exploring,
+        review: !frozen,
+        move_away: !frozen,
+    }
+}
+
 /// The icon beside the sentence.
 pub fn read_only_icon(state: &ReadOnly) -> &'static str {
     match state {
@@ -828,6 +864,67 @@ mod tests {
         let start = source.find(&format!("fn {name}("))?;
         let rest = &source[start..];
         Some(&rest[..rest.find("\n    }\n")?])
+    }
+
+    #[test]
+    fn a_read_only_conversation_offers_no_edit_and_a_branch_no_second_branch() {
+        let all = Offered {
+            edit: true,
+            branch: true,
+            review: true,
+            move_away: true,
+        };
+        assert_eq!(offered(None, false), all);
+        // An active branch takes messages but is not branched again.
+        assert_eq!(
+            offered(None, true),
+            Offered {
+                branch: false,
+                ..all
+            }
+        );
+        // A frozen branch: nothing that changes it, a copy still.
+        let frozen = ReadOnly::FrozenBranch { source: None };
+        for branch in [true, false] {
+            assert_eq!(
+                offered(Some(&frozen), branch),
+                Offered {
+                    edit: false,
+                    branch: false,
+                    review: false,
+                    move_away: false,
+                }
+            );
+        }
+        // Other read-only conversations: no edit; reviewed and moved as
+        // before, and branched unless an exploration holds them.
+        for state in [
+            ReadOnly::Archived,
+            ReadOnly::Subagent { parent: None },
+            ReadOnly::Unexplained,
+        ] {
+            assert_eq!(
+                offered(Some(&state), false),
+                Offered { edit: false, ..all },
+                "{state:?}"
+            );
+        }
+        for state in [
+            ReadOnly::FrozenMainline,
+            ReadOnly::ClosedExploration {
+                status: "promoting".into(),
+            },
+        ] {
+            assert_eq!(
+                offered(Some(&state), false),
+                Offered {
+                    edit: false,
+                    branch: false,
+                    ..all
+                },
+                "{state:?}"
+            );
+        }
     }
 
     #[test]
