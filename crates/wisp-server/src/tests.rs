@@ -6453,6 +6453,176 @@ async fn desktop_messages_carry_project_files_and_turn_scoped_references() {
 }
 
 #[tokio::test]
+async fn a_message_can_carry_artifacts_environments_runtimes_and_workflows() {
+    use wisp_dto::ComposerReferenceArg as Reference;
+    let temp = tempfile::tempdir().unwrap();
+    let shown: Arc<std::sync::Mutex<Vec<Vec<String>>>> = Arc::default();
+    let record = shown.clone();
+    let factory: ModelFactory = Arc::new(move |_| Box::new(Recorder(record.clone())));
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let folder = temp.path().join("lab");
+    std::fs::create_dir_all(folder.join("data")).unwrap();
+    std::fs::write(folder.join("data/counts.csv"), "gene,count\n").unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    let session = call(&server, "native_conversation_create", &lab, json!({}))
+        .await
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_owned();
+    server
+        .save_ssh_host(desktop::SshHostRow {
+            alias: "gpu".into(),
+            host_name: "10.0.0.8".into(),
+            identity_file: "~/.ssh/id_lab".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    server
+        .0
+        .store
+        .save_artifact(
+            "art-counts",
+            &lab,
+            &session,
+            "counts.csv",
+            "text/csv",
+            "data/counts.csv",
+        )
+        .await
+        .unwrap();
+    let workflow = server.workflows().await.unwrap().remove(0);
+    let request = |id: &str, references: Vec<Reference>| dto::SendRequest {
+        session_id: session.clone(),
+        request_id: id.into(),
+        message: "use these".into(),
+        resume: false,
+        resume_after: None,
+        attachments: vec![],
+        references,
+        acp_agent_id: None,
+    };
+
+    // What cannot be honoured is refused, and nothing is attached for it.
+    for bad in [
+        Reference::Artifact {
+            id: "missing".into(),
+        },
+        Reference::Context {
+            id: "ssh:absent".into(),
+        },
+        // Interpreters are kept on this computer only.
+        Reference::Runtime {
+            context_id: "ssh:gpu".into(),
+            language: "python".into(),
+        },
+        Reference::Runtime {
+            context_id: "local".into(),
+            language: "julia".into(),
+        },
+        Reference::Workflow { id: "gone".into() },
+        Reference::Project { id: lab.clone() },
+    ] {
+        let refused = server
+            .send(
+                &lab,
+                request(
+                    "bad",
+                    vec![
+                        Reference::Context {
+                            id: "ssh:gpu".into(),
+                        },
+                        bad,
+                    ],
+                ),
+            )
+            .await;
+        assert!(refused.is_err());
+    }
+    assert!(!server
+        .0
+        .store
+        .session_execution_context_enabled(&session, "ssh:gpu")
+        .await
+        .unwrap());
+
+    let references = vec![
+        Reference::Artifact {
+            id: "art-counts".into(),
+        },
+        Reference::Context {
+            id: "ssh:gpu".into(),
+        },
+        Reference::Runtime {
+            context_id: "local".into(),
+            language: "python".into(),
+        },
+        Reference::Workflow {
+            id: workflow.id.clone(),
+        },
+        Reference::Artifact {
+            id: "art-counts".into(),
+        },
+    ];
+    server.send(&lab, request("r1", references)).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let value = call(
+                &server,
+                "native_conversation_snapshot",
+                &lab,
+                json!({"session_id": session}),
+            )
+            .await
+            .unwrap();
+            if !serde_json::from_value::<dto::Snapshot>(value)
+                .unwrap()
+                .running
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let turn = shown.lock().unwrap().last().unwrap().join("\n");
+    // The artifact by name and where its file is, once.
+    assert_eq!(turn.matches("- counts.csv: ").count(), 1, "{turn}");
+    let counts = format!("lab{0}data{0}counts.csv", std::path::MAIN_SEPARATOR);
+    assert!(turn.contains(&counts), "{turn}");
+    // The environment by its id and kind; work may now run there.
+    assert!(
+        turn.contains("- gpu (context_id: ssh:gpu, kind: ssh)"),
+        "{turn}"
+    );
+    assert!(server
+        .0
+        .store
+        .session_execution_context_enabled(&session, "ssh:gpu")
+        .await
+        .unwrap());
+    assert!(
+        turn.contains("- python runtime on Local (context_id: local): call the `python` tool"),
+        "{turn}"
+    );
+    assert!(
+        turn.contains(&format!("Template id: {}", workflow.id)),
+        "{turn}"
+    );
+    // None of it is saved with the conversation.
+    let saved = server.0.store.load_messages(&session).await.unwrap();
+    assert!(saved.iter().all(|message| {
+        let text = message.content.as_text();
+        !text.contains("context_id:") && !text.contains("selected_workflow_template")
+    }));
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_conversation_in_plan_mode_is_told_so_and_cannot_change_anything() {
     let temp = tempfile::tempdir().unwrap();
     let cfg = config(temp.path());

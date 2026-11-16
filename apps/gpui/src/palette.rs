@@ -4,7 +4,10 @@
 //! only the latest one may fill the list.
 use crate::i18n::tr;
 use wisp_dto::{ProjectSummary, SessionSearchInfo};
-use wisp_server::desktop::{FileMatch, ReferenceOption};
+use wisp_server::desktop::{
+    ArtifactRow, FileMatch, ProjectMemo, ReferenceOption, RuntimeLanguage, RuntimeRow, SshHostRow,
+    Workflow,
+};
 
 use crate::{compose::Chip, home::Screen};
 
@@ -13,6 +16,11 @@ const PROJECTS: usize = 5;
 const FILES: usize = 6;
 const CONVERSATIONS: usize = 8;
 const SKILLS: usize = 8;
+const ARTIFACTS: usize = 8;
+const ENVIRONMENTS: usize = 6;
+const RUNTIMES: usize = 4;
+const WORKFLOWS: usize = 6;
+const MEMOS: usize = 6;
 
 /// What picking a row does.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -339,8 +347,13 @@ impl Command {
 pub enum Section {
     Projects,
     Files,
+    Artifacts,
+    Environments,
+    Runtimes,
     Conversations,
     Skills,
+    Workflows,
+    Memos,
     Commands,
 }
 
@@ -349,9 +362,41 @@ impl Section {
         match self {
             Section::Projects => tr("Projects"),
             Section::Files => tr("Files"),
+            Section::Artifacts => tr("Artifacts"),
+            Section::Environments => tr("Environments"),
+            Section::Runtimes => tr("Runtimes"),
             Section::Conversations => tr("Conversations"),
             Section::Skills => tr("Skills"),
+            Section::Workflows => tr("Workflows"),
+            // The WebView's words: a memo is put into the message, and
+            // nothing else of it goes anywhere.
+            Section::Memos => tr("Memos · local only, nothing is sent"),
             Section::Commands => tr("Commands"),
+        }
+    }
+
+    /// The sections the add-context box fills from what the window already
+    /// reads, rather than from a search of the host.
+    const OFFERED: [Section; 5] = [
+        Section::Artifacts,
+        Section::Environments,
+        Section::Runtimes,
+        Section::Workflows,
+        Section::Memos,
+    ];
+
+    fn cap(self) -> usize {
+        match self {
+            Section::Projects => PROJECTS,
+            Section::Files => FILES,
+            Section::Artifacts => ARTIFACTS,
+            Section::Environments => ENVIRONMENTS,
+            Section::Runtimes => RUNTIMES,
+            Section::Conversations => CONVERSATIONS,
+            Section::Skills => SKILLS,
+            Section::Workflows => WORKFLOWS,
+            Section::Memos => MEMOS,
+            Section::Commands => usize::MAX,
         }
     }
 }
@@ -374,6 +419,37 @@ pub enum Entry {
         name: String,
         description: String,
     },
+    /// A file the project recorded, to attach by its artifact id.
+    Artifact {
+        id: String,
+        name: String,
+        detail: String,
+    },
+    /// This computer or a saved host, for the turn's work to run on.
+    Environment {
+        id: String,
+        label: String,
+        detail: String,
+    },
+    /// An interpreter that keeps its variables, `python` or `r`.
+    Runtime {
+        context_id: String,
+        language: String,
+        title: String,
+        detail: String,
+    },
+    Workflow {
+        id: String,
+        name: String,
+        goal: String,
+    },
+    /// A memo: picked, its text goes into the message; it is never a
+    /// reference the model can follow.
+    Memo {
+        heading: String,
+        preview: String,
+        body: String,
+    },
     Command(Command),
 }
 
@@ -384,8 +460,88 @@ impl Entry {
             Entry::File(_) => Section::Files,
             Entry::Skill { .. } => Section::Skills,
             Entry::Conversation { .. } => Section::Conversations,
+            Entry::Artifact { .. } => Section::Artifacts,
+            Entry::Environment { .. } => Section::Environments,
+            Entry::Runtime { .. } => Section::Runtimes,
+            Entry::Workflow { .. } => Section::Workflows,
+            Entry::Memo { .. } => Section::Memos,
             Entry::Command(_) => Section::Commands,
         }
+    }
+
+    /// The icon, the words and the line under them, as the box lists the
+    /// row; files, projects, conversations and commands are drawn by the
+    /// view.
+    pub fn glyph(&self) -> &'static str {
+        match self {
+            Entry::Project { .. } => "folder",
+            Entry::File(_) => "doc",
+            Entry::Conversation { .. } => "chat",
+            Entry::Skill { .. } => "skill",
+            Entry::Artifact { .. } => "layers",
+            Entry::Environment { .. } => "server",
+            Entry::Runtime { .. } => "terminal",
+            Entry::Workflow { .. } => "branch",
+            Entry::Memo { .. } => "notebook",
+            Entry::Command(command) => command.icon(),
+        }
+    }
+
+    /// What typing is matched against, for the rows the box filters itself.
+    /// As in the WebView, an environment is also found by "server" and a
+    /// runtime by "runtime".
+    fn search_text(&self) -> String {
+        match self {
+            Entry::Artifact { name, detail, .. } => format!("{name} {detail}"),
+            Entry::Environment { id, label, detail } => {
+                format!("server environment {label} {id} {detail}")
+            }
+            Entry::Runtime {
+                context_id,
+                language,
+                title,
+                detail,
+            } => format!("runtime {language} {title} {context_id} {detail}"),
+            Entry::Workflow { name, goal, .. } => format!("{name} {goal}"),
+            Entry::Memo { heading, body, .. } => format!("{heading} {body}"),
+            Entry::Skill { name, description } => format!("{name} {description}"),
+            _ => String::new(),
+        }
+    }
+
+    /// What picking this row in the add-context box attaches. A memo
+    /// attaches nothing: its text goes into the message instead.
+    pub fn chip(&self) -> Option<Chip> {
+        Some(match self {
+            Entry::File(file) => Chip::File(file.path.clone()),
+            Entry::Conversation { id, title, .. } => Chip::Conversation {
+                id: id.clone(),
+                title: title.clone(),
+            },
+            Entry::Skill { name, .. } => Chip::Skill(name.clone()),
+            Entry::Artifact { id, name, .. } => Chip::Artifact {
+                id: id.clone(),
+                name: name.clone(),
+            },
+            Entry::Environment { id, label, .. } => Chip::Environment {
+                id: id.clone(),
+                label: label.clone(),
+            },
+            Entry::Runtime {
+                context_id,
+                language,
+                ..
+            } => Chip::Runtime {
+                context_id: context_id.clone(),
+                language: language.clone(),
+                label: crate::compose::runtime_chip_label(language, context_id),
+            },
+            Entry::Workflow { id, name, .. } => Chip::Workflow {
+                id: id.clone(),
+                name: name.clone(),
+            },
+            Entry::Project { .. } | Entry::Memo { .. } | Entry::Command(_) => return None,
+        })
     }
 
     /// What this row adds to the message being written in `project`
@@ -436,13 +592,113 @@ pub fn step(key: &str, modified: bool) -> Option<isize> {
     }
 }
 
+/// The project's artifacts to attach, those of the conversation `session`
+/// first and then the newest, as the WebView ranks them.
+pub fn artifact_entries(rows: &[ArtifactRow], session: Option<&str>) -> Vec<Entry> {
+    let mut rows: Vec<&ArtifactRow> = rows.iter().collect();
+    rows.sort_by_key(|row| {
+        (
+            Some(row.session_id.as_str()) != session,
+            std::cmp::Reverse(row.created_at),
+        )
+    });
+    rows.into_iter()
+        .map(|row| {
+            let place = row.path.clone().unwrap_or_else(|| row.kind.clone());
+            Entry::Artifact {
+                id: row.id.clone(),
+                name: row.name.clone(),
+                detail: match crate::present::one_line(&row.session_title) {
+                    title if title.is_empty() => place,
+                    title => format!("{title} · {place}"),
+                },
+            }
+        })
+        .collect()
+}
+
+/// Where work can run: this computer, then the saved SSH hosts, each by
+/// the execution context id the host knows it by.
+pub fn environment_entries(hosts: &[SshHostRow]) -> Vec<Entry> {
+    let mut entries = vec![Entry::Environment {
+        id: "local".into(),
+        label: tr("This computer").into(),
+        detail: "local".into(),
+    }];
+    entries.extend(hosts.iter().map(|host| Entry::Environment {
+        id: format!("ssh:{}", host.alias),
+        label: host.alias.clone(),
+        detail: format!("ssh:{}", host.alias),
+    }));
+    entries
+}
+
+/// The interpreters a turn can be pointed at: they run on this computer,
+/// Python always (as the WebView offers it there) and R once the
+/// conversation has one, each with how the one above the composer is.
+pub fn runtime_entries(rows: &[RuntimeRow]) -> Vec<Entry> {
+    let row_of = |language: RuntimeLanguage| rows.iter().rev().find(|row| row.language == language);
+    [
+        ("python", RuntimeLanguage::Python),
+        ("r", RuntimeLanguage::R),
+    ]
+    .into_iter()
+    .filter(|(_, language)| *language == RuntimeLanguage::Python || row_of(*language).is_some())
+    .map(|(id, language)| Entry::Runtime {
+        context_id: "local".into(),
+        language: id.into(),
+        title: crate::i18n::fill(tr("{} runtime"), &[&crate::compose::language_name(id)]),
+        detail: match row_of(language) {
+            Some(row) => format!(
+                "{} · {}",
+                tr("This computer"),
+                crate::controls::runtime_label(row)
+            ),
+            None => tr("This computer").to_owned(),
+        },
+    })
+    .collect()
+}
+
+pub fn workflow_entries(workflows: &[Workflow]) -> Vec<Entry> {
+    workflows
+        .iter()
+        .map(|workflow| Entry::Workflow {
+            id: workflow.id.clone(),
+            name: workflow.name.clone(),
+            goal: crate::present::one_line(&workflow.goal),
+        })
+        .collect()
+}
+
+/// The project's memos, pinned ones first as the Memos tab lists them.
+pub fn memo_entries(memos: &[ProjectMemo]) -> Vec<Entry> {
+    let mut memos: Vec<&ProjectMemo> = memos.iter().collect();
+    memos.sort_by_key(|memo| !memo.pinned);
+    memos
+        .into_iter()
+        .filter(|memo| !memo.body.trim().is_empty())
+        .map(|memo| Entry::Memo {
+            heading: crate::memos::heading(memo),
+            preview: crate::memos::preview(memo),
+            body: memo.body.clone(),
+        })
+        .collect()
+}
+
 #[derive(Default)]
 pub struct PaletteState {
     generation: u64,
+    /// Counts the times the box was opened; rows offered for an earlier
+    /// opening are not listed.
+    opening: u64,
     pub query: String,
     conversations: Vec<SessionSearchInfo>,
     files: Vec<FileMatch>,
     skills: Vec<ReferenceOption>,
+    /// Artifacts, environments, runtimes, workflows and memos to attach,
+    /// filtered here as the query changes.
+    offered: Vec<Entry>,
     pub selected: usize,
     pub mode: Mode,
 }
@@ -450,14 +706,50 @@ pub struct PaletteState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ticket(u64);
 
+/// One opening of the box, for rows offered once while it is open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Opening(u64);
+
 impl PaletteState {
     /// Starts over for a newly opened palette.
     pub fn reset(&mut self, mode: Mode) {
         *self = Self {
             generation: self.generation + 1,
+            opening: self.opening + 1,
             mode,
             ..Self::default()
         };
+    }
+
+    pub fn opening(&self) -> Opening {
+        Opening(self.opening)
+    }
+
+    /// Offers `entries` as the rows of `section` while the box stays open
+    /// from `opening`, in place of what that section offered before.
+    /// Only rows of the sections filled this way are taken.
+    pub fn offer(&mut self, opening: Opening, section: Section, entries: Vec<Entry>) -> bool {
+        if opening.0 != self.opening || !Section::OFFERED.contains(&section) {
+            return false;
+        }
+        self.offered.retain(|entry| entry.section() != section);
+        self.offered.extend(
+            entries
+                .into_iter()
+                .filter(|entry| entry.section() == section),
+        );
+        true
+    }
+
+    /// The rows offered for `section` that match what is typed.
+    fn offered_in(&self, section: Section) -> impl Iterator<Item = Entry> + '_ {
+        self.offered
+            .iter()
+            .filter(move |entry| {
+                entry.section() == section && matches(&entry.search_text(), &self.query)
+            })
+            .take(section.cap())
+            .cloned()
     }
 
     /// Records the typed query. Host results for earlier text are dropped
@@ -512,8 +804,9 @@ impl PaletteState {
     }
 
     /// The rows on screen. To open: projects, files, conversations and
-    /// commands. To attach: files, conversations and skills. With nothing
-    /// typed the conversations are the `recent` ones.
+    /// commands. To attach: files, artifacts, environments, runtimes,
+    /// conversations, skills, workflows and memos. With nothing typed the
+    /// conversations are the `recent` ones.
     pub fn entries(
         &self,
         projects: &[ProjectSummary],
@@ -544,6 +837,11 @@ impl PaletteState {
             })
             .collect();
         entries.extend(self.files.iter().take(FILES).cloned().map(Entry::File));
+        if attach {
+            for section in [Section::Artifacts, Section::Environments, Section::Runtimes] {
+                entries.extend(self.offered_in(section));
+            }
+        }
         let conversations = if query.is_empty() {
             recent
         } else {
@@ -574,6 +872,9 @@ impl PaletteState {
                     _ => None,
                 },
             ));
+            for section in [Section::Workflows, Section::Memos] {
+                entries.extend(self.offered_in(section));
+            }
             return entries;
         }
         entries.extend(
@@ -936,6 +1237,223 @@ mod tests {
         assert_eq!(
             (0..5).map(|i| child_index(&entries, i)).collect::<Vec<_>>(),
             [1, 2, 4, 6, 7]
+        );
+    }
+
+    fn artifact(id: &str, session: &str, created_at: i64) -> ArtifactRow {
+        ArtifactRow {
+            id: id.into(),
+            name: format!("{id}.png"),
+            kind: "image/png".into(),
+            path: Some(format!("figures/{id}.png")),
+            created_at,
+            size_bytes: None,
+            session_id: session.into(),
+            session_title: format!("Talk {session}"),
+        }
+    }
+
+    fn interpreter(language: RuntimeLanguage) -> RuntimeRow {
+        RuntimeRow {
+            id: "rt".into(),
+            language,
+            state: wisp_server::desktop::RuntimeState::Ready,
+            interpreter: None,
+            version: Some("4.4".into()),
+            memory_bytes: None,
+            last_error: None,
+            process_id: None,
+            generation: 1,
+            started_at_ms: 0,
+            last_activity_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn what_the_window_reads_is_offered_in_the_webviews_order() {
+        // This conversation's artifacts first, then the newest.
+        let rows = [
+            artifact("old", "s", 1),
+            artifact("new", "t", 9),
+            artifact("mid", "t", 5),
+        ];
+        let ids: Vec<String> = artifact_entries(&rows, Some("s"))
+            .into_iter()
+            .map(|entry| match entry {
+                Entry::Artifact { id, detail, .. } => {
+                    assert!(detail.starts_with("Talk ") && detail.contains("figures/"));
+                    id
+                }
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(ids, ["old", "new", "mid"]);
+        // This computer, then each saved host by its context id.
+        let hosts = [SshHostRow {
+            alias: "gpu".into(),
+            ..Default::default()
+        }];
+        let places: Vec<Option<Chip>> = environment_entries(&hosts)
+            .iter()
+            .map(Entry::chip)
+            .collect();
+        assert_eq!(
+            places,
+            [
+                Some(Chip::Environment {
+                    id: "local".into(),
+                    label: "This computer".into()
+                }),
+                Some(Chip::Environment {
+                    id: "ssh:gpu".into(),
+                    label: "gpu".into()
+                }),
+            ]
+        );
+        // Python always; R once the conversation has one.
+        let runtimes = runtime_entries(&[]);
+        assert_eq!(runtimes.len(), 1);
+        assert_eq!(
+            runtimes[0].chip(),
+            Some(Chip::Runtime {
+                context_id: "local".into(),
+                language: "python".into(),
+                label: "Python · This computer".into(),
+            })
+        );
+        let with_r = runtime_entries(&[interpreter(RuntimeLanguage::R)]);
+        assert!(
+            matches!(&with_r[1], Entry::Runtime { language, title, detail, .. }
+            if language == "r" && title == "R runtime" && detail.contains("R 4.4"))
+        );
+        // Pinned memos first; an empty one has nothing to put in.
+        let memo = |title: &str, body: &str, pinned: bool| ProjectMemo {
+            title: title.into(),
+            body: body.into(),
+            pinned,
+            ..Default::default()
+        };
+        let memos = memo_entries(&[
+            memo("Later", "plain", false),
+            memo("", "   ", true),
+            memo("First", "kept on top", true),
+        ]);
+        let headings: Vec<_> = memos
+            .iter()
+            .map(|entry| match entry {
+                Entry::Memo { heading, .. } => heading.as_str(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(headings, ["First", "Later"]);
+        // A memo is never a reference: its text goes into the message.
+        assert_eq!(memos[0].chip(), None);
+        let workflow = Workflow {
+            id: "w1".into(),
+            name: "Screen".into(),
+            goal: "Find\nthe hits".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            workflow_entries(&[workflow]),
+            [Entry::Workflow {
+                id: "w1".into(),
+                name: "Screen".into(),
+                goal: crate::present::one_line("Find\nthe hits"),
+            }]
+        );
+    }
+
+    #[test]
+    fn attaching_lists_every_kind_under_its_own_heading_and_filters_it() {
+        let mut state = PaletteState::default();
+        state.reset(Mode::Attach);
+        let opening = state.opening();
+        let hosts = [SshHostRow {
+            alias: "gpu".into(),
+            ..Default::default()
+        }];
+        let workflow = Workflow {
+            id: "w1".into(),
+            name: "Screen".into(),
+            goal: "Find the hits".into(),
+            ..Default::default()
+        };
+        let memo = ProjectMemo {
+            title: "Primers".into(),
+            body: "F: ACGT".into(),
+            ..Default::default()
+        };
+        assert!(state.offer(opening, Section::Memos, memo_entries(&[memo])));
+        assert!(state.offer(opening, Section::Workflows, workflow_entries(&[workflow])));
+        assert!(state.offer(opening, Section::Runtimes, runtime_entries(&[])));
+        assert!(state.offer(opening, Section::Environments, environment_entries(&hosts)));
+        assert!(state.offer(
+            opening,
+            Section::Artifacts,
+            artifact_entries(&[artifact("fig", "s", 1)], Some("s"))
+        ));
+        // Rows of another kind are not taken for a section, and only the
+        // add-context sections are filled this way.
+        assert!(
+            state.offer(
+                opening,
+                Section::Memos,
+                environment_entries(&[])
+                    .into_iter()
+                    .chain(memo_entries(&[ProjectMemo {
+                        title: "Primers".into(),
+                        body: "F: ACGT".into(),
+                        ..Default::default()
+                    }]))
+                    .collect()
+            )
+        );
+        assert!(!state.offer(opening, Section::Commands, vec![]));
+        state.begin("");
+        let recent = [conversation("r", "Earlier alignment", false)];
+        assert_eq!(
+            sections(&state.entries(&[], &recent, Screen::Project)),
+            [
+                Section::Artifacts,
+                Section::Environments,
+                Section::Environments,
+                Section::Runtimes,
+                Section::Conversations,
+                Section::Workflows,
+                Section::Memos,
+            ]
+        );
+        // Each kind is found by its own words, and by the WebView's.
+        let found = |state: &mut PaletteState, query: &str| {
+            state.begin(query);
+            sections(&state.entries(&[], &[], Screen::Project))
+        };
+        assert_eq!(found(&mut state, "server"), [Section::Environments; 2]);
+        assert_eq!(found(&mut state, "gpu"), [Section::Environments]);
+        assert_eq!(found(&mut state, "runtime python"), [Section::Runtimes]);
+        assert_eq!(found(&mut state, "figures"), [Section::Artifacts]);
+        assert_eq!(found(&mut state, "hits"), [Section::Workflows]);
+        assert_eq!(found(&mut state, "acgt"), [Section::Memos]);
+        assert!(found(&mut state, "nothing like it").is_empty());
+        // What was offered while the box was open before is not listed.
+        state.reset(Mode::Attach);
+        assert!(!state.offer(opening, Section::Memos, vec![]));
+        assert!(
+            state
+                .entries(&[], &[], Screen::Project)
+                .iter()
+                .all(|entry| entry.section() != Section::Memos)
+        );
+        // Nor is any of it when looking for somewhere to go.
+        let opening = state.opening();
+        state.offer(opening, Section::Runtimes, runtime_entries(&[]));
+        state.mode = Mode::Open;
+        assert!(
+            state
+                .entries(&[], &[], Screen::Project)
+                .iter()
+                .all(|entry| entry.section() != Section::Runtimes)
         );
     }
 

@@ -220,7 +220,7 @@ which it only reads.
 | Usage | How full the context is, and the tokens the running or latest turn used |
 | Questions | When the model asks, a card with its options: one click answers, or type the answer |
 | Messages | Copy any message as Markdown |
-| Attachments | Attach files with the system dialog or by dropping them onto the conversation, or add a project file, another conversation or a skill from the add-context box; shown as chips until sent |
+| Attachments | Attach files with the system dialog or by dropping them onto the conversation, or add a project file, an artifact, an environment (this computer or a saved SSH host), a runtime, another conversation, a skill or a workflow from the add-context box; shown as chips until sent. A memo picked there is put into the message as text |
 | Drafts | Survive navigation; preserved on send failure, cleared on durable acceptance |
 | Execution | Shared agent/tools, streamed snapshots while running, stop and errors |
 | Approvals | Exact pending request; allow once, allow that tool for the rest of the conversation, always allow it in this project, or deny |
@@ -1559,9 +1559,25 @@ Limits of this slice:
   can see, the paths are all it gets. Whether a model can see is the model
   catalog's word for its ID. A referenced conversation is
   passed as its most recent exchange (about 12,000 bytes), and a skill as its
-  instructions, for that turn only: neither is saved with the message, so
-  the chips a message shows for them last while the window that sent it
-  is open, as in the WebView. Paste,
+  instructions. The add-context box also lists, each under its own heading
+  and filtered by what is typed, the project's artifacts (this
+  conversation's first, then the newest), where work can run (this computer
+  and the saved SSH hosts; found by "server" too), the runtimes (Python on
+  this computer, and R once the conversation has one; found by "runtime"),
+  the workflow library and the memos. These are told to the model the way
+  the WebView tells them: an artifact as its name and where its file is
+  now, an environment as its context id and kind (a saved host is also
+  attached to the conversation, so its runs may go there), a runtime as the
+  `python` or `r` tool to call with its context id and to inspect rather
+  than re-run, and a workflow as its goal and staged tasks to apply to the
+  request. A memo is never a reference: picking one puts its text into the
+  message after what is written, as the WebView's `/memo` does, so the model
+  reads a memo only when it is sent that way. All of it is for that turn
+  only: none is saved with the message, so the chips a message shows for
+  them last while the window that sent it is open, as in the WebView. A
+  runtime on an SSH host is refused, because the embedded host keeps Python
+  and R on this computer; a conversation is not read by the WebView's
+  reader agent, and `#project` is not offered. Paste,
   drag and drop work, and typing `@` or `#` where a word starts opens the
   add-context picker (the character is taken back out). A slash command
   runs when it is the whole message. Typing `/` where a word starts opens
@@ -1711,7 +1727,12 @@ the conversation falls back to the default.
 Attach a file from outside the project and one inside it; add another
 conversation and a skill from the add-context box; remove a chip; send, and
 confirm the file chips stay on the message and `uploads/` holds the copy. Send
-files with no text.
+files with no text. Type `@`, then `server`: this computer and the saved hosts
+are listed under Environments; pick one with the arrows and Return, add an
+artifact, the Python runtime and a workflow with the pointer, send, and
+confirm each shows as a chip on the message and What the model is sent lists
+them for that turn. Pick a memo: its text is put into the message box and no
+chip is added. Press Escape with the box open: only the box closes.
 Type a word that occurs only in a message, and one that matches nothing. Press
 Escape with the palette over Settings and over the Files panel: only the
 palette closes. Click outside it: it closes.

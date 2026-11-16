@@ -721,7 +721,10 @@ pub const ZH: &[(&str, &str)] = &[
     ("There is no other project yet. Open one from the home page.", "还没有其他项目。请从首页打开一个。"),
     // Palette.
     ("Search conversations, projects and files…", "搜索会话、项目和文件…"),
-    ("Add a file, a conversation or a skill to this message…", "为这条消息添加文件、会话或技能…"),
+    ("Add a file, an artifact, an environment, a conversation, a skill, a workflow or a memo…", "添加文件、产物、环境、会话、技能、工作流或备忘…"),
+    ("Runtimes", "运行时"),
+    ("{} runtime", "{} 运行时"),
+    ("Memos · local only, nothing is sent", "备忘录 · 仅本机，不会发送"),
     ("Type a file name, a word from a conversation, or a skill.", "输入文件名、会话中的词语或技能名。"),
     // Project settings and transfer.
     ("Name", "名称"),

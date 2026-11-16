@@ -1,6 +1,7 @@
 //! What a message being written carries besides its text: project files and
-//! references to conversations and skills. Kept per conversation, like the
-//! draft, and without graphics.
+//! references to conversations, skills, artifacts, environments, runtimes
+//! and workflows. Kept per conversation, like the draft, and without
+//! graphics.
 use wisp_dto::{
     ComposerReferenceArg,
     native_conversations::{Item, Snapshot},
@@ -61,6 +62,47 @@ pub enum Chip {
         title: String,
     },
     Skill(String),
+    /// A file the project recorded, by its artifact id.
+    Artifact {
+        id: String,
+        name: String,
+    },
+    /// Where the turn's work is to run: this computer (`local`) or a saved
+    /// host (`ssh:alias`).
+    Environment {
+        id: String,
+        label: String,
+    },
+    /// An interpreter that keeps its variables between calls: `python` or
+    /// `r`, on the environment `context_id`.
+    Runtime {
+        context_id: String,
+        language: String,
+        label: String,
+    },
+    /// A workflow template, by its id.
+    Workflow {
+        id: String,
+        name: String,
+    },
+}
+
+/// How a runtime's language is written.
+pub fn language_name(language: &str) -> &str {
+    match language {
+        "python" => "Python",
+        "r" => "R",
+        other => other,
+    }
+}
+
+/// What an environment is called when nothing better is known: this
+/// computer, or a saved host by its alias.
+pub fn environment_name(id: &str) -> String {
+    match id {
+        "local" => crate::i18n::tr("This computer").to_owned(),
+        id => id.strip_prefix("ssh:").unwrap_or(id).to_owned(),
+    }
 }
 
 impl Chip {
@@ -69,6 +111,8 @@ impl Chip {
             Chip::File(path) => crate::files::file_name(path).to_owned(),
             Chip::Conversation { title, .. } => title.clone(),
             Chip::Skill(name) => name.clone(),
+            Chip::Artifact { name, .. } | Chip::Workflow { name, .. } => name.clone(),
+            Chip::Environment { label, .. } | Chip::Runtime { label, .. } => label.clone(),
         }
     }
 
@@ -77,19 +121,90 @@ impl Chip {
             Chip::File(_) => "doc",
             Chip::Conversation { .. } => "chat",
             Chip::Skill(_) => "skill",
+            Chip::Artifact { .. } => "layers",
+            Chip::Environment { .. } => "server",
+            Chip::Runtime { .. } => "terminal",
+            Chip::Workflow { .. } => "branch",
         }
     }
+
+    /// What the chip asks the host to tell the model; a file is not a
+    /// reference but part of the message.
+    pub fn reference(&self) -> Option<ComposerReferenceArg> {
+        Some(match self {
+            Chip::File(_) => return None,
+            Chip::Conversation { id, .. } => ComposerReferenceArg::Session { id: id.clone() },
+            Chip::Skill(name) => ComposerReferenceArg::Skill { name: name.clone() },
+            Chip::Artifact { id, .. } => ComposerReferenceArg::Artifact { id: id.clone() },
+            Chip::Environment { id, .. } => ComposerReferenceArg::Context { id: id.clone() },
+            Chip::Runtime {
+                context_id,
+                language,
+                ..
+            } => ComposerReferenceArg::Runtime {
+                context_id: context_id.clone(),
+                language: language.clone(),
+            },
+            Chip::Workflow { id, .. } => ComposerReferenceArg::Workflow { id: id.clone() },
+        })
+    }
+
+    /// The chip for a reference a message was sent with, called `name`
+    /// when that is known. A project is not something this composer
+    /// attaches.
+    pub fn of_reference(reference: &ComposerReferenceArg, name: Option<String>) -> Option<Chip> {
+        use crate::i18n::tr;
+        Some(match reference {
+            ComposerReferenceArg::Session { id } => Chip::Conversation {
+                id: id.clone(),
+                title: name.unwrap_or_else(|| tr("Conversation").to_owned()),
+            },
+            ComposerReferenceArg::Skill { name } => Chip::Skill(name.clone()),
+            ComposerReferenceArg::Artifact { id } => Chip::Artifact {
+                name: name.unwrap_or_else(|| id.clone()),
+                id: id.clone(),
+            },
+            ComposerReferenceArg::Context { id } => Chip::Environment {
+                label: name.unwrap_or_else(|| environment_name(id)),
+                id: id.clone(),
+            },
+            ComposerReferenceArg::Runtime {
+                context_id,
+                language,
+            } => Chip::Runtime {
+                label: name.unwrap_or_else(|| runtime_chip_label(language, context_id)),
+                context_id: context_id.clone(),
+                language: language.clone(),
+            },
+            ComposerReferenceArg::Workflow { id } => Chip::Workflow {
+                name: name.unwrap_or_else(|| id.clone()),
+                id: id.clone(),
+            },
+            ComposerReferenceArg::Project { .. } => return None,
+        })
+    }
+}
+
+/// A runtime chip's words, as the WebView writes them: the language, then
+/// where it runs.
+pub fn runtime_chip_label(language: &str, context_id: &str) -> String {
+    format!(
+        "{} · {}",
+        language_name(language),
+        environment_name(context_id)
+    )
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Pending(Vec<Chip>);
 
 impl Pending {
-    /// Adds a chip unless the same thing is attached already.
+    /// Adds a chip unless the same thing is attached already: the same
+    /// file, or what refers to the same thing whatever it is called now.
     pub fn add(&mut self, chip: Chip) -> bool {
-        let same = |other: &Chip| match (other, &chip) {
-            (Chip::Conversation { id: a, .. }, Chip::Conversation { id: b, .. }) => a == b,
-            (a, b) => a == b,
+        let same = |other: &Chip| match (other.reference(), chip.reference()) {
+            (Some(a), Some(b)) => a == b,
+            _ => *other == chip,
         };
         if self.0.iter().any(same) {
             return false;
@@ -119,9 +234,8 @@ impl Pending {
             .collect()
     }
 
-    /// Conversations and skills are context for this turn only.
-    /// The conversations and skills attached: what a sent message shows
-    /// it carried, besides its files.
+    /// Everything but files is context for this turn only: what a sent
+    /// message shows it carried, besides its files.
     pub fn reference_chips(&self) -> Vec<Chip> {
         self.0
             .iter()
@@ -131,41 +245,26 @@ impl Pending {
     }
 
     /// The chips of a message that was put aside: its files and what it
-    /// referred to, a conversation by the title `title` finds for it.
+    /// referred to, each called what `name` finds for it.
     pub fn from_sent(
         attachments: &[String],
         references: &[ComposerReferenceArg],
-        title: impl Fn(&str) -> String,
+        name: impl Fn(&ComposerReferenceArg) -> Option<String>,
     ) -> Self {
         let mut pending = Self::default();
         for path in attachments {
             pending.add(Chip::File(path.clone()));
         }
         for reference in references {
-            match reference {
-                ComposerReferenceArg::Session { id } => pending.add(Chip::Conversation {
-                    id: id.clone(),
-                    title: title(id),
-                }),
-                ComposerReferenceArg::Skill { name } => pending.add(Chip::Skill(name.clone())),
-                // The composer attaches nothing else.
-                _ => false,
-            };
+            if let Some(chip) = Chip::of_reference(reference, name(reference)) {
+                pending.add(chip);
+            }
         }
         pending
     }
 
     pub fn references(&self) -> Vec<ComposerReferenceArg> {
-        self.0
-            .iter()
-            .filter_map(|chip| match chip {
-                Chip::Conversation { id, .. } => {
-                    Some(ComposerReferenceArg::Session { id: id.clone() })
-                }
-                Chip::Skill(name) => Some(ComposerReferenceArg::Skill { name: name.clone() }),
-                Chip::File(_) => None,
-            })
-            .collect()
+        self.0.iter().filter_map(Chip::reference).collect()
     }
 }
 
@@ -542,16 +641,30 @@ mod tests {
 
     #[test]
     fn a_message_put_aside_gets_its_chips_back() {
+        let sent = [
+            ComposerReferenceArg::Session { id: "s1".into() },
+            ComposerReferenceArg::Skill {
+                name: "deseq2".into(),
+            },
+            ComposerReferenceArg::Project { id: "p".into() },
+            ComposerReferenceArg::Artifact { id: "a1".into() },
+            ComposerReferenceArg::Context {
+                id: "ssh:gpu".into(),
+            },
+            ComposerReferenceArg::Runtime {
+                context_id: "local".into(),
+                language: "r".into(),
+            },
+            ComposerReferenceArg::Workflow { id: "w1".into() },
+        ];
         let pending = Pending::from_sent(
             &["data/qc.csv".into()],
-            &[
-                ComposerReferenceArg::Session { id: "s1".into() },
-                ComposerReferenceArg::Skill {
-                    name: "deseq2".into(),
-                },
-                ComposerReferenceArg::Project { id: "p".into() },
-            ],
-            |id| format!("Title of {id}"),
+            &sent,
+            |reference| match reference {
+                ComposerReferenceArg::Session { id } => Some(format!("Title of {id}")),
+                ComposerReferenceArg::Artifact { .. } => Some("plot.png".into()),
+                _ => None,
+            },
         );
         assert_eq!(
             pending.chips(),
@@ -562,11 +675,115 @@ mod tests {
                     title: "Title of s1".into(),
                 },
                 Chip::Skill("deseq2".into()),
+                Chip::Artifact {
+                    id: "a1".into(),
+                    name: "plot.png".into(),
+                },
+                // Named from what the reference says when nothing better
+                // is known.
+                Chip::Environment {
+                    id: "ssh:gpu".into(),
+                    label: "gpu".into(),
+                },
+                Chip::Runtime {
+                    context_id: "local".into(),
+                    language: "r".into(),
+                    label: "R · This computer".into(),
+                },
+                Chip::Workflow {
+                    id: "w1".into(),
+                    name: "w1".into(),
+                },
             ]
         );
-        // What it sends is what it sent.
+        // What it sends is what it sent, but for the project, which this
+        // composer does not attach.
         assert_eq!(pending.attachments(), ["data/qc.csv"]);
-        assert_eq!(pending.references().len(), 2);
+        let mut expected = sent.to_vec();
+        expected.remove(2);
+        assert_eq!(pending.references(), expected);
+    }
+
+    #[test]
+    fn each_kind_of_chip_sends_its_reference_and_shows_its_own_icon() {
+        let chips = [
+            Chip::Artifact {
+                id: "a1".into(),
+                name: "fig1.png".into(),
+            },
+            Chip::Environment {
+                id: "local".into(),
+                label: "This computer".into(),
+            },
+            Chip::Runtime {
+                context_id: "local".into(),
+                language: "python".into(),
+                label: runtime_chip_label("python", "local"),
+            },
+            Chip::Workflow {
+                id: "w1".into(),
+                name: "Screen".into(),
+            },
+        ];
+        let mut pending = Pending::default();
+        for chip in chips.clone() {
+            assert!(pending.add(chip));
+        }
+        // The same thing under another name is still the same thing.
+        assert!(!pending.add(Chip::Artifact {
+            id: "a1".into(),
+            name: "renamed.png".into(),
+        }));
+        assert!(!pending.add(Chip::Workflow {
+            id: "w1".into(),
+            name: "Renamed".into(),
+        }));
+        // Another language on the same computer is another runtime.
+        assert!(pending.add(Chip::Runtime {
+            context_id: "local".into(),
+            language: "r".into(),
+            label: runtime_chip_label("r", "local"),
+        }));
+        assert!(pending.attachments().is_empty());
+        assert_eq!(
+            pending.references()[..4],
+            [
+                ComposerReferenceArg::Artifact { id: "a1".into() },
+                ComposerReferenceArg::Context { id: "local".into() },
+                ComposerReferenceArg::Runtime {
+                    context_id: "local".into(),
+                    language: "python".into(),
+                },
+                ComposerReferenceArg::Workflow { id: "w1".into() },
+            ]
+        );
+        let labels: Vec<_> = pending.chips().iter().map(Chip::label).collect();
+        assert_eq!(
+            labels,
+            [
+                "fig1.png",
+                "This computer",
+                "Python · This computer",
+                "Screen",
+                "R · This computer"
+            ]
+        );
+        let mut icons: Vec<_> = chips.iter().map(Chip::icon).collect();
+        icons.extend([
+            Chip::File("a".into()).icon(),
+            Chip::Skill("s".into()).icon(),
+            Chip::Conversation {
+                id: "c".into(),
+                title: "c".into(),
+            }
+            .icon(),
+        ]);
+        let count = icons.len();
+        icons.sort_unstable();
+        icons.dedup();
+        assert_eq!(icons.len(), count);
+        // They are what a sent message shows it carried.
+        assert_eq!(pending.reference_chips().len(), 5);
     }
 
     #[test]

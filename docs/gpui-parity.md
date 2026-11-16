@@ -104,7 +104,7 @@ to find in the running app.
 | Attach files, images, PDF [附加文件] | Yes | Done: any file through the system dialog, drop or paste, copied into `uploads/` when it is outside the project; a model that can see gets the attached pictures themselves, and one that cannot gets the paths and what a saved model that can see (the Picture model in Settings, or the first) saw in them; when the model asks to look at a picture larger than it takes, a question of its own (Resize and continue, or Cancel; never remembered) comes before a smaller copy is sent, as in the WebView; an attached picture is sent smaller without asking | served |
 | Browse project files to attach [你的文件] | Yes | Done: found by name in the add-context box | served |
 | Paste or drop files | Yes | Done: files dropped onto the conversation are attached, and a picture pasted into the composer (a screenshot, say) is kept in `uploads/` and attached; text pastes as text | tauri |
-| `@` artifact, `#` conversation, `/` skill mentions | Yes | Partial: typing `@` or `#` where a word starts opens the add-context picker for a file, conversation or skill, and typing `/` opens a menu of the commands and skills that begin with what follows it, a skill picked there being attached; a conversation is passed as a recent excerpt, not through the reader agent; no artifacts, environments, runtimes, workflows or memos | served |
+| `@` artifact / environment / runtime, `#` conversation / project, `/` command / workflow / skill, `/memo` mentions | Yes | Partial: typing `@` or `#` where a word starts opens the add-context picker, which lists files, artifacts, environments (this computer and saved SSH hosts), runtimes, conversations, skills, workflows and memos, each under its own heading and filtered as you type; each but a memo is attached as a chip on the composer and on the sent message and told to the model as the WebView tells it (an artifact by name and current path, an environment by context id and kind and attached to the conversation, a runtime as the tool and context id to inspect, a workflow as its staged template), and a memo puts its text into the message as the WebView's `/memo` does; typing `/` opens a menu of the commands and skills that begin with what follows it, a skill picked there being attached. Missing: a conversation is passed as a recent excerpt, not through the WebView's reader agent (`src-tauri/src/project_reader.rs`, not in the host); no `#project` mention (it needs the reader); workflows are not in the `/` menu; artifacts of other projects are not offered; runtimes are this computer's only, as the host runs Python and R nowhere else | served |
 | Model picker per conversation | Yes | Done: saved API models, or follow the default | served |
 | Reasoning effort / fast mode | Yes | Yes: effort, and fast mode (priority processing) where the model is OpenAI's own, per conversation and kept across restarts; fast mode has no per-model default in Settings | store |
 | Permission mode [默认 / 完全权限] | Yes | Done: Ask first or Full access per conversation, with a question before it turns on; dangerous shell commands still ask | served |
@@ -310,8 +310,9 @@ before the things that hang in it.
 4b. **Follow-up suggestions** — what could be asked next, after an answer.
    *(done)*
 5. **Attachments and mentions** — files, images, `@`, `#`, `/`. *(done for
-   files, conversations and skills; paste, drop, images as model input and
-   inline triggers remain)*
+   files, conversations, skills, artifacts, environments, runtimes,
+   workflows and memos; the reader agent for a conversation and `#project`
+   remain)*
 6. **Right panel as tabs** — artifacts, run control, environments, notebook.
    *(tabs, artifacts and run cancel done; 6a done in the composer: where a
    conversation's work runs; 6b done: the notebook; 6c done: questions

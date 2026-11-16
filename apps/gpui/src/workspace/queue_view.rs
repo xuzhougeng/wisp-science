@@ -210,20 +210,29 @@ impl Workspace {
                 let Some(queued) = taken else {
                     return;
                 };
-                // A conversation it referred to is named as the sidebar
-                // names it.
-                let titles: Vec<(String, String)> = this
-                    .sessions
-                    .iter()
-                    .map(|row| (row.id.clone(), row.title.clone()))
-                    .collect();
-                let carried = Pending::from_sent(&queued.attachments, &queued.references, |id| {
-                    titles
-                        .iter()
-                        .find(|(known, _)| known == id)
-                        .map(|(_, title)| title.clone())
-                        .unwrap_or_else(|| tr("Conversation").into())
-                });
+                // What it referred to is named as the sidebar, the
+                // Artifacts tab and the workflow library name it.
+                let carried =
+                    Pending::from_sent(&queued.attachments, &queued.references, |reference| {
+                        match reference {
+                            wisp_dto::ComposerReferenceArg::Session { id } => this
+                                .sessions
+                                .iter()
+                                .find(|row| &row.id == id)
+                                .map(|row| row.title.clone()),
+                            wisp_dto::ComposerReferenceArg::Artifact { id } => this
+                                .artifacts
+                                .iter()
+                                .find(|row| &row.id == id)
+                                .map(|row| row.name.clone()),
+                            wisp_dto::ComposerReferenceArg::Workflow { id } => this
+                                .workflows
+                                .iter()
+                                .find(|workflow| &workflow.id == id)
+                                .map(|workflow| workflow.name.clone()),
+                            _ => None,
+                        }
+                    });
                 this.state.save_draft(queued.message.clone());
                 this.composer
                     .update(cx, |input, cx| input.set_value(queued.message, window, cx));

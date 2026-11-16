@@ -561,7 +561,7 @@ pub async fn build(
     }
     // Context the user attached to this turn only. It goes in front of
     // their request and is not saved with the conversation.
-    for injection in reference_context(store, &skills, references).await? {
+    for injection in reference_context(store, &skills, references, frame, &root).await? {
         agent.ctx.inject_user(injection);
     }
     // A lab member's agent is told about the lab every turn.
@@ -820,17 +820,86 @@ async fn conversation_excerpt(store: &Store, id: &str) -> Result<String> {
     ))
 }
 
+/// An artifact a message was sent with, as the WebView lists it for the
+/// model: its name and where its file is now, in the conversation's state
+/// (an exploration's own copy, or the project). One that is gone, hidden
+/// from this state or no longer readable fails the send.
+async fn artifact_line(store: &Store, id: &str, frame: &str, root: &Path) -> Result<String> {
+    use anyhow::Context;
+    let artifact = store
+        .get_artifact_detail(id)
+        .await?
+        .with_context(|| format!("Attached artifact '{id}' no longer exists."))?;
+    let scope = store
+        .frame_state_scope(frame)
+        .await?
+        .context("Target conversation not found.")?;
+    let unavailable =
+        || anyhow::anyhow!("Attached artifact '{id}' is unavailable in the active state.");
+    anyhow::ensure!(
+        store.artifact_visible_in_scope(id, &scope).await?,
+        unavailable()
+    );
+    let path = store
+        .artifact_path_in_scope(id, &scope)
+        .await?
+        .ok_or_else(unavailable)?;
+    let base = match scope {
+        wisp_store::StateScope::Exploration { .. } => root.to_path_buf(),
+        _ => PathBuf::from(&artifact.project_root),
+    };
+    let real = wisp_tools::safety::validate_file_path(&base, &path)
+        .ok()
+        .filter(|real| real.is_file())
+        .with_context(|| {
+            format!(
+                "Attached artifact '{}' is no longer readable.",
+                artifact.name
+            )
+        })?;
+    Ok(format!("- {}: {}", artifact.name, real.display()))
+}
+
 /// Turns the composer's references into context for one turn. A reference
 /// that cannot be honoured fails the send instead of being dropped silently.
+/// What each kind tells the model is the WebView's; an environment or a
+/// runtime named here is also attached to the conversation, so its work may
+/// run there, as the WebView does.
 async fn reference_context(
     store: &Store,
     skills: &SkillIndex,
     references: &[wisp_dto::ComposerReferenceArg],
+    frame: &str,
+    root: &Path,
 ) -> Result<Vec<String>> {
+    use anyhow::Context;
     use wisp_dto::ComposerReferenceArg as Reference;
+    use wisp_store::ExecutionContextKind;
     let mut seen = std::collections::HashSet::new();
     let mut conversations = Vec::new();
+    let mut artifact_lines = Vec::new();
+    let mut context_lines = Vec::new();
+    let mut runtime_lines = Vec::new();
     let mut skill_blocks = Vec::new();
+    let mut workflow_blocks = Vec::new();
+    // Environments to attach once every reference was found.
+    let mut attach = Vec::new();
+    let environment = |id: &str| {
+        let id = id.to_owned();
+        async move {
+            store
+                .get_execution_context(&id)
+                .await?
+                .with_context(|| format!("Referenced environment '{id}' no longer exists."))
+        }
+    };
+    let label = |context: &wisp_store::ExecutionContext| {
+        if context.label.trim().is_empty() {
+            context.id.clone()
+        } else {
+            context.label.clone()
+        }
+    };
     for reference in references {
         match reference {
             Reference::Skill { name } => {
@@ -846,8 +915,85 @@ async fn reference_context(
                     conversations.push(conversation_excerpt(store, id).await?);
                 }
             }
-            _ => anyhow::bail!("This kind of reference is not available in this build yet"),
+            Reference::Artifact { id } => {
+                if seen.insert(format!("artifact:{id}")) {
+                    artifact_lines.push(artifact_line(store, id, frame, root).await?);
+                }
+            }
+            Reference::Context { id } => {
+                if seen.insert(format!("context:{id}")) {
+                    let context = environment(id).await?;
+                    context_lines.push(format!(
+                        "- {} (context_id: {id}, kind: {})",
+                        label(&context),
+                        context.kind.as_str()
+                    ));
+                    attach.push(context);
+                }
+            }
+            Reference::Runtime {
+                context_id,
+                language,
+            } => {
+                if seen.insert(format!("runtime:{context_id}:{language}")) {
+                    anyhow::ensure!(
+                        language == "python" || language == "r",
+                        "Unknown runtime language '{language}'."
+                    );
+                    let context = environment(context_id).await?;
+                    // This host keeps its interpreters on this computer.
+                    anyhow::ensure!(
+                        context.kind == ExecutionContextKind::Local,
+                        "The {language} runtime on '{}' cannot be used here: Python and R run on \
+                         this computer.",
+                        label(&context)
+                    );
+                    runtime_lines.push(format!(
+                        "- {language} runtime on {} (context_id: {context_id}): call the \
+                         `{language}` tool with this context_id.",
+                        label(&context)
+                    ));
+                }
+            }
+            Reference::Workflow { id } => {
+                if seen.insert(format!("workflow:{id}")) {
+                    workflow_blocks.push(crate::workflows::reference(store, id).await?);
+                }
+            }
+            Reference::Project { .. } => {
+                anyhow::bail!("This kind of reference is not available in this build yet")
+            }
         }
+    }
+    // Local work is always on; the store refuses to switch it.
+    for context in attach {
+        if context.kind != ExecutionContextKind::Local {
+            store
+                .set_session_execution_context_enabled(frame, &context.id, true)
+                .await?;
+        }
+    }
+    if !artifact_lines.is_empty() {
+        conversations.push(format!(
+            "The user explicitly attached these local artifacts for this turn. Read them when \
+             relevant:\n{}",
+            artifact_lines.join("\n")
+        ));
+    }
+    if !context_lines.is_empty() {
+        conversations.push(format!(
+            "The user directed this request at these execution contexts. Run this turn's work \
+             there — submit commands with `run_in_context` using the context id:\n{}",
+            context_lines.join("\n")
+        ));
+    }
+    if !runtime_lines.is_empty() {
+        conversations.push(format!(
+            "The user referenced these persistent language runtimes. Each keeps its variables \
+             between calls, so inspect state directly (R: `ls()`, `str(x)`; Python: `dir()`, \
+             `type(x)`) instead of re-running earlier work:\n{}",
+            runtime_lines.join("\n")
+        ));
     }
     if !skill_blocks.is_empty() {
         conversations.push(format!(
@@ -855,6 +1001,7 @@ async fn reference_context(
             skill_blocks.join("\n\n")
         ));
     }
+    conversations.extend(workflow_blocks);
     Ok(conversations)
 }
 

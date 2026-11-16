@@ -280,6 +280,38 @@ impl Workflow {
             "tasks": tasks,
         })
     }
+
+    /// What a message the workflow was attached to tells the model for
+    /// that turn, after the WebView's selected-workflow block: apply the
+    /// template to the request it came with, keeping its tasks and their
+    /// order. Here the tasks are carried out in the conversation, as a
+    /// workflow run in one conversation does.
+    pub(crate) fn reference(&self) -> String {
+        format!(
+            "<selected_workflow_template>\n\
+             The user explicitly selected the reusable Workflow “{}”. Apply it to the current \
+             request: carry out its tasks in the order of their stages, preserve every \
+             dependency, and bind the current request as workflow context. Do not merely \
+             describe the template. If the request supplies a more specific goal, use that goal \
+             without changing the tasks.\n\
+             Template id: {}\n\n{}\
+             </selected_workflow_template>",
+            self.name,
+            self.id,
+            self.message()
+        )
+    }
+}
+
+/// The turn context for a workflow a message was sent with, by its id;
+/// one that is gone fails the send.
+pub(crate) async fn reference(store: &Store, id: &str) -> Result<String> {
+    list(store)
+        .await
+        .into_iter()
+        .find(|workflow| workflow.id == id)
+        .map(|workflow| workflow.reference())
+        .with_context(|| format!("Selected Workflow '{id}' is unavailable or was removed."))
 }
 
 /// A task id for each task, from its title: lower case, words joined by
@@ -1085,6 +1117,23 @@ mod tests {
             };
             assert!(checked(&form).is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn a_workflow_sent_with_a_message_is_applied_to_that_request() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("wisp.sqlite")).await.unwrap();
+        let starter = list(&store).await.remove(0);
+        let told = reference(&store, &starter.id).await.unwrap();
+        assert!(told.starts_with("<selected_workflow_template>\n"));
+        assert!(told.ends_with("</selected_workflow_template>"));
+        assert!(told.contains(&format!("Workflow “{}”", starter.name)));
+        assert!(told.contains(&format!("Template id: {}", starter.id)));
+        // The goal and the staged tasks are those a run would send.
+        assert!(told.contains(&starter.message()));
+        // A workflow removed since fails the send rather than vanishing.
+        let gone = reference(&store, "removed").await.unwrap_err();
+        assert!(gone.to_string().contains("'removed' is unavailable"));
     }
 
     #[tokio::test]
