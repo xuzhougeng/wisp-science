@@ -63,6 +63,7 @@ mod terminal_view;
 mod trajectory_view;
 mod transfer_view;
 mod transfers_view;
+mod webview_import_view;
 
 use crate::i18n::tr;
 use std::{
@@ -179,6 +180,7 @@ pub struct Workspace {
     merge_summary: Entity<InputState>,
     /// The import dialog.
     imports: import_view::Imports,
+    webview_imports: webview_import_view::WebViewImports,
     /// Title, report.
     archive_fields: [Entity<InputState>; 2],
     model_view: Option<wisp_server::desktop::ModelView>,
@@ -1398,6 +1400,7 @@ impl Workspace {
             merge_error: None,
             merge_summary,
             imports: Default::default(),
+            webview_imports: Default::default(),
             archive_fields,
             model_view: None,
             model_view_error: None,
@@ -1926,6 +1929,7 @@ impl Workspace {
             Some(Layer::ImportConversations) => {
                 self.imports = Default::default();
             }
+            Some(Layer::WebViewImport) => self.webview_imports = Default::default(),
             // The page stays open underneath.
             Some(Layer::JournalForm) => {}
             Some(Layer::RecapForm) => self.recap_editing = None,
@@ -4274,6 +4278,11 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::BranchMerge) {
             root.child(self.render_branch_merge(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::WebViewImport) {
+            root.child(self.render_webview_import(cx))
         } else {
             root
         };

@@ -528,6 +528,17 @@ impl Workspace {
                     )
                     .child(
                         icon_button(
+                            "home-webview",
+                            "computer",
+                            tr("Bring over projects from the WebView desktop"),
+                        )
+                        .disabled(self.pending)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_webview_import(window, cx)),
+                        ),
+                    )
+                    .child(
+                        icon_button(
                             "home-join",
                             "sync",
                             tr("Join a project from another device"),

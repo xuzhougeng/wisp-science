@@ -15054,3 +15054,169 @@ async fn a_new_project_can_keep_its_own_database_and_such_a_folder_opens_in_plac
     );
     target.shutdown().await;
 }
+
+#[tokio::test]
+async fn the_webview_desktops_projects_are_listed_and_brought_over_from_a_copy() {
+    let temp = tempfile::tempdir().unwrap();
+    // The WebView's data: a project kept in its database, one that keeps
+    // its own in its folder, one whose folder is gone, and a hidden one.
+    let database = temp.path().join("webview").join("wisp.sqlite");
+    let kept = temp.path().join("kept");
+    let own = temp.path().join("own");
+    let hidden = temp.path().join("hidden");
+    for folder in [&kept, &own, &hidden] {
+        std::fs::create_dir(folder).unwrap();
+    }
+    std::fs::write(kept.join("counts.csv"), "gene,count\nA,1\n").unwrap();
+    {
+        let webview = wisp_store::Store::open_application(&database)
+            .await
+            .unwrap();
+        webview
+            .create_project("kept", "Kept study", kept.to_str().unwrap())
+            .await
+            .unwrap();
+        webview
+            .create_frame("kept-1", "kept", "agent", "model")
+            .await
+            .unwrap();
+        webview
+            .append_message("kept-1", 1, &Message::user("saved conversation"))
+            .await
+            .unwrap();
+        // Never begun, so not counted.
+        webview
+            .create_frame("kept-empty", "kept", "agent", "model")
+            .await
+            .unwrap();
+        webview.set_project_starred("kept", true).await.unwrap();
+        webview
+            .create_project("own", "Own study", own.to_str().unwrap())
+            .await
+            .unwrap();
+        webview
+            .create_frame("own-1", "own", "agent", "model")
+            .await
+            .unwrap();
+        webview
+            .append_message("own-1", 1, &Message::user("kept in its folder"))
+            .await
+            .unwrap();
+        webview.migrate_project_storage("own").await.unwrap();
+        webview
+            .create_project(
+                "gone",
+                "Gone study",
+                temp.path().join("gone").to_str().unwrap(),
+            )
+            .await
+            .unwrap();
+        webview
+            .create_project("assistant:x", "Hidden", hidden.to_str().unwrap())
+            .await
+            .unwrap();
+    }
+    // Made with the project, then moved away.
+    std::fs::remove_dir_all(temp.path().join("gone")).unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+
+    let found = server.webview_projects(&database).await.unwrap();
+    let ids: Vec<&str> = found.iter().map(|project| project.id.as_str()).collect();
+    // Starred first, then by name; the hidden one is left out.
+    assert_eq!(ids, ["kept", "gone", "own"]);
+    assert_eq!(found[0].conversations, Some(1));
+    assert!(found[0].starred && found[0].folder_found && !found[0].own_database);
+    assert!(!found[0].here);
+    assert!(!found[1].folder_found);
+    assert_eq!(found[2].conversations, None);
+    assert!(found[2].own_database && found[2].folder_found);
+    // Only a Wisp database that is there is read.
+    let other = temp.path().join("other.sqlite");
+    std::fs::write(&other, b"").unwrap();
+    assert!(server.webview_projects(&other).await.is_err());
+    assert!(server
+        .webview_projects(&temp.path().join("missing.sqlite"))
+        .await
+        .is_err());
+
+    let chosen: Vec<String> = ["kept", "own", "gone", "nothing"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let done = server
+        .import_webview_projects(&database, &chosen)
+        .await
+        .unwrap();
+    let outcome: Vec<(&str, bool)> = done
+        .iter()
+        .map(|done| (done.id.as_str(), done.error.is_none()))
+        .collect();
+    assert!(done[1].error.is_none(), "{:?}", done[1].error);
+    assert_eq!(
+        outcome,
+        [
+            ("kept", true),
+            ("own", true),
+            ("gone", false),
+            ("nothing", false)
+        ]
+    );
+    assert!(
+        done[2]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("not on this computer"),
+        "{:?}",
+        done[2].error
+    );
+    // The copied project uses its folder where it is, starred as it was.
+    assert_eq!(server.0.store.list_sessions("kept").await.unwrap().len(), 1);
+    let (_, _, root) = server
+        .0
+        .store
+        .get_project_meta("kept")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        std::path::PathBuf::from(&root),
+        std::fs::canonicalize(&kept).unwrap()
+    );
+    assert!(server
+        .0
+        .store
+        .starred_project_ids()
+        .await
+        .unwrap()
+        .contains("kept"));
+    // The one with its own database is opened in its folder.
+    assert_eq!(server.0.store.list_sessions("own").await.unwrap().len(), 1);
+    let here: Vec<String> = server
+        .webview_projects(&database)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|project| project.here)
+        .map(|project| project.id)
+        .collect();
+    assert_eq!(here, ["kept", "own"]);
+    // A second time is refused, and the copy is not left behind.
+    let again = server
+        .import_webview_projects(&database, &["kept".to_owned()])
+        .await
+        .unwrap();
+    assert!(again[0].error.is_some());
+    assert!(!server.0.config.data.join("webview-import").exists());
+    server.shutdown().await;
+
+    // The WebView still has all it had.
+    let webview = wisp_store::Store::open_application(&database)
+        .await
+        .unwrap();
+    assert_eq!(webview.list_sessions("kept").await.unwrap().len(), 1);
+    assert_eq!(webview.list_sessions("own").await.unwrap().len(), 1);
+    assert!(webview.get_project("gone").await.unwrap().is_some());
+}

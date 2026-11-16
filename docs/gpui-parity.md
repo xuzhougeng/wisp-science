@@ -227,7 +227,7 @@ The WebView panel is tabbed; a launcher [开始] opens each tool as a tab.
 | Update check and install | Yes | Partial: a check when the app starts (the WebView's switch, with Don't check at start on its note) and Check for updates in Settings say whether a newer release exists and open the release page; no in-app install | tauri |
 | Several windows | Yes | Yes: any number on the same host, each with its own page and conversation; a window opened for a project opens again in it at the next start until it is closed, as the WebView's project windows do | ui |
 | Keyboard shortcuts (⌘N, ⌘K, ⌘B, ⌘F, ⌘⇧F, ⌘P, ⌘,) | Yes | Done: ⌘N, ⌘K, ⌘B, ⌘F, ⌘⇧F, ⌘, and ⌘P, the palette with only its commands (Ctrl off macOS) | ui |
-| Import existing WebView data | n/a | Partial: project by project, by exporting an archive there and importing it here; settings, keys and favorites are not carried over | store |
+| Import existing WebView data | n/a | Partial: projects, from Bring over on the home page or the palette: the WebView's database is found where it keeps it (or chosen) and only read, its projects listed with their folders and conversations, and the ticked ones brought over in one go: one kept in the WebView's database is copied with its conversations and goes on using its folder where it is, one that keeps its own database in its folder is opened there, and a star comes along; settings, keys and favorites are not carried over | store |
 
 ## 10. Also in the WebView
 

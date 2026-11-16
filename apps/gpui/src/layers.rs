@@ -128,6 +128,8 @@ pub enum Layer {
     BranchMerge,
     /// Conversations from Codex or Claude Code to import: a dialog.
     ImportConversations,
+    /// The WebView desktop's projects to bring over: a dialog.
+    WebViewImport,
     /// The first-run guide, over whatever the first screen is.
     Onboarding,
     /// The name field in the Files panel: a new folder or file, or a rename.
@@ -877,6 +879,12 @@ mod tests {
         stack.open(Layer::ImportConversations);
         assert_eq!(stack.dismiss_top(), Some(Layer::ImportConversations));
         assert!(stack.close(Layer::FilesPanel));
+        // And bringing the WebView's projects over, opened from the palette.
+        stack.open(Layer::Palette);
+        stack.close(Layer::Palette);
+        stack.open(Layer::WebViewImport);
+        assert_eq!(stack.dismiss_top(), Some(Layer::WebViewImport));
+        assert_eq!(stack.dismiss_top(), None);
         // The first-run guide is put away with one Escape, and a menu
         // opened above it goes first.
         stack.open(Layer::Onboarding);

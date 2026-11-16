@@ -72,6 +72,7 @@ pub enum Command {
     ImportConversations,
     NewProject,
     ImportProject,
+    WebViewImport,
     Skills,
     CheckUpdates,
     StarUs,
@@ -133,6 +134,7 @@ impl Command {
             Command::ImportConversations => tr("Import conversations from Codex or Claude Code"),
             Command::NewProject => tr("New project…"),
             Command::ImportProject => tr("Import a project archive or folder package"),
+            Command::WebViewImport => tr("Bring over projects from the WebView desktop"),
             Command::Skills => tr("Manage skills"),
             Command::CheckUpdates => tr("Check for updates"),
             Command::StarUs => tr("Star Wisp on GitHub"),
@@ -193,6 +195,7 @@ impl Command {
             Command::ImportConversations => "conversation-import",
             Command::NewProject => "square-pen",
             Command::ImportProject => "archive-import",
+            Command::WebViewImport => "computer",
             Command::Skills => "lightbulb",
             Command::CheckUpdates => "sync",
             Command::StarUs => "external-link",
@@ -255,6 +258,7 @@ impl Command {
             | Command::NewWindow
             | Command::NewProject
             | Command::ImportProject
+            | Command::WebViewImport
             | Command::Skills
             | Command::CheckUpdates
             | Command::StarUs
@@ -270,7 +274,7 @@ impl Command {
         }
     }
 
-    const ALL: [Command; 56] = [
+    const ALL: [Command; 57] = [
         Command::NewConversation,
         Command::OpenFolder,
         Command::Home,
@@ -315,6 +319,7 @@ impl Command {
         Command::ImportConversations,
         Command::NewProject,
         Command::ImportProject,
+        Command::WebViewImport,
         Command::Skills,
         Command::CheckUpdates,
         Command::StarUs,

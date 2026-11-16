@@ -66,6 +66,7 @@ mod toolchain;
 mod trajectory;
 mod transfers;
 mod usage;
+mod webview_import;
 mod workflows;
 mod workspace;
 

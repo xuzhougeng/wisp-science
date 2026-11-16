@@ -7343,6 +7343,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sqlx",
  "tar",
  "tempfile",
  "tokio",

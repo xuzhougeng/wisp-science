@@ -67,6 +67,7 @@ mod trajectory;
 mod turn_memory;
 mod turn_undo;
 mod updates;
+mod webview_import;
 mod workflows;
 
 use anyhow::{bail, ensure, Context, Result};

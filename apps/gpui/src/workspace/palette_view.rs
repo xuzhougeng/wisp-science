@@ -326,6 +326,7 @@ impl Workspace {
                 return self.open_onboarding(cx);
             }
             Command::ImportProject => return self.import_project(window, cx),
+            Command::WebViewImport => return self.open_webview_import(window, cx),
             Command::ExportProject => {
                 if let Some(project) = self.state.project.clone() {
                     self.export_project(project, window, cx);

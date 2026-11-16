@@ -7291,6 +7291,7 @@ pub use crate::papers::{
 pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
 pub use crate::plugins::PluginRow;
 pub use crate::project_archive::ArchiveProgress;
+pub use crate::webview_import::{WebViewImport, WebViewProject};
 
 /// Where a project's work keeps things on one SSH host.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
