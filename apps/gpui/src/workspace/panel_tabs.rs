@@ -13,6 +13,7 @@ use gpui_component::{
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph, icon_button},
+    surfaces,
 };
 use crate::{
     assets::icon,
@@ -238,19 +239,10 @@ impl Workspace {
     }
 
     /// The question under a run's card before its workspace goes.
-    fn clean_question(&self, run: &str, at_stake: bool, cx: &mut Context<Self>) -> Div {
+    fn clean_question(&self, run: &str, at_stake: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let (asked, run) = (run.to_owned(), run.to_owned());
-        div()
-            .v_flex()
-            .gap_1()
-            .p_2()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(if at_stake {
-                cx.theme().danger
-            } else {
-                cx.theme().border
-            })
+        surfaces::panel_card(SharedString::from(format!("run-clean-question-{run}")), cx)
+            .when(at_stake, |card| card.border_color(cx.theme().danger))
             .child(div().text_xs().child(if at_stake {
                 tr("Its outputs were never brought back; cleaning up anyway loses them.")
             } else {
@@ -459,11 +451,10 @@ impl Workspace {
             }
             grid
         };
-        let heading = |text: String| div().text_xs().font_semibold().child(text);
 
         // What the researcher approves by starting it.
         card = card
-            .child(heading(tr("Contract").into()))
+            .child(surfaces::panel_section(tr("Contract"), cx))
             .child(div().text_sm().child(details.spec.objective.clone()))
             .child(rows(method_search::contract(details)));
         let guardrails = method_search::guardrails(details);
@@ -514,12 +505,12 @@ impl Workspace {
             .duration_since(UNIX_EPOCH)
             .map(|elapsed| elapsed.as_secs() as i64)
             .unwrap_or(0);
-        card =
-            card.child(heading(tr("Progress").into()))
-                .child(rows(method_search::progress_rows(
-                    &method_search::progress(&details.run),
-                    now,
-                )));
+        card = card
+            .child(surfaces::panel_section(tr("Progress"), cx))
+            .child(rows(method_search::progress_rows(
+                &method_search::progress(&details.run),
+                now,
+            )));
 
         // What it kept.
         if !details.outputs.is_empty() {
@@ -543,7 +534,9 @@ impl Workspace {
                         })),
                 );
             }
-            card = card.child(heading(tr("Outputs").into())).child(files);
+            card = card
+                .child(surfaces::panel_section(tr("Outputs"), cx))
+                .child(files);
             if let Some((version, text)) = &self.search_output {
                 let path = details
                     .outputs
@@ -571,10 +564,10 @@ impl Workspace {
 
         // What it tried, and what it leans on now.
         if !details.candidates.is_empty() {
-            card = card.child(heading(crate::i18n::fill(
-                tr("Candidates ({})"),
-                &[&details.candidates.len()],
-            )));
+            card = card.child(surfaces::panel_section(
+                crate::i18n::fill(tr("Candidates ({})"), &[&details.candidates.len()]),
+                cx,
+            ));
             for candidate in &details.candidates {
                 let mut line = div()
                     .v_flex()
@@ -590,7 +583,7 @@ impl Workspace {
             }
         }
         if !details.strategies.is_empty() {
-            card = card.child(heading(tr("Strategies").into()));
+            card = card.child(surfaces::panel_section(tr("Strategies"), cx));
             for strategy in &details.strategies {
                 card = card.child(div().text_xs().child(method_search::strategy(strategy)));
             }
@@ -610,33 +603,28 @@ impl Workspace {
             .snapshot
             .as_ref()
             .map_or(0, |snapshot| panel::active_runs(&snapshot.run_cards));
-        // More tabs than fit the panel's width go on to a second line
+        // More tabs than fit the panel's width go on to a further line
         // rather than past its edge.
-        let mut tabs = div().h_flex().flex_wrap().gap_1().flex_1().min_w_0();
+        let mut tabs = div()
+            .h_flex()
+            .items_start()
+            .flex_wrap()
+            .gap_1()
+            .flex_1()
+            .min_w_0();
         for tab in panel::visible(&self.kept_tabs, self.panel_tab) {
             let selected = self.panel_tab == tab;
-            // Only the open tab spells its name; the rest are icons with a
-            // tooltip, so more tabs still fit a narrow panel. Runs that are
-            // still going show their count either way.
-            let label = match (tab, active, selected) {
-                (PanelTab::Runs, 1.., true) => Some(crate::i18n::fill(tr("Runs · {}"), &[&active])),
-                (PanelTab::Runs, 1.., false) => Some(active.to_string()),
-                (_, _, true) => Some(tab.label().to_owned()),
-                _ => None,
+            // Each tab is its name; runs that are still going add their
+            // count.
+            let label = match (tab, active) {
+                (PanelTab::Runs, 1..) => crate::i18n::fill(tr("Runs · {}"), &[&active]),
+                _ => tab.label().to_owned(),
             };
-            let mut button = Button::new(SharedString::from(format!("panel-tab-{}", tab.label())))
-                .icon(glyph(tab.icon()))
-                .small()
-                .ghost()
-                .selected(selected)
-                .tooltip(tab.label())
+            let button = Button::new(SharedString::from(format!("panel-tab-{}", tab.label())))
                 .on_click(
                     cx.listener(move |this, _, window, cx| this.show_panel_tab(tab, window, cx)),
                 );
-            if let Some(label) = label {
-                button = button.label(label);
-            }
-            tabs = tabs.child(button);
+            tabs = tabs.child(surfaces::panel_tab(button, label, selected, cx));
             // The open tab can be taken out of the row.
             if selected {
                 tabs = tabs.child(
@@ -670,13 +658,16 @@ impl Workspace {
                 add = add.child(deferred(self.panel_tab_menu(&missing, cx)));
             }
         }
+        // The words start where the tabs' content does: the strip's inset
+        // and a tab's own padding make the panel's `px_3`.
         div()
             .h_flex()
             .items_start()
             .gap_2()
-            .px_2()
-            .py(px(6.))
-            .min_h(px(44.))
+            .pl_1p5()
+            .pr_2()
+            .py_1p5()
+            .min_h(px(surfaces::PANEL_HEADER_HEIGHT))
             .flex_shrink_0()
             .border_b_1()
             .border_color(cx.theme().border)
@@ -724,15 +715,16 @@ impl Workspace {
             .min_h_0()
             .overflow_y_scroll();
         if let Some(error) = &self.error {
-            list = list.child(div().p_3().child(error_banner(error, cx)));
+            list = list.child(div().px_3().pt_3().child(error_banner(error, cx)));
         }
         if runs.is_empty() {
-            list = list.child(div().p_3().text_sm().text_color(muted).child(
+            list = list.child(surfaces::panel_empty(
                 if self.state.session.is_some() {
                     tr("This conversation has not started any runs.")
                 } else {
                     tr("Open a conversation to see its runs.")
                 },
+                cx,
             ));
         }
         for run in runs {
@@ -832,14 +824,12 @@ impl Workspace {
                     ),
                 );
             }
-            let mut card = div()
-                .v_flex()
-                .gap_1()
-                .px_3()
-                .py_2()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .child(div().text_sm().child(run.title.clone()))
+            let mut card = surfaces::panel_entry(cx)
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(run.title.clone()),
+                )
                 .child(
                     div()
                         .h_flex()
@@ -1003,7 +993,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         let muted = cx.theme().muted_foreground;
-        let mut block = div().v_flex().gap_1().pl(px(36.)).pr_3().pb_2();
+        let mut block = div().v_flex().gap_1().pl_9().pr_3().pb_2();
         match found {
             Err(problem) => {
                 return block.child(
@@ -1122,21 +1112,10 @@ impl Workspace {
                         this.set_artifact_scope(all, window, cx)
                     }))
             };
-        let header = div()
-            .h_flex()
-            .gap_1()
-            .px_3()
-            .py_2()
-            .flex_shrink_0()
-            .child(scope("artifacts-own", tr("This conversation"), false))
-            .child(scope("artifacts-all", tr("Whole project"), true))
-            .child(div().flex_1())
+        let count = (!self.artifacts.is_empty()).then(|| self.artifacts.len().to_string().into());
+        let header = surfaces::panel_header(tr("Artifacts"), count, cx)
             .child(
-                Button::new("artifacts-by-folder")
-                    .icon(glyph("folder"))
-                    .label(tr("By folder"))
-                    .xsmall()
-                    .ghost()
+                icon_button("artifacts-by-folder", "folder", tr("By folder"))
                     .selected(self.artifacts_by_folder)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.artifacts_by_folder = !this.artifacts_by_folder;
@@ -1145,9 +1124,17 @@ impl Workspace {
             )
             .child(
                 icon_button("artifacts-reload", "refresh", tr("Reload"))
-                    .xsmall()
                     .on_click(cx.listener(|this, _, window, cx| this.load_artifacts(window, cx))),
             );
+        // Whose files: the conversation's or the whole project's.
+        let scopes = div()
+            .h_flex()
+            .gap_1()
+            .px_3()
+            .pt_2()
+            .flex_shrink_0()
+            .child(scope("artifacts-own", tr("This conversation"), false))
+            .child(scope("artifacts-all", tr("Whole project"), true));
         let mut list = div()
             .id("artifacts")
             .v_flex()
@@ -1155,7 +1142,7 @@ impl Workspace {
             .min_h_0()
             .overflow_y_scroll();
         if self.artifacts.is_empty() {
-            list = list.child(div().p_3().text_sm().text_color(muted).child(
+            list = list.child(surfaces::panel_empty(
                 if self.artifacts_all {
                     tr("No conversation in this project has produced a file yet.")
                 } else if self.state.session.is_some() {
@@ -1163,6 +1150,7 @@ impl Workspace {
                 } else {
                     tr("Open a conversation, or look at the whole project.")
                 },
+                cx,
             ));
         }
         let shown = if self.artifacts_by_folder {
@@ -1175,19 +1163,7 @@ impl Workspace {
         for (heading, index) in shown {
             let artifact = &self.artifacts[index];
             if let Some(heading) = heading {
-                list = list.child(
-                    div()
-                        .h_flex()
-                        .gap_2()
-                        .px_3()
-                        .pt_3()
-                        .pb_1()
-                        .text_xs()
-                        .font_semibold()
-                        .text_color(muted)
-                        .child(icon("folder").text_color(muted))
-                        .child(heading),
-                );
+                list = list.child(surfaces::panel_section(heading, cx).px_3().pb_1());
             }
             let mut name =
                 div()
@@ -1202,7 +1178,7 @@ impl Workspace {
                             .v_flex()
                             .flex_1()
                             .min_w_0()
-                            .child(div().truncate().text_sm().child(artifact.name.clone()))
+                            .child(surfaces::panel_label(artifact.name.clone()))
                             .child(
                                 div().truncate().text_xs().text_color(muted).child(
                                     panel::artifact_detail(artifact, now, self.artifacts_all),
@@ -1217,11 +1193,17 @@ impl Workspace {
                         this.reveal_file(path.clone(), window, cx)
                     }));
             }
-            let mut row = div()
-                .h_flex()
+            // A row that opens what is under it keeps the hairline under
+            // that instead.
+            let opened = self.artifact_open.as_deref() == Some(artifact.id.as_str())
+                || self
+                    .artifact_origin
+                    .as_ref()
+                    .is_some_and(|(shown, _)| *shown == artifact.id);
+            let mut row = surfaces::panel_row(("artifact-row", index), cx)
                 .gap_1()
-                .px_3()
-                .py_2()
+                .py_1()
+                .when(opened, |row| row.border_b_0())
                 .hover(|style| style.bg(hover))
                 .child(name);
             // The star is beside the name, not inside it, so pressing it
@@ -1284,19 +1266,25 @@ impl Workspace {
                 })),
             );
             list = list.child(row);
+            // What the row opened, with the row's hairline under it.
+            let mut details = div()
+                .v_flex()
+                .flex_shrink_0()
+                .border_b_1()
+                .border_color(cx.theme().border);
             if let Some((_, found)) = self
                 .artifact_origin
                 .as_ref()
                 .filter(|(shown, _)| *shown == artifact.id)
             {
-                list = list.child(self.artifact_origin_block(found, window, cx));
+                details = details.child(self.artifact_origin_block(found, window, cx));
             }
             if open {
                 match self.artifact_versions.get(&artifact.id) {
                     None => {
-                        list = list.child(
+                        details = details.child(
                             div()
-                                .px_6()
+                                .pl_9()
                                 .pb_2()
                                 .text_xs()
                                 .text_color(muted)
@@ -1306,11 +1294,11 @@ impl Workspace {
                     Some(versions) => {
                         for (number, version) in versions.iter().enumerate().rev() {
                             let (version_id, name) = (version.id.clone(), artifact.name.clone());
-                            list = list.child(
+                            details = details.child(
                                 div()
                                     .h_flex()
                                     .gap_2()
-                                    .pl(px(36.))
+                                    .pl_9()
                                     .pr_3()
                                     .py_1()
                                     .child(
@@ -1342,12 +1330,16 @@ impl Workspace {
                     }
                 }
             }
+            if opened {
+                list = list.child(details);
+            }
         }
         div()
             .v_flex()
             .flex_1()
             .min_h_0()
             .child(header)
+            .child(scopes)
             .child(list)
             .into_any_element()
     }

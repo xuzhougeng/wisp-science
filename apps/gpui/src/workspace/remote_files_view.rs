@@ -9,6 +9,7 @@ use gpui_component::{ActiveTheme, Disableable, Selectable, Sizable, StyledExt, b
 use super::{
     Workspace,
     shell::{glyph, icon_button},
+    surfaces,
 };
 use crate::{backend::receive, files};
 
@@ -207,7 +208,6 @@ impl Workspace {
     pub(super) fn render_remote_files(&self, cx: &mut Context<Self>) -> Option<Div> {
         let browse = self.remote.as_ref()?;
         let muted = cx.theme().muted_foreground;
-        let border = cx.theme().border;
         let shown = browse
             .listing
             .as_ref()
@@ -216,81 +216,53 @@ impl Workspace {
         let alias = browse.alias.clone();
         let (up_alias, again_alias, again_path) =
             (alias.clone(), alias.clone(), browse.path.clone());
+        let place = match shown {
+            "" => tr("Home folder").to_owned(),
+            path => path.to_owned(),
+        };
         let mut view = div().v_flex().flex_1().min_h_0().child(
-            div()
-                .v_flex()
-                .gap_2()
-                .p_3()
-                .border_b_1()
-                .border_color(border)
+            surfaces::panel_header(place, None, cx)
                 .child(
-                    div()
-                        .truncate()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(match shown {
-                            "" => tr("Home folder").to_owned(),
-                            path => path.to_owned(),
-                        }),
+                    icon_button("remote-up", "up", "Up")
+                        .disabled(parent.is_none())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            if let Some(parent) = parent.clone() {
+                                this.browse_host(up_alias.clone(), parent, window, cx);
+                            }
+                        })),
                 )
+                .child({
+                    let (to, folder) = (alias.clone(), shown.to_owned());
+                    icon_button(
+                        "remote-send",
+                        "upload",
+                        "Copy files of this computer into this folder",
+                    )
+                    .disabled(browse.listing.is_none())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.upload_remote(to.clone(), folder.clone(), window, cx)
+                    }))
+                })
+                .child({
+                    let (context, folder) = (format!("ssh:{alias}"), shown.to_owned());
+                    icon_button(
+                        "remote-terminal",
+                        "terminal",
+                        "Open a terminal on this host, in this folder",
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_host_terminal(context.clone(), Some(folder.clone()), window, cx)
+                    }))
+                })
                 .child(
-                    div()
-                        .h_flex()
-                        .gap_1()
-                        .child(
-                            Button::new("remote-up")
-                                .label(tr("Up"))
-                                .small()
-                                .disabled(parent.is_none())
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    if let Some(parent) = parent.clone() {
-                                        this.browse_host(up_alias.clone(), parent, window, cx);
-                                    }
-                                })),
-                        )
-                        .child({
-                            let (to, folder) = (alias.clone(), shown.to_owned());
-                            Button::new("remote-send")
-                                .icon(glyph("arrow-up"))
-                                .label(tr("Send files here…"))
-                                .small()
-                                .disabled(browse.listing.is_none())
-                                .tooltip(tr("Copy files of this computer into this folder"))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.upload_remote(to.clone(), folder.clone(), window, cx)
-                                }))
-                        })
-                        .child({
-                            let (context, folder) = (format!("ssh:{alias}"), shown.to_owned());
-                            Button::new("remote-terminal")
-                                .label(tr("Terminal"))
-                                .small()
-                                .tooltip(tr("Open a terminal on this host, in this folder"))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.open_host_terminal(
-                                        context.clone(),
-                                        Some(folder.clone()),
-                                        window,
-                                        cx,
-                                    )
-                                }))
-                        })
-                        .child(
-                            Button::new("remote-reload")
-                                .label(tr("Reload"))
-                                .small()
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.browse_host(
-                                        again_alias.clone(),
-                                        again_path.clone(),
-                                        window,
-                                        cx,
-                                    )
-                                })),
-                        ),
+                    icon_button("remote-reload", "refresh", "Reload").on_click(cx.listener(
+                        move |this, _, window, cx| {
+                            this.browse_host(again_alias.clone(), again_path.clone(), window, cx)
+                        },
+                    )),
                 ),
         );
-        let note = |text: String, color: Hsla| div().p_3().text_sm().text_color(color).child(text);
+        let note = |text: String, color: Hsla| surfaces::panel_empty(text, cx).text_color(color);
         let mut list = div()
             .id("remote-files")
             .v_flex()
@@ -305,26 +277,13 @@ impl Workspace {
                     list = list.child(note(tr("This folder is empty.").into(), muted));
                 }
                 for (index, entry) in listing.entries.iter().enumerate() {
-                    let mut row = div()
-                        .id(("remote-entry", index))
-                        .h_flex()
-                        .gap_2()
-                        .px_3()
-                        .h(px(30.))
-                        .flex_shrink_0()
-                        .text_sm()
+                    let mut row = surfaces::panel_row(("remote-entry", index), cx)
                         .child(
                             glyph(if entry.is_dir { "folder" } else { "doc" })
                                 .small()
                                 .text_color(muted),
                         )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .child(entry.name.clone()),
-                        )
+                        .child(surfaces::panel_label(entry.name.clone()))
                         .child(div().flex_shrink_0().text_xs().text_color(muted).child(
                             if entry.is_dir {
                                 tr("Folder").to_owned()

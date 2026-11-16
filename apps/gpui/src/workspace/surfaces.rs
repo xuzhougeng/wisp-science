@@ -1,14 +1,18 @@
 //! The shapes every page shares, from `docs/gpui-design-language.md`: the
 //! two text roles above body size with their serif face, the card, the
 //! dialog, the conversation's reading column with the bars above its
-//! composer, and the switch of an on/off setting.
+//! composer, the switch of an on/off setting, and the side panel as the
+//! page's right margin with its tabs, headers, rows and empty lines.
 //! Views take these instead of choosing a size, a face, a border or a
 //! control of their own.
 use std::rc::Rc;
 
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, StyledExt, button::Button, switch::Switch, tooltip::Tooltip,
+    ActiveTheme, Disableable, Sizable, StyledExt,
+    button::{Button, ButtonVariants},
+    switch::Switch,
+    tooltip::Tooltip,
 };
 
 use super::shell::icon_button;
@@ -386,6 +390,194 @@ pub(super) fn above_composer(bars: Vec<AnyElement>) -> Option<Div> {
     (!bars.is_empty()).then(|| {
         reading_column(div().v_flex().gap_2().px_4().pt_2().pb_1().children(bars)).flex_shrink_0()
     })
+}
+
+/// The side panel's frame: the page's right margin, as the sidebar is its
+/// left one. The margin colour, with a hairline against the conversation.
+/// The caller gives it its width; what it holds is laid out by the shapes
+/// below, each inset `px_3` from its edges.
+pub(super) fn side_panel(cx: &App) -> Div {
+    div()
+        .v_flex()
+        .h_full()
+        .bg(cx.theme().sidebar)
+        .border_l_1()
+        .border_color(cx.theme().sidebar_border)
+}
+
+/// One tab in the side panel's strip: its name as a word, the open one in
+/// ink and `MEDIUM` with a short teal line under it, the others in faded
+/// ink that goes to full ink under the pointer. `button` keeps its id and
+/// handler, so Tab still reaches it and Enter or Space opens it.
+///
+/// The name is a child of the button with a colour of its own, not the
+/// button's label: the component library's button turns the text it holds
+/// red under the pointer (`hover` in its `button.rs`), and a label or a
+/// colour set on the button itself takes that red.
+pub(super) fn panel_tab(
+    button: Button,
+    name: impl Into<SharedString>,
+    selected: bool,
+    cx: &App,
+) -> Div {
+    let (ink, weight) = if selected {
+        (cx.theme().foreground, FontWeight::MEDIUM)
+    } else {
+        (cx.theme().muted_foreground, FontWeight::NORMAL)
+    };
+    let full = cx.theme().foreground;
+    let word = div()
+        .flex_none()
+        .line_height(relative(1.))
+        .text_color(ink)
+        .font_weight(weight)
+        .hover(move |style| style.text_color(full))
+        .child(name.into());
+    div()
+        .v_flex()
+        .flex_shrink_0()
+        .child(button.ghost().small().compact().child(word))
+        .child(div().h(px(2.)).mx_1p5().rounded_full().bg(if selected {
+            cx.theme().primary
+        } else {
+            cx.theme().transparent
+        }))
+}
+
+/// The row at the top of a side-panel tab, or over a group in it: `title`
+/// as body text in `MEDIUM`, a faded `detail` after it (a count, a size),
+/// then what the caller adds (its actions, as icon buttons) at the right
+/// end, and a hairline under it.
+pub(super) fn panel_header(
+    title: impl Into<SharedString>,
+    detail: Option<SharedString>,
+    cx: &App,
+) -> Div {
+    div()
+        .h_flex()
+        .items_center()
+        .gap_1()
+        .px_3()
+        .py_1()
+        .min_h(px(PANEL_HEADER_HEIGHT))
+        .flex_shrink_0()
+        .border_b_1()
+        .border_color(cx.theme().border)
+        .child(
+            div()
+                .h_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_2()
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(title.into()),
+                )
+                .children(detail.map(|detail| {
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(detail)
+                })),
+        )
+}
+
+/// How high a side-panel tab's header row is at least.
+pub(super) const PANEL_HEADER_HEIGHT: f32 = 40.;
+
+/// How high a row of a list in the side panel is at least.
+pub(super) const PANEL_ROW_HEIGHT: f32 = 32.;
+
+/// One line of a list in the side panel: the panel's inset, at least
+/// `PANEL_ROW_HEIGHT` high, a hairline under it. The caller adds the
+/// leading label (`panel_label`), the metadata in caption, and, when the
+/// row opens something, the theme's list hover.
+pub(super) fn panel_row(id: impl Into<ElementId>, cx: &App) -> Stateful<Div> {
+    div()
+        .id(id)
+        .h_flex()
+        .items_center()
+        .flex_shrink_0()
+        .gap_2()
+        .px_3()
+        .min_h(px(PANEL_ROW_HEIGHT))
+        .border_b_1()
+        .border_color(cx.theme().border)
+}
+
+/// An entry of several lines in a side-panel list (a run, a host, a
+/// delegated batch, a cell, a tool call): the inset and the hairline of a
+/// row, with its lines stacked.
+pub(super) fn panel_entry(cx: &App) -> Div {
+    div()
+        .v_flex()
+        .flex_shrink_0()
+        .gap_1()
+        .px_3()
+        .py_2()
+        .min_h(px(PANEL_ROW_HEIGHT))
+        .border_b_1()
+        .border_color(cx.theme().border)
+}
+
+/// The label that leads a row: body text in `MEDIUM`, cut short on one
+/// line.
+pub(super) fn panel_label(text: impl Into<SharedString>) -> Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .truncate()
+        .font_weight(FontWeight::MEDIUM)
+        .child(text.into())
+}
+
+/// A card in the side panel: `card`, padded and stacked. One that sits
+/// straight in a tab's list takes the panel's inset with `mx_3`.
+pub(super) fn panel_card(id: impl Into<ElementId>, cx: &App) -> Stateful<Div> {
+    card(id, cx).v_flex().gap_1().p_2()
+}
+
+/// A heading over a group inside a tab: caption in faded ink. A heading
+/// straight in a tab's list takes the panel's inset with `px_3`.
+pub(super) fn panel_section(text: impl Into<SharedString>, cx: &App) -> Div {
+    div()
+        .flex_shrink_0()
+        .pt_2()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child(text.into())
+}
+
+/// The sentence under a tab's header that says what the tab is for:
+/// caption in faded ink, at the panel's inset.
+pub(super) fn panel_note(text: impl Into<SharedString>, cx: &App) -> Div {
+    div()
+        .flex_shrink_0()
+        .px_3()
+        .pt_2()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child(text.into())
+}
+
+/// What a tab shows while it has nothing to list, or is still reading it:
+/// one sentence in faded ink at the panel's inset. A tab that offers one
+/// way on adds it as the one child, an outlined button.
+pub(super) fn panel_empty(text: impl Into<SharedString>, cx: &App) -> Div {
+    div()
+        .v_flex()
+        .items_start()
+        .flex_shrink_0()
+        .gap_2()
+        .px_3()
+        .py_3()
+        .text_color(cx.theme().muted_foreground)
+        .child(text.into())
 }
 
 /// The items of a grid `columns` wide, row by row; the last row may be
@@ -807,6 +999,202 @@ mod tests {
             }
         }
         assert!(found.is_empty(), "{found:#?}");
+    }
+
+    /// The text of free function `name` in `source`, from its signature to
+    /// the brace that closes it at the file's indent.
+    fn free_function<'a>(source: &'a str, name: &str) -> Option<&'a str> {
+        let start = source.find(&format!("fn {name}("))?;
+        let rest = &source[start..];
+        Some(&rest[..rest.find("\n}\n")?])
+    }
+
+    #[test]
+    fn a_side_panel_row_is_as_high_as_a_row_on_the_page() {
+        // A row in a list is 32 px or more, and the header over a tab
+        // stands taller than the rows under it.
+        assert!(super::PANEL_ROW_HEIGHT >= 32.);
+        assert!(super::PANEL_HEADER_HEIGHT > super::PANEL_ROW_HEIGHT);
+    }
+
+    #[test]
+    fn the_side_panel_is_the_pages_right_margin() {
+        let files = sources();
+        let file = |name: &str| {
+            files
+                .iter()
+                .find(|(path, _)| path.ends_with(name))
+                .map(|(_, text)| text.as_str())
+                .unwrap_or_else(|| panic!("no {name}"))
+        };
+        let surfaces = file("workspace/surfaces.rs");
+        // The margin colour and the hairline the sidebar has, on the other
+        // side of the page.
+        let frame = free_function(surfaces, "side_panel").unwrap();
+        assert!(frame.contains(".bg(cx.theme().sidebar)"));
+        assert!(frame.contains(".border_l_1()"));
+        assert!(frame.contains(".border_color(cx.theme().sidebar_border)"));
+        // The panel takes that frame and draws none of its own.
+        let panel = method(file("workspace/files_panel.rs"), "render_files").unwrap();
+        assert!(panel.contains("surfaces::side_panel(cx)"));
+        for own in [".border_l_1()", ".bg(", "theme().sidebar"] {
+            assert!(!panel.contains(own), "render_files uses {own}");
+        }
+        // The strip names its tabs as words through one shape: no filled
+        // pill for the open one, no icon standing in for a name.
+        let strip = method(file("workspace/panel_tabs.rs"), "panel_tabs").unwrap();
+        assert!(strip.contains("surfaces::panel_tab("));
+        for filled in [".selected(selected)", "tab.icon()", ".icon(glyph("] {
+            assert!(!strip.contains(filled), "the strip uses {filled}");
+        }
+        // The open tab is marked by ink, weight and the one teal line.
+        let tab = free_function(surfaces, "panel_tab").unwrap();
+        assert_eq!(tab.matches("theme().primary").count(), 1);
+        assert!(tab.contains("FontWeight::MEDIUM"));
+        assert!(!tab.contains(".selected("));
+        // The name's ink is its own, on a child of the button: the button
+        // turns what it colours itself red under the pointer, a status
+        // colour a tab is not. So neither the strip nor `panel_tab` gives
+        // the button a label, a colour or a weight.
+        let made = &strip[strip
+            .find("let button = Button::new(")
+            .expect("the tab's button")..];
+        let made = &made[..made.find(';').unwrap()];
+        // What follows its id, which is named after the tab.
+        let made = &made[made.find(")))").expect("the id")..];
+        for own in [".label(", ".text_color(", ".font_weight("] {
+            assert!(!made.contains(own), "the strip sets {own} on the button");
+        }
+        let at = tab.find("button.").expect("the button is styled");
+        let chain = &tab[at..];
+        let chain = &chain[..chain.find(".child(").expect("the name is its child")];
+        for own in [".label(", ".text_color(", ".font_weight("] {
+            assert!(!chain.contains(own), "panel_tab sets {own} on the button");
+        }
+        assert!(tab.contains(".text_color(ink)"));
+    }
+
+    #[test]
+    fn every_side_panel_tab_takes_the_margins_shapes() {
+        let files = sources();
+        let file = |name: &str| {
+            files
+                .iter()
+                .find(|(path, _)| path.ends_with(name))
+                .map(|(_, text)| text.as_str())
+                .unwrap_or_else(|| panic!("no {name}"))
+        };
+        // Where each tab is drawn, one per tab.
+        let tabs = [
+            ("workspace/files_panel.rs", "render_files"),
+            ("workspace/panel_tabs.rs", "render_runs_tab"),
+            ("workspace/hosts_view.rs", "render_hosts_tab"),
+            ("workspace/panel_tabs.rs", "render_artifacts_tab"),
+            ("workspace/notebook_view.rs", "render_notebook_tab"),
+            ("workspace/files_panel.rs", "render_provenance_tab"),
+            ("workspace/agents_view.rs", "render_agents_tab"),
+            ("workspace/favorites_view.rs", "render_highlights_tab"),
+            ("workspace/memos_view.rs", "render_memos_tab"),
+            ("workspace/memory_view.rs", "render_memory_tab"),
+            ("workspace/aside_view.rs", "render_aside_tab"),
+        ];
+        assert_eq!(tabs.len(), crate::panel::PanelTab::ALL.len());
+        // The tabs with actions over the whole list, or groups that have
+        // their own, have header rows; the rest open on their list.
+        let headed = [
+            "render_files",
+            "render_artifacts_tab",
+            "render_highlights_tab",
+            "render_memos_tab",
+            "render_memory_tab",
+        ];
+        for (name, function) in tabs {
+            let body = method(file(name), function)
+                .unwrap_or_else(|| panic!("{name} has no fn {function}"));
+            // Nothing to list is said one way.
+            assert!(body.contains("surfaces::panel_empty("), "{function}");
+            assert_eq!(
+                body.contains("surfaces::panel_header("),
+                headed.contains(&function),
+                "{function}"
+            );
+            // No empty line, bold heading, hand-drawn card or shadow of
+            // the tab's own. Provenance shows what a call was given and
+            // returned as code in a well, as the conversation shows code.
+            let own = [
+                ".p_3().text_sm()",
+                "font_semibold",
+                ".shadow",
+                ".border_1()",
+            ];
+            for own in own {
+                assert!(!body.contains(own), "{function} uses {own}");
+            }
+            if function != "render_provenance_tab" {
+                for own in [".bg(cx.theme().muted)", ".rounded(cx.theme().radius)"] {
+                    assert!(!body.contains(own), "{function} uses {own}");
+                }
+            }
+        }
+        // The parts the tabs are made of come from the same helpers.
+        let cards = [
+            ("workspace/panel_tabs.rs", "clean_question"),
+            ("workspace/memos_view.rs", "memo_card"),
+            ("workspace/memory_view.rs", "memory_card"),
+            ("workspace/memory_view.rs", "tidy_card"),
+            ("workspace/hosts_view.rs", "host_storage_form"),
+        ];
+        let entries = [
+            ("workspace/panel_tabs.rs", "render_runs_tab"),
+            ("workspace/hosts_view.rs", "host_card"),
+            ("workspace/agents_view.rs", "render_batch"),
+            ("workspace/agents_view.rs", "render_swarm"),
+            ("workspace/agents_view.rs", "render_agents_tab"),
+            ("workspace/notebook_view.rs", "render_notebook_tab"),
+            ("workspace/aside_view.rs", "render_aside_tab"),
+        ];
+        let rows = [
+            ("workspace/files_panel.rs", "render_provenance_tab"),
+            ("workspace/panel_tabs.rs", "render_artifacts_tab"),
+            ("workspace/files_panel.rs", "file_row"),
+            ("workspace/files_panel.rs", "file_hit_row"),
+            ("workspace/remote_files_view.rs", "render_remote_files"),
+        ];
+        let headers = [
+            ("workspace/remote_files_view.rs", "render_remote_files"),
+            ("workspace/memos_view.rs", "memo_editor"),
+            ("workspace/memory_view.rs", "memory_editor"),
+        ];
+        let sections = [
+            ("workspace/panel_tabs.rs", "render_method_search"),
+            ("workspace/panel_tabs.rs", "render_artifacts_tab"),
+            ("workspace/agents_view.rs", "render_agents_tab"),
+            ("workspace/aside_view.rs", "render_aside_tab"),
+        ];
+        for (shape, drawn) in [
+            ("surfaces::panel_card(", &cards[..]),
+            ("surfaces::panel_entry(", &entries[..]),
+            ("surfaces::panel_row(", &rows[..]),
+            ("surfaces::panel_header(", &headers[..]),
+            ("surfaces::panel_section(", &sections[..]),
+        ] {
+            for (name, function) in drawn {
+                let body = method(file(name), function)
+                    .unwrap_or_else(|| panic!("{name} has no fn {function}"));
+                assert!(body.contains(shape), "{function} has no {shape}");
+                for own in ["font_semibold", ".border_1()", ".shadow"] {
+                    assert!(!body.contains(own), "{function} uses {own}");
+                }
+            }
+        }
+        // A list in a uniform list keeps every row the panel's height.
+        for function in ["file_row", "file_hit_row"] {
+            let body = method(file("workspace/files_panel.rs"), function).unwrap();
+            assert!(
+                body.contains(".h(px(surfaces::PANEL_ROW_HEIGHT))"),
+                "{function}"
+            );
+        }
     }
 
     #[test]

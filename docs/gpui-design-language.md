@@ -54,7 +54,7 @@ names and never a colour of their own.
 | Name | Light | Dark | Use for |
 | --- | --- | --- | --- |
 | Paper (`background`) | `#faf9f6` | `#171614` | The page |
-| Margin (`sidebar`) | `#f0eee6` | `#1c1b18` | The sidebar |
+| Margin (`sidebar`) | `#f0eee6` | `#1c1b18` | The sidebar and the side panel |
 | Card (`popover`) | `#ffffff` | `#1f1e1b` | Cards, the composer, dialogs, menus |
 | Ink (`foreground`) | `#141413` | `#ebe8e2` | Text |
 | Faded ink (`muted_foreground`) | `#5a574e` | `#a39e94` | Secondary text |
@@ -135,7 +135,46 @@ names and never a colour of their own.
   before they push Send out of the box.
 - An empty conversation shows one Display line and one filled button.
 - The side panel is the margin for tools: what the answer rests on, the
-  files it wrote, runs. It keeps hairlines and cards like the page.
+  files it wrote, runs. It is the page's right margin as the sidebar is its
+  left one, and its parts read as notes in that margin:
+  - **Frame** (`side_panel`): the margin colour with the sidebar's
+    hairline on the side that faces the conversation. It is 340 px wide
+    (480 px while a file is previewed) and gives way down to 240 px before
+    the conversation goes below its own 300 px; the conversation takes all
+    the rest, so its reading column narrows only once its margins are gone.
+  - **Tab strip** (`panel_tab`): each tab is its name in words, Runs with
+    the count still going. The open tab is ink in `MEDIUM` with a short teal
+    line under it, the others faded ink that goes to full ink under the
+    pointer, never to a status colour; no filled pill, no box. More tabs
+    than fit go on to another line. − beside the open tab, + and the close
+    button are icon buttons.
+  - **Header** (`panel_header`): a tab with actions over its whole list,
+    or a group in it with its own (Files and a host's folders, a file's
+    preview, Artifacts, Highlights, Memos, Memory's habits and notes, the
+    memo and memory editors), opens on one row: its title as body text in
+    `MEDIUM`, a faded count or size after it, its actions as icon buttons at
+    the right end, a hairline under it. A tab with none (Runs, Environments,
+    Notebook, Provenance, Agents, Aside) opens on its list, the strip naming
+    it. What a tab is for is one faded caption line under the header
+    (`panel_note`).
+  - **Rows** (`panel_row`, `panel_entry`, `panel_label`): 32 px or more,
+    a hairline under each, the leading label in `MEDIUM`, metadata in
+    faded caption, status in the theme's colour on a word or an icon, the
+    list hover on a row that opens something. A row that opens what is
+    under it keeps the hairline under that. An entry of several lines (a
+    run, a host, a batch, a cell, an aside) has the same inset and line.
+  - **Cards** (`panel_card`): `card`, white on the margin with a hairline
+    and no shadow, for things to act on one by one (memos, habits and notes,
+    saved highlights, a run's clean-up question, a host's storage form).
+  - **Sections** (`panel_section`): a heading inside a tab is caption in
+    faded ink; no bold, no capitals.
+  - **Empty** (`panel_empty`): nothing to list, or still reading it, is
+    one faded sentence, with at most one outlined button that leads on.
+    No icon, no Display.
+  - Everything is inset `px_3` from the panel's edges, so a tab's content
+    starts where the tab's name does and switching tabs does not move it;
+    a file's preview keeps that inset round its text, tables, pictures,
+    pages, molecules and alignments.
 
 ## Controls
 
@@ -170,13 +209,24 @@ names and never a colour of their own.
 | Colours, radius, base sizes | `apps/gpui/assets/wisp-theme.json` |
 | The rem and the palettes | `apps/gpui/src/theme.rs` |
 | Titles, display text, cards, dialogs (`dialog`, `DialogWidth`), the reading column, the bars above the composer (`bar`, `above_composer`), the on/off switch | `apps/gpui/src/workspace/surfaces.rs` |
+| The side panel: its frame (`side_panel`), tabs (`panel_tab`), headers (`panel_header`), rows (`panel_row`, `panel_entry`, `panel_label`, `PANEL_ROW_HEIGHT`), cards (`panel_card`), sections (`panel_section`), notes (`panel_note`) and empty lines (`panel_empty`) | `apps/gpui/src/workspace/surfaces.rs` |
 | A setting's row: name and note on the left, control on the right | `setting` in `apps/gpui/src/workspace/settings_sections.rs` |
 
-## Not done yet
+## Where it stands
 
 The first change that follows this page restyles the theme, the home page,
 the conversation's column, its actions and the composer's settings; a second
 puts a switch in place of every On/Off button; a third puts the bars above
 the composer in its column; a fourth draws every dialog from one shape, makes
-every heading a Title and keeps shadows to what floats. Still to bring under
-it: the side panel as margin notes.
+every heading a Title and keeps shadows to what floats; a fifth makes the
+side panel the page's margin. The page is applied in full.
+
+Tests in `surfaces.rs` hold it there: text sizes only by role, shadows only
+on what floats, every dialog from `dialog`, the bars above the composer in
+its column, switches for on/off, and for the side panel its frame from
+`side_panel` with no colour or line of its own, tabs drawn by `panel_tab`
+with no pill or icon for a name, every tab's empty line from `panel_empty`,
+a header from `panel_header` exactly where the rules above give one, and its
+cards, rows, entries and sections from their helpers with no bold, hand-made
+card or shadow. The one exception they allow is Provenance's input and
+output, which are code in a well as the conversation shows code.

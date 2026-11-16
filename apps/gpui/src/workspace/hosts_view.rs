@@ -15,6 +15,7 @@ use gpui_component::{
 use super::{
     Workspace, chip,
     shell::{error_banner, glyph, icon_button},
+    surfaces,
 };
 use crate::{
     backend::receive,
@@ -175,16 +176,10 @@ impl Workspace {
     }
 
     /// Where the project keeps things on the host whose form is open.
-    fn host_storage_form(&self, saved: bool, cx: &mut Context<Self>) -> Div {
+    fn host_storage_form(&self, saved: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let muted = cx.theme().muted_foreground;
         let label = |text: &'static str| div().text_xs().text_color(muted).child(text);
-        div()
-            .v_flex()
-            .gap_1()
-            .p_2()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
+        surfaces::panel_card("host-storage-form", cx)
             .child(div().text_xs().text_color(muted).child(if saved {
                 tr("Saved for this project.")
             } else {
@@ -242,22 +237,10 @@ impl Workspace {
             .map(|status| status.options.runs_on.as_str())
             .unwrap_or_default();
         let environments = self.environments.as_ref();
-        let mut heading = div().h_flex().gap_2().child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .child(alias.map_or_else(|| tr("This computer").to_owned(), str::to_owned)),
-        );
-        let mut card = div()
-            .v_flex()
-            .gap_1()
-            .px_3()
-            .py_2()
-            .border_b_1()
-            .border_color(cx.theme().border);
+        let mut heading = div().h_flex().gap_2().child(surfaces::panel_label(
+            alias.map_or_else(|| tr("This computer").to_owned(), str::to_owned),
+        ));
+        let mut card = surfaces::panel_entry(cx);
         let mut actions = div().h_flex().gap_1();
         match alias {
             None => {
@@ -416,7 +399,6 @@ impl Workspace {
     }
 
     pub(super) fn render_hosts_tab(&self, cx: &mut Context<Self>) -> AnyElement {
-        let muted = cx.theme().muted_foreground;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|elapsed| elapsed.as_secs() as i64)
@@ -428,24 +410,27 @@ impl Workspace {
             .min_h_0()
             .overflow_y_scroll();
         if let Some(error) = &self.error {
-            list = list.child(div().p_3().child(error_banner(error, cx)));
+            list = list.child(div().px_3().pt_3().child(error_banner(error, cx)));
         }
         if self.state.session.is_none() {
             return list
-                .child(
-                    div()
-                        .p_3()
-                        .text_sm()
-                        .text_color(muted)
-                        .child(tr("Open a conversation to choose where its work may run.")),
-                )
+                .child(surfaces::panel_empty(
+                    tr("Open a conversation to choose where its work may run."),
+                    cx,
+                ))
                 .into_any_element();
         }
         list = list
-            .child(div().px_3().pt_2().text_xs().text_color(muted).child(tr(
-                "Where this conversation's work may run. This computer always may; an SSH \
+            .child(
+                surfaces::panel_note(
+                    tr(
+                        "Where this conversation's work may run. This computer always may; an SSH \
                  host must be attached first.",
-            )))
+                    ),
+                    cx,
+                )
+                .pb_1(),
+            )
             .child(self.host_card(0, None, now, cx));
         let aliases: Vec<String> = self
             .environments
@@ -454,28 +439,17 @@ impl Workspace {
             .unwrap_or_default();
         if aliases.is_empty() {
             list = list.child(
-                div()
-                    .v_flex()
-                    .gap_2()
-                    .p_3()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .child(tr("No SSH host is saved yet.")),
-                    )
-                    .child(
-                        div().h_flex().child(
-                            Button::new("hosts-add")
-                                .icon(glyph("server"))
-                                .label(tr("Add one in Settings"))
-                                .xsmall()
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_settings(window, cx);
-                                    this.show_settings_section(Section::Environments, window, cx)
-                                })),
-                        ),
-                    ),
+                surfaces::panel_empty(tr("No SSH host is saved yet."), cx).child(
+                    Button::new("hosts-add")
+                        .icon(glyph("server"))
+                        .label(tr("Add one in Settings"))
+                        .xsmall()
+                        .outline()
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_settings(window, cx);
+                            this.show_settings_section(Section::Environments, window, cx)
+                        })),
+                ),
             );
         }
         for (index, alias) in aliases.iter().enumerate() {

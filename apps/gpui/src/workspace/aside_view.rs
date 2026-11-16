@@ -9,7 +9,7 @@ use gpui_component::{
     text::TextView,
 };
 
-use super::{Workspace, shell::icon_button};
+use super::{Workspace, shell::icon_button, surfaces};
 use crate::{aside, backend::receive, panel::PanelTab};
 
 impl Workspace {
@@ -75,24 +75,22 @@ impl Workspace {
         let session = self.state.session.clone();
         let thread = session.as_ref().and_then(|id| self.asides.get(id));
         let asking = thread.is_some_and(|thread| thread.asking.is_some());
+        // Before anything is asked the hint is what the tab has to say.
+        let hint = aside::hint(session.is_some());
         let mut list = div()
             .id("aside-thread")
             .v_flex()
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .gap_3()
-            .p_3()
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(aside::hint(session.is_some())),
-            );
+            .child(if thread.is_some_and(|thread| !thread.is_empty()) {
+                surfaces::panel_note(hint, cx).pb_1()
+            } else {
+                surfaces::panel_empty(hint, cx)
+            });
         for (index, entry) in thread.iter().flat_map(|thread| &thread.entries).enumerate() {
-            let mut block = div().v_flex().gap_1().child(
+            let mut block = surfaces::panel_entry(cx).child(
                 div()
-                    .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .child(entry.question.clone()),
             );
@@ -136,16 +134,10 @@ impl Workspace {
             };
             // The passages from earlier it was given, as the answer cites them.
             if !entry.sources.is_empty() {
-                let mut sources = div().v_flex().gap_1().pt_1().child(
-                    div()
-                        .text_xs()
-                        .font_semibold()
-                        .text_color(muted)
-                        .child(crate::i18n::fill(
-                            tr("Earlier passages ({})"),
-                            &[&entry.sources.len()],
-                        )),
-                );
+                let mut sources = div().v_flex().gap_1().child(surfaces::panel_section(
+                    crate::i18n::fill(tr("Earlier passages ({})"), &[&entry.sources.len()]),
+                    cx,
+                ));
                 for source in &entry.sources {
                     sources = sources.child(
                         div()
@@ -164,20 +156,17 @@ impl Workspace {
                 }
                 block = block.child(sources);
             }
-            list = list.child(block.pb_2().border_b_1().border_color(border));
+            list = list.child(block);
         }
         if let Some(question) = thread.and_then(|thread| thread.asking.as_ref()) {
             list = list.child(
-                div()
-                    .v_flex()
-                    .gap_1()
+                surfaces::panel_entry(cx)
                     .child(
                         div()
-                            .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .child(question.clone()),
                     )
-                    .child(div().text_sm().text_color(muted).child(tr("Asking…"))),
+                    .child(div().text_color(muted).child(tr("Asking…"))),
             );
         }
         let mut actions = div().h_flex().gap_2().justify_end();

@@ -14,6 +14,7 @@ use wisp_server::desktop::{ProjectMemo, ProjectMemoPatch};
 use super::{
     Workspace,
     shell::{error_banner, glyph, icon_button},
+    surfaces,
 };
 use crate::{
     assets::icon,
@@ -202,19 +203,12 @@ impl Workspace {
     fn memo_editor(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let ready = memos::can_save(&self.memo_body.read(cx).value()) && !self.pending;
-        div()
+        let form = div()
             .v_flex()
             .flex_1()
             .min_h_0()
             .gap_2()
             .p_3()
-            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(
-                if self.memo_target.is_some() {
-                    tr("Edit memo")
-                } else {
-                    tr("New memo")
-                },
-            ))
             .child(Input::new(&self.memo_title).small())
             .child(
                 div()
@@ -250,36 +244,35 @@ impl Workspace {
                                 this.close_memo_layer(Layer::MemoEditor, window, cx)
                             })),
                     ),
-            )
+            );
+        div()
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(surfaces::panel_header(
+                if self.memo_target.is_some() {
+                    tr("Edit memo")
+                } else {
+                    tr("New memo")
+                },
+                None,
+                cx,
+            ))
+            .child(form)
     }
 
-    fn memo_card(&self, index: usize, memo: &ProjectMemo, cx: &mut Context<Self>) -> Div {
+    fn memo_card(&self, index: usize, memo: &ProjectMemo, cx: &mut Context<Self>) -> Stateful<Div> {
         let muted = cx.theme().muted_foreground;
         let asking = self.layers.contains(Layer::ConfirmDeleteMemo)
             && self.memo_target.as_deref() == Some(memo.id.as_str());
         let preview = memos::preview(memo);
-        let mut card = div()
-            .v_flex()
-            .gap_1()
-            .p_2()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
-            .child(
-                div()
-                    .h_flex()
-                    .gap_1()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(memos::heading(memo)),
-                    )
-                    .when(memo.pinned, |row| row.child(icon("pin").text_color(muted))),
-            );
+        let mut card = surfaces::panel_card(("memo", index), cx).mx_3().child(
+            div()
+                .h_flex()
+                .gap_1()
+                .child(surfaces::panel_label(memos::heading(memo)))
+                .when(memo.pinned, |row| row.child(icon("pin").text_color(muted))),
+        );
         if !preview.is_empty() {
             card = card.child(div().text_xs().text_color(muted).child(preview));
         }
@@ -390,74 +383,70 @@ impl Workspace {
             return editor.child(self.memo_editor(cx)).into_any_element();
         }
         let muted = cx.theme().muted_foreground;
+        let count = self
+            .memos
+            .as_ref()
+            .filter(|memos| !memos.is_empty())
+            .map(|memos| memos.len().to_string().into());
+        let header = surfaces::panel_header(tr("Memos"), count, cx).child(
+            icon_button("memo-new", "note-plus", "New memo")
+                .on_click(cx.listener(|this, _, window, cx| this.edit_memo(None, window, cx))),
+        );
         let mut list = div()
             .id("memos")
             .v_flex()
             .flex_1()
             .min_h_0()
             .gap_2()
-            .p_3()
+            .pb_3()
             .overflow_y_scroll()
-            .child(
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(tr(
-                                "Your own notes for this project. The model does not read them \
+            .child(surfaces::panel_note(
+                tr(
+                    "Your own notes for this project. The model does not read them \
                          unless you put one into a message.",
-                            )),
-                    )
-                    .child(
-                        Button::new("memo-new")
-                            .icon(glyph("note-plus"))
-                            .label(tr("New memo"))
-                            .small()
-                            .flex_shrink_0()
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.edit_memo(None, window, cx)),
-                            ),
-                    ),
-            );
+                ),
+                cx,
+            ));
         if let Some(error) = &self.error {
-            list = list.child(error_banner(error, cx));
+            list = list.child(div().px_3().child(error_banner(error, cx)));
         }
         match &self.memos {
-            None => list = list.child(div().text_sm().text_color(muted).child(tr("Loading…"))),
+            None => list = list.child(surfaces::panel_empty(tr("Loading…"), cx)),
             Some(memos) if memos.is_empty() => {
-                list = list.child(div().text_sm().text_color(muted).child(tr(
-                    "No memos yet. Keep a prompt you reuse, a server address or a reminder here.",
-                )));
+                list = list.child(surfaces::panel_empty(
+                    tr(
+                        "No memos yet. Keep a prompt you reuse, a server address or a reminder here.",
+                    ),
+                    cx,
+                ));
             }
             Some(memos) => {
                 // As in the WebView, the search field is there once there is
                 // something to search.
                 list = list.child(
-                    Input::new(&self.memo_search)
-                        .small()
-                        .cleanable(true)
-                        .prefix(icon("search").text_color(muted)),
+                    div().px_3().child(
+                        Input::new(&self.memo_search)
+                            .small()
+                            .cleanable(true)
+                            .prefix(icon("search").text_color(muted)),
+                    ),
                 );
                 let query = self.memo_search.read(cx).value().to_string();
                 let shown = memos::shown(memos, &query);
                 if shown.is_empty() {
-                    list = list.child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .child(tr("No memos match.")),
-                    );
+                    list = list.child(surfaces::panel_empty(tr("No memos match."), cx));
                 }
                 for (index, memo) in shown.into_iter().enumerate() {
                     list = list.child(self.memo_card(index, memo, cx));
                 }
             }
         }
-        list.into_any_element()
+        div()
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(header)
+            .child(list)
+            .into_any_element()
     }
 }

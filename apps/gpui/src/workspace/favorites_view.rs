@@ -178,50 +178,37 @@ impl Workspace {
     /// What this conversation saved, newest first.
     pub(super) fn render_highlights_tab(&self, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
+        let count = (!self.saved.is_empty()).then(|| self.saved.len().to_string().into());
+        let header = surfaces::panel_header(tr("Highlights"), count, cx).child(
+            icon_button("highlights-all", "star", "Favorites")
+                .on_click(cx.listener(|this, _, window, cx| this.open_favorites(window, cx))),
+        );
         let mut list = div()
             .id("highlights")
             .v_flex()
             .flex_1()
             .min_h_0()
             .gap_2()
-            .p_3()
+            .pb_3()
             .overflow_y_scroll()
-            .child(
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(tr(
-                                "What you saved from this conversation. Everything you saved, \
+            .child(surfaces::panel_note(
+                tr(
+                    "What you saved from this conversation. Everything you saved, \
                          from every project, is in Favorites.",
-                            )),
-                    )
-                    .child(
-                        Button::new("highlights-all")
-                            .icon(glyph("star"))
-                            .label(tr("Favorites"))
-                            .small()
-                            .flex_shrink_0()
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.open_favorites(window, cx)),
-                            ),
-                    ),
-            );
+                ),
+                cx,
+            ));
         if let Some(error) = &self.error {
-            list = list.child(error_banner(error, cx));
+            list = list.child(div().px_3().child(error_banner(error, cx)));
         }
         if self.saved.is_empty() {
-            list = list.child(div().text_sm().text_color(muted).child(
+            list = list.child(surfaces::panel_empty(
                 if self.state.session.is_some() {
                     tr("Nothing saved yet. Press the star under a message to keep it.")
                 } else {
                     tr("Open a conversation to see what was saved from it.")
                 },
+                cx,
             ));
         }
         for (index, item) in self.saved.iter().enumerate() {
@@ -277,27 +264,14 @@ impl Workspace {
                     })),
                 );
             list = list.child(
-                div()
-                    .v_flex()
-                    .gap_1()
-                    .p_2()
-                    .rounded(cx.theme().radius)
-                    .border_1()
-                    .border_color(cx.theme().border)
+                surfaces::panel_card(("saved", index), cx)
+                    .mx_3()
                     .child(
                         div()
                             .h_flex()
                             .gap_1()
                             .child(icon(favorites::icon(&item.kind)).text_color(muted))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(item.title.clone()),
-                            ),
+                            .child(surfaces::panel_label(item.title.clone())),
                     )
                     .child(div().text_xs().text_color(muted).child(if words {
                         crate::memory::preview(&item.code, 220)
@@ -307,7 +281,13 @@ impl Workspace {
                     .child(actions),
             );
         }
-        list.into_any_element()
+        div()
+            .v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(header)
+            .child(list)
+            .into_any_element()
     }
 
     pub(super) fn open_favorites(&mut self, window: &mut Window, cx: &mut Context<Self>) {

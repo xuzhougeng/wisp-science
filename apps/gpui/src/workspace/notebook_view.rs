@@ -4,7 +4,7 @@ use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{ActiveTheme, StyledExt, text::TextView};
 
-use super::{Workspace, chip, shell::icon_button};
+use super::{Workspace, chip, shell::icon_button, surfaces};
 use crate::{
     notebook,
     present::{self, Tone},
@@ -52,26 +52,25 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let muted = cx.theme().muted_foreground;
-        let border = cx.theme().border;
         let cells = notebook::cells(&self.rows);
+        let summary = notebook::summary(&cells);
+        // With no cell the count is what the tab has to say.
         let mut list = div()
             .id("notebook-cells")
             .v_flex()
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .child(
-                div()
-                    .px_3()
-                    .pt_3()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(notebook::summary(&cells)),
-            );
+            .child(if cells.is_empty() {
+                surfaces::panel_empty(summary, cx)
+            } else {
+                surfaces::panel_note(summary, cx)
+            });
         if self.before.is_some() {
-            list = list.child(div().px_3().pt_1().text_xs().text_color(muted).child(tr(
-                "Code in earlier messages is listed once they are loaded.",
-            )));
+            list = list.child(surfaces::panel_note(
+                tr("Code in earlier messages is listed once they are loaded."),
+                cx,
+            ));
         }
         for cell in cells {
             let saved = self
@@ -84,12 +83,7 @@ impl Workspace {
                 cell.language.clone(),
                 cell.row,
             );
-            let mut block = div()
-                .v_flex()
-                .gap_1()
-                .p_3()
-                .border_b_1()
-                .border_color(border)
+            let mut block = surfaces::panel_entry(cx)
                 .child(
                     div()
                         .h_flex()
