@@ -3248,10 +3248,6 @@ mod compaction_undo_tests {
             (2, r#"{"kind":"MessageBoundary","frame_id":"f","seq":2}"#),
             (3, r#"{"kind":"User","frame_id":"f","text":"q2"}"#),
             (4, r#"{"kind":"MessageBoundary","frame_id":"f","seq":4}"#),
-            (
-                5,
-                r#"{"kind":"Compaction","frame_id":"f","before":900,"after":100,"strategy":"new_discussion","epoch":2}"#,
-            ),
         ] {
             store
                 .append_session_ui_event("f", seq, event)
@@ -3276,6 +3272,17 @@ mod compaction_undo_tests {
             .await
             .unwrap();
         assert_eq!(epoch, 2);
+        // The divider is saved once the epoch has its number, as in
+        // `start_new_discussion`; an earlier event naming epoch 2 would count
+        // toward the epoch counter's high-water mark.
+        store
+            .append_session_ui_event(
+                "f",
+                5,
+                r#"{"kind":"Compaction","frame_id":"f","before":900,"after":100,"strategy":"new_discussion","epoch":2}"#,
+            )
+            .await
+            .unwrap();
         store.set_context_epoch_ui_event("f", 2, 5).await.unwrap();
         let state = read_session_context_state(&store, "f").await.unwrap();
         assert_eq!(state.head_epoch, 2);
