@@ -17303,7 +17303,7 @@ async fn the_browser_tools_are_offered_only_while_the_bridge_is_switched_on() {
         );
         let (mut extension, _) = tokio_tungstenite::connect_async(request).await.unwrap();
         let hello = json!({"type": "ext_ready", "protocol_version": 2,
-            "extension_version": "0.5.0", "tabs": [], "capabilities": ["tab_scope"]});
+            "extension_version": "0.5.1", "tabs": [], "capabilities": ["tab_scope"]});
         extension
             .send(Frame::Text(hello.to_string().into()))
             .await
@@ -17315,7 +17315,7 @@ async fn the_browser_tools_are_offered_only_while_the_bridge_is_switched_on() {
                 .unwrap()
                 .status
                 .extension_version
-                != "0.5.0"
+                != "0.5.1"
             {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }

@@ -18,6 +18,7 @@ const T = zh
       noText: "读不到正文，Wisp 会自行打开链接",
       approval: "Wisp 请求执行",
       allow: "允许一次",
+      allowSession: "本会话内允许",
       deny: "拒绝",
       allowed: "已允许",
       denied: "已拒绝",
@@ -41,6 +42,7 @@ const T = zh
       noText: "no readable text; Wisp will open the URL itself",
       approval: "Wisp wants to run",
       allow: "Allow once",
+      allowSession: "Allow for this chat",
       deny: "Deny",
       allowed: "Allowed",
       denied: "Denied",
@@ -140,13 +142,20 @@ function showApproval(message) {
   const actions = el("div", "actions");
   const deny = el("button", "", T.deny);
   const allow = el("button", "primary", T.allow);
-  const decide = (approved) => {
-    link().postMessage({ type: "approval", id: message.id, approvalId: message.approval_id, approved });
+  const decide = (approved, scope) => {
+    link().postMessage({ type: "approval", id: message.id, approvalId: message.approval_id, approved, scope });
     actions.replaceWith(el("div", "status", approved ? T.allowed : T.denied));
   };
-  deny.addEventListener("click", () => decide(false));
-  allow.addEventListener("click", () => decide(true));
+  deny.addEventListener("click", () => decide(false, "once"));
+  allow.addEventListener("click", () => decide(true, "once"));
   actions.append(deny, allow);
+  // Without this, every later call of the same tool in this conversation
+  // asks again (#1741). Wisp offers it only where the desktop card would.
+  if (message.session_scope) {
+    const session = el("button", "", T.allowSession);
+    session.addEventListener("click", () => decide(true, "session"));
+    actions.append(session);
+  }
   card.append(actions);
   // Above the answer, so the finished turn reads: question, approval, answer.
   pending.turn.insertBefore(card, pending.answer);

@@ -1,7 +1,7 @@
 // Wisp Real Browser Bridge protocol constants (Protocol v2).
 var WISP_PROTOCOL = {
   version: 2,
-  extensionVersion: "0.5.0",
+  extensionVersion: "0.5.1",
   capabilities: [
     "article_scan",
     "asset_download",
@@ -33,7 +33,11 @@ function readBridgeConfig() {
 
 // browserInstance identifies one browser process: tab and window ids are only
 // meaningful inside it, so Wisp drops remembered ids when it changes.
-function handshakePayload(tabs, paused, browserInstance) {
+// liveTabIds lists every open tab, scriptable or not. `tabs` holds only
+// http(s) pages, so a tab that is loading or briefly on another scheme is
+// missing from it while still open; Wisp keeps a project's claim on such a
+// tab and drops the claim only once the id is gone from this list.
+function handshakePayload(tabs, paused, browserInstance, liveTabIds) {
   var cfg = readBridgeConfig();
   var payload = {
     type: "ext_ready",
@@ -46,6 +50,9 @@ function handshakePayload(tabs, paused, browserInstance) {
     tabs: tabs || []
   };
   if (browserInstance) payload.browser_instance = String(browserInstance);
+  if (Array.isArray(liveTabIds)) {
+    payload.tab_ids = liveTabIds.filter(function (id) { return Number.isInteger(id); });
+  }
   return payload;
 }
 

@@ -307,7 +307,17 @@ impl SessionState {
     /// Drop ownership of tabs that closed or that the user moved to another
     /// window, and forget every scope when the browser process changed: its
     /// ids may now name somebody else's tabs.
-    fn revalidate_scopes(&mut self, browser_instance: Option<&str>) {
+    ///
+    /// `live_ids` (extension 0.5.1+) lists every open tab, while `self.tabs`
+    /// holds only http(s) pages. A claimed tab that is still open but not
+    /// scriptable right now (loading, a new tab not yet committed, a browser
+    /// page) keeps its claim, so the user is not asked to share it again when
+    /// it is back (#1741). Without the list, absence still means closed.
+    fn revalidate_scopes(
+        &mut self,
+        browser_instance: Option<&str>,
+        live_ids: Option<&HashSet<i64>>,
+    ) {
         if let Some(instance) = browser_instance.filter(|instance| !instance.is_empty()) {
             if self.browser_instance.as_deref() != Some(instance) {
                 if self.browser_instance.is_some() {
@@ -321,7 +331,7 @@ impl SessionState {
             let detached = &mut scope.detached;
             scope.tabs.retain(|id, owned| {
                 let Some(live) = tabs.get(id) else {
-                    return false;
+                    return live_ids.is_some_and(|ids| ids.contains(id));
                 };
                 match (owned.window_id, live.window_id) {
                     (Some(before), Some(now)) if before != now => {
@@ -2516,7 +2526,14 @@ fn replace_tabs(state: &mut SessionState, message: &Value) {
             .or_else(|| state.tabs.values().next())
             .map(|tab| tab.id);
     }
-    state.revalidate_scopes(message.get("browser_instance").and_then(Value::as_str));
+    let live_ids: Option<HashSet<i64>> = message
+        .get("tab_ids")
+        .and_then(Value::as_array)
+        .map(|ids| ids.iter().filter_map(Value::as_i64).collect());
+    state.revalidate_scopes(
+        message.get("browser_instance").and_then(Value::as_str),
+        live_ids.as_ref(),
+    );
 }
 
 fn parse_tab(value: &Value) -> Option<BrowserTab> {
@@ -4627,8 +4644,8 @@ mod tests {
         assert_eq!(info["live_retrieval"], false);
         assert_eq!(info["code"], BROWSER_DISCONNECTED_CODE);
         assert_eq!(info["required_protocol"], 2);
-        assert_eq!(info["bundled_extension_version"], "0.5.0");
-        assert_eq!(info["extension_version"], "0.5.0");
+        assert_eq!(info["bundled_extension_version"], "0.5.1");
+        assert_eq!(info["extension_version"], "0.5.1");
         assert!(info["assistant_instruction"]
             .as_str()
             .unwrap()
@@ -5405,7 +5422,7 @@ mod tests {
         let status = bridge.extension_status().await;
         assert!(status.connected);
         assert_eq!(status.current_version.as_deref(), Some("0.2.1"));
-        assert_eq!(status.bundled_version.as_deref(), Some("0.5.0"));
+        assert_eq!(status.bundled_version.as_deref(), Some("0.5.1"));
         assert!(status.update_required);
         assert!(!status.automatic_reload_available);
         assert!(status.integrity_verified);
@@ -5466,7 +5483,7 @@ mod tests {
                 &json!({
                     "type": "ext_ready",
                     "protocol_version": 2,
-                    "extension_version": "0.5.0",
+                    "extension_version": "0.5.1",
                     "capabilities": ["runtime_reload", "article_scan"],
                     "tabs": []
                 })
@@ -5478,7 +5495,7 @@ mod tests {
         assert_eq!(update.outcome, "updated");
         assert!(update.status.connected);
         assert!(!update.status.update_required);
-        assert_eq!(update.status.current_version.as_deref(), Some("0.5.0"));
+        assert_eq!(update.status.current_version.as_deref(), Some("0.5.1"));
     }
 
     #[derive(Clone)]
@@ -6254,7 +6271,7 @@ mod tests {
         json!({
             "type": "ext_ready",
             "protocol_version": 2,
-            "extension_version": "0.5.0",
+            "extension_version": "0.5.1",
             "capabilities": ["tab_scope", "managed_tabs"],
             "browser_instance": instance,
             "tabs": tabs
@@ -6686,6 +6703,114 @@ mod tests {
         assert!(for_b["tabs"].as_array().unwrap().is_empty());
         assert_eq!(for_b["scope"]["window_id"], Value::Null);
         assert_eq!(for_b["scope"]["window_pinning"], "unbound");
+    }
+
+    /// Extension 0.5.1+ handshake: `tabs` holds http(s) pages only and
+    /// `tab_ids` every open tab.
+    fn live_handshake(instance: &str, tabs: Value, ids: &[i64]) -> String {
+        let mut handshake: Value = serde_json::from_str(&scoped_handshake(instance, tabs)).unwrap();
+        handshake["extension_version"] = json!("0.5.1");
+        handshake["tab_ids"] = json!(ids);
+        handshake.to_string()
+    }
+
+    #[tokio::test]
+    async fn a_shared_tab_stays_shared_while_it_is_open_in_the_same_browser() {
+        let (bridge, _rx, a, b) = scoped_bridge().await;
+        let mine = || user_tab(1, "https://mine.example", 5);
+        let a_tab = || json!({ "id": 2, "url": "https://a.example", "title": "A", "windowId": 5, "groupId": 9 });
+        let b_tab = || json!({ "id": 3, "url": "https://b.example", "title": "B", "windowId": 6, "groupId": 10 });
+        let first = ScopeEnv::new("project-a", "frame-a", true);
+        bridge
+            .authorize_tab(None, Some(&a), Some(1), &first)
+            .await
+            .unwrap();
+        assert_eq!(first.asked.lock().unwrap().len(), 1);
+
+        // Tab 1 is briefly not an http(s) page (loading, a browser page), so
+        // the scriptable list misses it while it is still open.
+        bridge
+            .handle_text(
+                1,
+                &live_handshake("browser-1", json!([a_tab(), b_tab()]), &[1, 2, 3, 9]),
+            )
+            .await;
+        bridge
+            .handle_text(
+                1,
+                &live_handshake("browser-1", json!([mine(), a_tab(), b_tab()]), &[1, 2, 3]),
+            )
+            .await;
+        // The extension's service worker restarts and reconnects.
+        let (tx, _rx2) = mpsc::unbounded_channel();
+        bridge.install_client(1, tx).await;
+        bridge
+            .handle_text(
+                1,
+                &live_handshake("browser-1", json!([mine(), a_tab(), b_tab()]), &[1, 2, 3]),
+            )
+            .await;
+
+        // A later turn and a new conversation of the same project are not asked.
+        let later = ScopeEnv::new("project-a", "frame-new", true);
+        let later_owner = later.owner();
+        bridge
+            .authorize_tab(None, Some(&later_owner), Some(1), &later)
+            .await
+            .unwrap();
+        assert!(later.asked.lock().unwrap().is_empty());
+        let listing = bridge
+            .scoped_tabs_on(None, Some(&a))
+            .await
+            .unwrap()
+            .render();
+        assert_eq!(listing["scope"]["tabs"][0]["id"], 1);
+        assert_eq!(listing["scope"]["tabs"][0]["granted"], true);
+
+        // Another project is still refused without a prompt.
+        let other = ScopeEnv::new("project-b", "frame-b", true);
+        let refused = bridge
+            .authorize_tab(None, Some(&b), Some(1), &other)
+            .await
+            .unwrap_err();
+        assert!(refused.contains(errors::TAB_OUT_OF_SCOPE), "{refused}");
+        assert!(other.asked.lock().unwrap().is_empty());
+
+        // Closing the tab ends the share.
+        bridge
+            .handle_text(
+                1,
+                &live_handshake("browser-1", json!([a_tab(), b_tab()]), &[2, 3]),
+            )
+            .await;
+        assert_eq!(
+            bridge.state.lock().await.sessions["shared"]
+                .owned_by(1)
+                .map(str::to_string),
+            None
+        );
+
+        // An older extension sends no live-id list: absence still means closed.
+        bridge
+            .handle_text(1, &scoped_handshake("browser-1", json!([b_tab()])))
+            .await;
+        assert_eq!(
+            bridge.state.lock().await.sessions["shared"]
+                .owned_by(2)
+                .map(str::to_string),
+            None
+        );
+
+        // A new browser process forgets every claim even if the ids are open.
+        bridge
+            .handle_text(
+                1,
+                &live_handshake("browser-2", json!([b_tab()]), &[1, 2, 3]),
+            )
+            .await;
+        assert!(bridge.state.lock().await.sessions["shared"]
+            .scopes
+            .is_empty());
     }
 
     #[tokio::test]

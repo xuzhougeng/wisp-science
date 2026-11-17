@@ -2305,7 +2305,7 @@ mod tests {
 
     async fn hello(socket: &mut Socket, tabs: Value) {
         let ready = json!({
-            "type": "ext_ready", "protocol_version": 2, "extension_version": "0.5.0",
+            "type": "ext_ready", "protocol_version": 2, "extension_version": "0.5.1",
             "session": "shared", "paused": false, "tabs": tabs, "capabilities": CAPABILITIES,
         });
         socket
@@ -2380,7 +2380,7 @@ mod tests {
         .await;
         let status = settled(&bridge, |status| status.tabs == 1).await;
         assert!(status.connected && !status.update_required && !status.paused);
-        assert_eq!(status.extension_version, "0.5.0");
+        assert_eq!(status.extension_version, "0.5.1");
         assert_eq!(status.refused_origin, None);
 
         // Its keep-alive is answered.
@@ -2779,7 +2779,7 @@ mod tests {
         let mut extension = connect(&bridge, EXTENSION_ORIGIN).await.unwrap();
         hello(&mut extension, json!([])).await;
         // Its hello is in: requests are sent from now on.
-        settled(&bridge, |status| status.extension_version == "0.5.0").await;
+        settled(&bridge, |status| status.extension_version == "0.5.1").await;
 
         let paper = open_as(&bridge, &mut extension, "t1", 21, "https://example.org/a").await;
         hello(&mut extension, json!([paper])).await;
@@ -2850,7 +2850,7 @@ mod tests {
         let mut extension = connect(&bridge, EXTENSION_ORIGIN).await.unwrap();
         hello(&mut extension, json!([])).await;
         // Its hello is in: requests are sent from now on.
-        settled(&bridge, |status| status.extension_version == "0.5.0").await;
+        settled(&bridge, |status| status.extension_version == "0.5.1").await;
         let paper = open_as(&bridge, &mut extension, "t1", 21, "https://example.org/a").await;
         hello(&mut extension, json!([paper])).await;
         settled(&bridge, |status| status.tabs == 1).await;
@@ -3046,7 +3046,7 @@ mod tests {
         let mut extension = connect(&bridge, EXTENSION_ORIGIN).await.unwrap();
         hello(&mut extension, json!([])).await;
         // Its hello is in: requests are sent from now on.
-        settled(&bridge, |status| status.extension_version == "0.5.0").await;
+        settled(&bridge, |status| status.extension_version == "0.5.1").await;
         open_as(&bridge, &mut extension, "t1", 21, "https://example.org/a").await;
 
         // A PNG may not be written outside the project; the browser is not
@@ -3155,7 +3155,7 @@ mod tests {
         let mut extension = connect(&bridge, EXTENSION_ORIGIN).await.unwrap();
         hello(&mut extension, json!([])).await;
         // Its hello is in: requests are sent from now on.
-        settled(&bridge, |status| status.extension_version == "0.5.0").await;
+        settled(&bridge, |status| status.extension_version == "0.5.1").await;
         bridge.ensure_extension(None).await;
         assert_eq!(launches.lock().unwrap().len(), 3);
         bridge.stop();
@@ -3193,7 +3193,7 @@ mod tests {
         assert!(status.connected && status.update_required);
         assert!(status.automatic_reload_available);
         assert_eq!(status.current_version.as_deref(), Some("0.4.0"));
-        assert_eq!(status.bundled_version.as_deref(), Some("0.5.0"));
+        assert_eq!(status.bundled_version.as_deref(), Some("0.5.1"));
         assert!(bridge.status().update_required);
 
         let updating = {
