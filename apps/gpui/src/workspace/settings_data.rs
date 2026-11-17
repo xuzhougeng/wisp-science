@@ -2,9 +2,9 @@
 //! Storage. Both only read.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
-use gpui_component::{ActiveTheme, Sizable, StyledExt, button::Button, tooltip::Tooltip};
+use gpui_component::{ActiveTheme, StyledExt, tooltip::Tooltip};
 
-use super::{Workspace, shell::glyph};
+use super::{Workspace, settings_sections::setting, surfaces};
 use crate::{
     backend::receive,
     controls::compact,
@@ -16,30 +16,32 @@ use crate::{
 /// How tall the busiest day's bar is.
 const BAR: f32 = 64.;
 
-/// A headline figure with its name under it.
+/// A headline figure on the paper: the count as a fact in ink, its name
+/// under it in faded caption. Only read, so no ground of its own.
 fn figure(value: String, name: &'static str, cx: &App) -> Div {
     div()
         .v_flex()
         .flex_1()
-        .p_3()
-        .rounded(cx.theme().radius)
-        .bg(cx.theme().muted)
-        .child(div().font_weight(FontWeight::MEDIUM).child(value))
-        .child(
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(name),
-        )
+        .gap_0p5()
+        .py_2()
+        .child(surfaces::read_only(value, cx))
+        .child(surfaces::settings_note(name, cx))
 }
 
-fn heading(text: &'static str) -> Div {
-    div()
-        .pt_5()
-        .pb_1()
-        .text_sm()
-        .font_weight(FontWeight::MEDIUM)
-        .child(text)
+/// A heading over a group of the page: faded caption.
+fn heading(text: &'static str, cx: &App) -> Div {
+    surfaces::settings_heading(text, cx)
+}
+
+/// A thin meter under a row: the share of the whole it stands for.
+fn meter(share: f32, cx: &App) -> Div {
+    div().h(px(4.)).rounded(px(2.)).bg(cx.theme().muted).child(
+        div()
+            .h_full()
+            .w(relative(share.clamp(0., 1.)))
+            .rounded(px(2.))
+            .bg(cx.theme().primary),
+    )
 }
 
 impl Workspace {
@@ -89,7 +91,9 @@ impl Workspace {
         let mut page = page.child(
             div()
                 .h_flex()
-                .gap_2()
+                .gap_4()
+                .border_b_1()
+                .border_color(cx.theme().border)
                 .child(figure(compact(totals.input), tr("Input tokens"), cx))
                 .child(figure(compact(totals.output), tr("Output tokens"), cx))
                 .child(figure(compact(totals.cached), tr("Read from cache"), cx))
@@ -142,56 +146,41 @@ impl Workspace {
             },
         );
         page = page
-            .child(heading(tr("Input and output per day")))
+            .child(heading(tr("Input and output per day"), cx))
             .child(
-                div()
-                    .pb_2()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(crate::i18n::fill(
+                surfaces::settings_note(
+                    crate::i18n::fill(
                         tr("{}: {} tokens. {}"),
                         &[&range, &compact(spent), &busiest],
-                    )),
+                    ),
+                    cx,
+                )
+                .pb_2(),
             )
             .child(strip)
             .child(div().h(px(1.)).bg(cx.theme().border));
 
         let all: u64 = view.models.iter().map(|(_, tokens)| tokens).sum();
-        page = page.child(heading(tr("By model")));
-        for (model, tokens) in &view.models {
+        page = page.child(heading(tr("By model"), cx));
+        let mut rows = Vec::new();
+        for (index, (model, tokens)) in view.models.iter().enumerate() {
             let share = usage::percent(*tokens, all);
-            page = page.child(
-                div()
-                    .v_flex()
-                    .gap_1()
-                    .py_2()
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_3()
-                            .text_sm()
-                            .child(div().flex_1().min_w_0().truncate().child(model.clone()))
-                            .child(
-                                div()
-                                    .text_color(muted)
-                                    .child(format!("{} · {share}%", compact(*tokens))),
-                            ),
-                    )
-                    .child(
-                        div().h(px(4.)).rounded(px(2.)).bg(cx.theme().muted).child(
-                            div()
-                                .h_full()
-                                .w(relative(share as f32 / 100.))
-                                .rounded(px(2.))
-                                .bg(cx.theme().primary),
-                        ),
-                    ),
+            rows.push(
+                surfaces::record_row(("usage-model", index), model.clone())
+                    .icon("bot")
+                    .mono()
+                    .suffix(format!("{share}%"))
+                    .value(compact(*tokens))
+                    .below(Some(meter(share as f32 / 100., cx).into_any_element())),
             );
+        }
+        if !rows.is_empty() {
+            page = page.child(surfaces::record_group(rows, cx));
         }
 
         // What the model reached for: skills and MCP tools, by calls.
         let tools = usage::tool_rows(view);
-        page = page.child(heading(tr("SKILL / MCP calls")));
+        page = page.child(heading(tr("SKILL / MCP calls"), cx));
         if tools.is_empty() {
             page = page.child(
                 div()
@@ -202,69 +191,41 @@ impl Workspace {
             );
         }
         let most = tools.first().map_or(1, |(_, _, calls)| (*calls).max(1));
-        for (kind, name, calls) in &tools {
-            let kind = match kind.as_str() {
-                "skill" => tr("Skill"),
-                "mcp" => "MCP",
-                _ => tr("Other"),
+        let mut rows = Vec::new();
+        for (index, (kind, name, calls)) in tools.iter().enumerate() {
+            let (icon, kind) = match kind.as_str() {
+                "skill" => ("skill", tr("Skill")),
+                "mcp" => ("link", "MCP"),
+                _ => ("wrench", tr("Other")),
             };
-            page = page.child(
-                div()
-                    .v_flex()
-                    .gap_1()
-                    .py_2()
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_3()
-                            .text_sm()
-                            .child(div().w(px(44.)).text_xs().text_color(muted).child(kind))
-                            .child(div().flex_1().min_w_0().truncate().child(name.clone()))
-                            .child(
-                                div()
-                                    .text_color(muted)
-                                    .child(crate::i18n::fill(tr("{} calls"), &[calls])),
-                            ),
-                    )
-                    .child(
-                        div().h(px(4.)).rounded(px(2.)).bg(cx.theme().muted).child(
-                            div()
-                                .h_full()
-                                .w(relative(*calls as f32 / most as f32))
-                                .rounded(px(2.))
-                                .bg(cx.theme().primary),
-                        ),
-                    ),
+            rows.push(
+                surfaces::record_row(("usage-tool", index), name.clone())
+                    .icon(icon)
+                    .lead(kind)
+                    .value(calls.to_string())
+                    .below(Some(
+                        meter(*calls as f32 / most as f32, cx).into_any_element(),
+                    )),
             );
         }
-
-        page = page.child(heading(tr("By project")));
-        for row in &view.projects {
-            page =
-                page.child(
-                    div()
-                        .h_flex()
-                        .gap_3()
-                        .py_2()
-                        .border_b_1()
-                        .border_color(cx.theme().border)
-                        .text_sm()
-                        .child(
-                            div()
-                                .v_flex()
-                                .flex_1()
-                                .min_w_0()
-                                .child(div().truncate().child(row.name.clone()))
-                                .child(div().text_xs().text_color(muted).child(
-                                    crate::organise::conversations(row.conversations as usize),
-                                )),
-                        )
-                        .child(div().text_color(muted).child(crate::i18n::fill(
-                            tr("Input {} · output {}"),
-                            &[&compact(row.input), &compact(row.output)],
-                        ))),
-                );
+        if !rows.is_empty() {
+            page = page.child(surfaces::record_group(rows, cx));
         }
+
+        page = page.child(heading(tr("By project"), cx));
+        let rows = view.projects.iter().enumerate().map(|(index, row)| {
+            surfaces::record_row(("usage-project", index), row.name.clone())
+                .icon("notebook")
+                .suffix(crate::organise::conversations(row.conversations as usize))
+                .action(surfaces::fact(
+                    crate::i18n::fill(
+                        tr("Input {} · output {}"),
+                        &[&compact(row.input), &compact(row.output)],
+                    ),
+                    cx,
+                ))
+        });
+        page = page.child(surfaces::record_group(rows, cx));
         page
     }
 
@@ -275,59 +236,28 @@ impl Workspace {
             return page.child(div().text_sm().text_color(muted).child(tr("Loading…")));
         };
         let folder = std::path::PathBuf::from(&view.data_dir);
+        // Each part of the data folder is a setting's row: what it is on the
+        // left, its size as a fact on the right.
         let line = |name: &'static str, note: &'static str, bytes: u64| {
-            div()
-                .h_flex()
-                .gap_3()
-                .py_2()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .child(
-                    div()
-                        .v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .child(div().text_sm().child(name))
-                        .child(div().text_xs().text_color(muted).child(note)),
-                )
-                .child(div().text_sm().child(size_label(bytes)))
+            setting(name, note, surfaces::read_only(size_label(bytes), cx), cx)
         };
         let mut page = page
-            .child(
+            .child(setting(
+                tr("Data folder"),
+                "",
                 div()
                     .h_flex()
-                    .gap_3()
+                    .items_center()
+                    .gap_2()
+                    .child(surfaces::read_only(view.data_dir.clone(), cx))
                     .child(
-                        div()
-                            .v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(tr("Data folder")),
-                            )
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_xs()
-                                    .text_color(muted)
-                                    .font_family(cx.theme().mono_font_family.clone())
-                                    .child(view.data_dir.clone()),
-                            ),
-                    )
-                    .child(
-                        Button::new("storage-reveal")
-                            .icon(glyph("folder"))
-                            .label(tr("Show"))
-                            .small()
+                        surfaces::outlined_action("storage-reveal", "folder", tr("Show"), cx)
                             .flex_shrink_0()
                             .tooltip(tr("Show the folder in your file manager"))
                             .on_click(cx.listener(move |_, _, _, cx| cx.reveal_path(&folder))),
                     ),
-            )
-            .child(div().pt_3())
+                cx,
+            ))
             .child(line(
                 tr("Database"),
                 tr("Conversations, settings and run records of every project."),
@@ -358,12 +288,16 @@ impl Workspace {
                 tr("The whole data folder."),
                 view.data_bytes,
             ))
-            .child(heading(tr("In each project's folder")))
-            .child(div().pb_1().text_xs().text_color(muted).child(tr(
-                "The whole folder, your own files included, and of it what Wisp itself keeps \
-                 there: its .wisp folder (memory, snapshots) and the files you attached from \
-                 elsewhere. A very large folder is counted up to 50,000 entries.",
-            )));
+            .child(heading(tr("In each project's folder"), cx))
+            .child(surfaces::settings_note_help(tr("Each project's folder, and what Wisp keeps in it."),
+                tr(
+                    "The whole folder, your own files included, and of it what Wisp itself keeps \
+                     there: its .wisp folder (memory, snapshots) and the files you attached from \
+                     elsewhere. A very large folder is counted up to 50,000 entries.",
+                ),
+                cx,
+            )
+            .pb_1());
         let home_dir = dirs::home_dir().map(|path| path.to_string_lossy().into_owned());
         for row in &view.projects {
             let detail = if row.missing {
@@ -396,18 +330,22 @@ impl Workspace {
                             .flex_1()
                             .min_w_0()
                             .child(div().truncate().text_sm().child(row.name.clone()))
-                            .child(div().truncate().text_xs().text_color(muted).child(format!(
-                                "{} · {}",
-                                home::short_path(&row.workspace_dir, home_dir.as_deref()),
-                                crate::organise::conversations(row.conversations as usize)
-                            ))),
+                            .child(
+                                surfaces::fact(
+                                    format!(
+                                        "{} · {}",
+                                        home::short_path(&row.workspace_dir, home_dir.as_deref()),
+                                        crate::organise::conversations(row.conversations as usize)
+                                    ),
+                                    cx,
+                                )
+                                .truncate(),
+                            ),
                     )
                     .child(
-                        div()
+                        surfaces::fact(detail, cx)
                             .flex_shrink_0()
-                            .text_sm()
-                            .when(row.missing, |text| text.text_color(cx.theme().warning))
-                            .child(detail),
+                            .when(row.missing, |text| text.text_color(cx.theme().warning)),
                     ),
             );
         }

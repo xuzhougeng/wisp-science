@@ -391,12 +391,7 @@ impl Workspace {
                     .text_color(muted)
                     .child(tr("Browser extension update")),
             )
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(banner.title),
-            )
+            .child(div().text_sm().child(banner.title))
             .child(div().text_xs().text_color(muted).child(banner.body));
         if let Some(path) = &banner.path {
             copy = copy.child(

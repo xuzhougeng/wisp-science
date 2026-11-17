@@ -250,34 +250,24 @@ impl Workspace {
         };
         let folder = files::parent(&path).unwrap_or_default();
         let hover = cx.theme().list_hover;
-        surfaces::panel_row(("file-hit", index), cx)
+        // A file found: its name, and the folder it is in after it.
+        div()
             .w_full()
-            .h(px(surfaces::PANEL_ROW_HEIGHT))
-            .cursor_pointer()
-            .hover(move |style| style.bg(hover))
+            .px_2()
             .child(
-                div()
-                    .flex_shrink_0()
-                    .max_w(px(180.))
-                    .truncate()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(files::file_name(&path).to_owned()),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(if folder.is_empty() {
+                surfaces::record_row(("file-hit", index), files::file_name(&path).to_owned())
+                    .icon("doc")
+                    .suffix(if folder.is_empty() {
                         tr("Project root").to_owned()
                     } else {
                         folder
-                    }),
-            )
-            .on_click(
-                cx.listener(move |this, _, window, cx| this.reveal_file(path.clone(), window, cx)),
+                    })
+                    .h(px(surfaces::PANEL_ROW_HEIGHT))
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(hover))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.reveal_file(path.clone(), window, cx)
+                    })),
             )
             .into_any_element()
     }
@@ -318,6 +308,11 @@ impl Workspace {
                         .child(shown),
                 )
         };
+        // Each call is a record row, as in the conversation: the icon of
+        // what it works on, its name, its outcome as a stamp and its time;
+        // it opens to what it was given and returned.
+        let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
+        let mut rows = Vec::new();
         for index in calls {
             let row = &self.rows[index];
             let key = crate::present::tool_key(row, index);
@@ -326,38 +321,23 @@ impl Workspace {
                 .get(&key)
                 .copied()
                 .unwrap_or_else(|| crate::panel::provenance_open(row));
-            let (mark, tone) = match row.ok {
-                Some(true) => ("check", crate::present::Tone::Success),
-                Some(false) => ("close", crate::present::Tone::Danger),
-                None => ("loader", crate::present::Tone::Active),
-            };
-            let toggled = key.clone();
-            // An open call keeps the hairline under what it was given and
-            // returned.
-            list = list.child(
-                surfaces::panel_row(SharedString::from(format!("provenance-{key}")), cx)
-                    .when(open, |row| row.border_b_0())
-                    .cursor_pointer()
-                    .hover(move |style| style.bg(hover))
-                    .child(
-                        crate::assets::icon(if open {
-                            "chevron-down"
-                        } else {
-                            "chevron-right"
-                        })
-                        .text_color(muted),
-                    )
-                    .child(surfaces::panel_label(
-                        row.tool_name.clone().unwrap_or_default(),
-                    ))
-                    .child(crate::assets::icon(mark).text_color(super::tone_color(tone, cx)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.provenance_open.insert(toggled.clone(), !open);
-                        cx.notify();
-                    })),
-            );
-            if open {
-                let mut item = surfaces::panel_entry(cx).pt_0();
+            let mut record = surfaces::record_row(
+                SharedString::from(format!("provenance-{key}")),
+                row.tool_name.clone().unwrap_or_default(),
+            )
+            .icon(crate::present::tool_icon(row))
+            .mono()
+            .value_column();
+            if let Some((word, tone)) = crate::present::tool_outcome(row, running)
+                && let Some(kind) = surfaces::StampKind::from_tone(tone)
+            {
+                record = record.stamp(kind, word);
+            }
+            if let Some(ms) = row.duration_ms {
+                record = record.value(crate::present::duration_label(ms));
+            }
+            let below = open.then(|| {
+                let mut item = div().v_flex().gap_2();
                 if let Some(input) = row
                     .input
                     .as_deref()
@@ -368,21 +348,37 @@ impl Workspace {
                 if !row.text.trim().is_empty() {
                     item = item.child(block(tr("Output"), &row.text));
                 }
-                item = item.child(
+                item.child(
                     div().h_flex().child(
-                        Button::new(SharedString::from(format!("provenance-show-{key}")))
-                            .label(tr("Show in the conversation"))
-                            .xsmall()
-                            .ghost()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.list.scroll_to_reveal_item(index);
-                                cx.notify();
-                            })),
+                        surfaces::labelled_action(
+                            SharedString::from(format!("provenance-show-{key}")),
+                            "chat",
+                            tr("Show in the conversation"),
+                            surfaces::IconSize::Inline,
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.list.scroll_to_reveal_item(index);
+                            cx.notify();
+                        })),
                     ),
-                );
-                list = list.child(item);
-            }
+                )
+                .into_any_element()
+            });
+            let toggled = key.clone();
+            rows.push(
+                record
+                    .below(below)
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.provenance_open.insert(toggled.clone(), !open);
+                        cx.notify();
+                    })),
+            );
         }
+        list = list.child(div().px_2().child(surfaces::record_group(rows, cx)));
         list
     }
 
@@ -755,80 +751,106 @@ impl Workspace {
         }
     }
 
+    /// One entry of the folder shown, as a record row: a folder's or a
+    /// file's icon, its name, a file's size as the value; its actions (open
+    /// in the centre, rename, move to the trash, last and in the danger
+    /// colour) are icon buttons that show under the pointer. A click opens
+    /// a folder, or previews a file.
     fn file_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        /// The hover group of one file's row and its actions.
+        const FILE_ROW: &str = "file-row";
         let Some(entry) = self.files.entries.get(index) else {
             return div().into_any_element();
         };
         let path = files::join(&self.files.path, &entry.name);
         let is_dir = entry.is_dir;
         let hover = cx.theme().list_hover;
-        let (name, detail) = if is_dir {
-            (format!("{}/", entry.name), tr("Folder").to_string())
-        } else {
-            (entry.name.clone(), files::size_label(entry.size))
-        };
         let (renamed, trashed) = (path.clone(), path.clone());
         // A file opens in the centre beside the conversation's tab, as the
         // WebView's Open in center on a file row does.
         let centre = (!is_dir && self.state.session.is_some()).then(|| {
             let opened = path.clone();
-            icon_button(("file-centre", index), "doc", tr("Open in centre")).on_click(cx.listener(
-                move |this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.open_in_centre(opened.clone(), window, cx)
-                },
-            ))
-        });
-        surfaces::panel_row(("file-entry", index), cx)
-            .w_full()
-            .h(px(surfaces::PANEL_ROW_HEIGHT))
-            .justify_between()
-            .cursor_pointer()
-            .hover(move |style| style.bg(hover))
-            .child(surfaces::panel_label(name))
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(detail),
-            )
-            .child(
-                div()
-                    .h_flex()
-                    .flex_shrink_0()
-                    .children(centre)
-                    .child(
-                        icon_button(("file-rename", index), "edit", tr("Rename")).on_click(
-                            cx.listener(move |this, _, window, cx| {
-                                // The row underneath opens the entry.
-                                cx.stop_propagation();
-                                this.start_naming(Naming::Rename(renamed.clone()), window, cx)
-                            }),
-                        ),
-                    )
-                    .child(
-                        icon_button(
-                            ("file-trash", index),
-                            "trash",
-                            tr("Move to the project's trash"),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.ask_trash_file(trashed.clone(), cx)
-                        })),
-                    ),
+            surfaces::icon_action(
+                ("file-centre", index),
+                "external-link",
+                tr("Open in centre"),
+                surfaces::IconTone::Faded,
+                cx,
             )
             .on_click(cx.listener(move |this, _, window, cx| {
-                // What was said about the last change is about another place now.
-                this.file_notice = None;
-                this.file_problem = None;
-                if is_dir {
-                    this.load_directory(path.clone(), window, cx);
-                } else {
-                    this.open_file(path.clone(), window, cx);
-                }
+                cx.stop_propagation();
+                this.open_in_centre(opened.clone(), window, cx)
             }))
+        });
+        // The actions lie over the row's right end under the pointer, on
+        // the row's hover ground, so they take no width: the size sits
+        // flush right until they show.
+        let actions = div()
+            .absolute()
+            .top_0()
+            .right(px(12.))
+            .h(px(surfaces::PANEL_ROW_HEIGHT))
+            .h_flex()
+            .items_center()
+            .bg(hover)
+            .invisible()
+            .group_hover(FILE_ROW, |style| style.visible())
+            .children(centre)
+            .child(
+                surfaces::icon_action(
+                    ("file-rename", index),
+                    "edit",
+                    tr("Rename"),
+                    surfaces::IconTone::Faded,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    // The row underneath opens the entry.
+                    cx.stop_propagation();
+                    this.start_naming(Naming::Rename(renamed.clone()), window, cx)
+                })),
+            )
+            .child(
+                surfaces::danger_action(
+                    ("file-trash", index),
+                    "trash",
+                    tr("Move to the project's trash"),
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.ask_trash_file(trashed.clone(), cx)
+                })),
+            );
+        let mut row = surfaces::record_row(("file-entry", index), entry.name.clone())
+            .icon(if is_dir { "folder" } else { "doc" })
+            .value_column();
+        if !is_dir {
+            row = row.value(files::size_label(entry.size));
+        }
+        // The panel's inset with the row's own; one height for the list.
+        div()
+            .relative()
+            .group(FILE_ROW)
+            .w_full()
+            .px_2()
+            .child(
+                row.h(px(surfaces::PANEL_ROW_HEIGHT))
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(hover))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        // What was said about the last change is about another place now.
+                        this.file_notice = None;
+                        this.file_problem = None;
+                        if is_dir {
+                            this.load_directory(path.clone(), window, cx);
+                        } else {
+                            this.open_file(path.clone(), window, cx);
+                        }
+                    })),
+            )
+            // Over the row, so painted after it.
+            .child(actions)
             .into_any_element()
     }
 
@@ -1605,6 +1627,7 @@ impl Workspace {
         if let Some(note) = files::table_note(table) {
             bar = bar.child(div().text_xs().text_color(muted).child(note));
         }
+        let muted_ink = muted;
         let line = |cells: &[String], head: bool| {
             let mut row = div().h_flex().border_b_1().border_color(border);
             for cell in cells {
@@ -1616,8 +1639,9 @@ impl Workspace {
                     .truncate()
                     .text_xs()
                     .child(cell.lines().next().unwrap_or_default().to_owned());
+                // The head is said with faded ink, not weight.
                 if head {
-                    cell = cell.font_weight(FontWeight::SEMIBOLD);
+                    cell = cell.text_color(muted_ink);
                 }
                 row = row.child(cell);
             }
@@ -1837,6 +1861,59 @@ impl Workspace {
         parts
     }
 
+    /// The rest of what can be done in the folder shown, under the Files
+    /// header's More button: each an icon and a word.
+    fn files_menu(&self, cx: &mut Context<Self>) -> Div {
+        type Run = fn(&mut Workspace, &mut Window, &mut Context<Workspace>);
+        let item = |id: &'static str,
+                    icon_name: &str,
+                    label: &'static str,
+                    run: Run,
+                    cx: &mut Context<Self>| {
+            Self::menu_item(id, icon_name, label, cx).on_click(cx.listener(
+                move |this, _, window, cx| {
+                    this.layers.close(Layer::FilesMenu);
+                    run(this, window, cx);
+                    cx.notify();
+                },
+            ))
+        };
+        div()
+            .absolute()
+            .top(px(surfaces::ICON_BUTTON + 4.))
+            .right_0()
+            .w(px(240.))
+            .v_flex()
+            .p_1()
+            .occlude()
+            .rounded(cx.theme().radius_lg)
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().popover)
+            .shadow_md()
+            .child(item(
+                "files-upload",
+                "upload",
+                tr("Upload files into this folder"),
+                |this, window, cx| this.upload_into_folder(window, cx),
+                cx,
+            ))
+            .child(item(
+                "files-reload",
+                "refresh",
+                tr("Reload"),
+                |this, window, cx| this.reload_files(window, cx),
+                cx,
+            ))
+            .child(item(
+                "files-terminal",
+                "terminal",
+                tr("Open a terminal in this folder"),
+                |this, window, cx| this.open_terminal_here(window, cx),
+                cx,
+            ))
+    }
+
     pub(super) fn render_files(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let previewing = self.layers.contains(Layer::FilePreview);
         let muted = cx.theme().muted_foreground;
@@ -1914,56 +1991,77 @@ impl Workspace {
         // The folder shown is the header's title; going up, reading it
         // again and adding to it are its actions. How the folder is laid
         // out and the name to look for are the line under it.
+        // The header's actions: up, a new file, a new folder, and More for
+        // the rest (upload, reload, a terminal here). The search, the view
+        // and the order are the line under it.
+        let menu_open = self.layers.contains(Layer::FilesMenu);
+        let mut more = div().relative().flex_none().child(
+            surfaces::icon_action(
+                "files-more",
+                "more",
+                tr("More for this folder"),
+                if menu_open {
+                    surfaces::IconTone::Ink
+                } else {
+                    surfaces::IconTone::Faded
+                },
+                cx,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                if !this.layers.close(Layer::FilesMenu) {
+                    this.layers.open(Layer::FilesMenu);
+                }
+                cx.notify();
+            })),
+        );
+        if menu_open {
+            more = more.child(deferred(self.files_menu(cx)));
+        }
         let mut panel = panel
             .child(
                 surfaces::panel_header(location, None, cx)
                     .child(
-                        icon_button("files-up", "up", "Up")
-                            .disabled(parent.is_none())
-                            .on_click(cx.listener(move |this, _, window, cx| {
+                        surfaces::icon_action(
+                            "files-up",
+                            "up",
+                            tr("Up"),
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
+                        .disabled(parent.is_none())
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
                                 if let Some(parent) = parent.clone() {
                                     this.load_directory(parent, window, cx);
                                 }
-                            })),
+                            },
+                        )),
                     )
                     .child(
-                        icon_button("files-reload", "refresh", "Reload").on_click(
-                            cx.listener(|this, _, window, cx| this.reload_files(window, cx)),
-                        ),
-                    )
-                    .child(
-                        icon_button(
-                            "files-terminal",
-                            "terminal",
-                            "Open a terminal in this folder",
+                        surfaces::icon_action(
+                            "files-new-file",
+                            "note-plus",
+                            tr("New file here"),
+                            surfaces::IconTone::Faded,
+                            cx,
                         )
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.open_terminal_here(window, cx)),
-                        ),
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.start_naming(Naming::File, window, cx)
+                        })),
                     )
                     .child(
-                        icon_button(
-                            "files-upload",
-                            "upload",
-                            tr("Upload files into this folder"),
+                        surfaces::icon_action(
+                            "files-new-folder",
+                            "folder-plus",
+                            tr("New folder here"),
+                            surfaces::IconTone::Faded,
+                            cx,
                         )
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.upload_into_folder(window, cx)),
-                        ),
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.start_naming(Naming::Folder, window, cx)
+                        })),
                     )
-                    .child(
-                        icon_button("files-new-folder", "folder-plus", tr("New folder here"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.start_naming(Naming::Folder, window, cx)
-                            })),
-                    )
-                    .child(
-                        icon_button("files-new-file", "note-plus", tr("New file here")).on_click(
-                            cx.listener(|this, _, window, cx| {
-                                this.start_naming(Naming::File, window, cx)
-                            }),
-                        ),
-                    ),
+                    .child(more),
             )
             .child(
                 div()
@@ -1976,13 +2074,16 @@ impl Workspace {
                     .border_b_1()
                     .border_color(border)
                     .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(Input::new(&self.file_search).small().cleanable(true)),
+                        // White, with the fields' line, as every field is.
+                        surfaces::field(cx).flex_1().min_w_0().child(
+                            Input::new(&self.file_search)
+                                .small()
+                                .appearance(false)
+                                .cleanable(true),
+                        ),
                     )
                     .child(
-                        icon_button(
+                        surfaces::icon_action(
                             "files-view",
                             if self.files.grid { "list" } else { "grid" },
                             if self.files.grid {
@@ -1990,6 +2091,8 @@ impl Workspace {
                             } else {
                                 tr("Show as tiles")
                             },
+                            surfaces::IconTone::Faded,
+                            cx,
                         )
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.files.grid = !this.files.grid;
@@ -1998,18 +2101,22 @@ impl Workspace {
                         })),
                     )
                     .child(
-                        Button::new("files-sort")
-                            .icon(glyph("sort"))
-                            .label(self.files.sort.label())
-                            .small()
-                            .ghost()
-                            .tooltip(tr("Change the order"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                let next = this.files.sort.next();
-                                this.files.set_sort(next);
-                                this.save_files_sort(window, cx);
-                                cx.notify();
-                            })),
+                        surfaces::icon_action(
+                            "files-sort",
+                            "sort",
+                            crate::i18n::fill(
+                                tr("Change the order (now: {})"),
+                                &[&self.files.sort.label()],
+                            ),
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            let next = this.files.sort.next();
+                            this.files.set_sort(next);
+                            this.save_files_sort(window, cx);
+                            cx.notify();
+                        })),
                     ),
             );
         if let Some(problem) = &self.file_problem {

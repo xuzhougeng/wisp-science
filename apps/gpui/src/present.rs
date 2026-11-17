@@ -61,13 +61,181 @@ pub fn tool_status(item: &Item, turn_running: bool) -> Option<(String, Tone)> {
     })
 }
 
+/// How a tool call came out, as a stamp says it: done, failed or
+/// interrupted, running, or waiting for the user. None when the row does
+/// not say (an older row with no recorded outcome is not claimed a
+/// success). The duration is said apart, as the row's value.
+pub fn tool_outcome(item: &Item, turn_running: bool) -> Option<(&'static str, Tone)> {
+    if item.role != "tool" {
+        return None;
+    }
+    match (item.ok, item.status.as_deref()) {
+        (Some(false), _) | (None, Some("failed")) => Some((tr("Failed"), Tone::Danger)),
+        (Some(true), _) | (None, Some("completed")) => Some((tr("Done"), Tone::Success)),
+        (None, Some("waiting" | "pending_approval" | "needs_approval")) => {
+            Some((tr("Waiting for you"), Tone::Attention))
+        }
+        (None, Some("running" | "pending" | "in_progress")) if turn_running => {
+            Some((tr("Running"), Tone::Active))
+        }
+        (None, Some("running" | "pending" | "in_progress")) => {
+            Some((tr("Interrupted"), Tone::Danger))
+        }
+        _ => None,
+    }
+}
+
+/// The icon of what a tool call works on, from the shared vocabulary: a run
+/// is a flask, a file a document, a command the terminal, an approval a
+/// hand, a search a magnifier, another agent the swarm, anything else the
+/// wrench.
+pub fn tool_icon(item: &Item) -> &'static str {
+    let name = item.tool_name.as_deref().unwrap_or_default();
+    let kind = item.kind.as_deref().unwrap_or_default();
+    if item.run.is_some()
+        || matches!(
+            name,
+            "run_in_context"
+                | "monitor_run"
+                | "get_run"
+                | "harvest_run"
+                | "cancel_run"
+                | "cleanup_run_workspace"
+                | "remonitor"
+                | "transfer_between_contexts"
+        )
+    {
+        "flask"
+    } else if name.contains("approv") || name.contains("permission") {
+        "hand"
+    } else if matches!(name, "shell" | "python" | "r" | "set_runtime_interpreter")
+        || kind == "execute"
+    {
+        "terminal"
+    } else if matches!(
+        name,
+        "read" | "write" | "edit" | "read_docx" | "suggest_docx_edit" | "view_image"
+    ) || name.contains("file")
+        || matches!(kind, "read" | "edit" | "delete" | "move")
+    {
+        "doc"
+    } else if name.contains("search")
+        || matches!(name, "grep" | "web_scan")
+        || matches!(kind, "search" | "fetch")
+    {
+        "search"
+    } else if matches!(name, "explore" | "map_items" | "task" | "Task")
+        || name.contains("agent")
+        || name.contains("delegate")
+        || name.contains("swarm")
+    {
+        "swarm"
+    } else {
+        "wrench"
+    }
+}
+
+/// The number of the entry `index` starts, when it is one of the user's
+/// messages: its place among them, from 1, in the rows the view holds.
+/// Every entry number comes from here, so how it is counted (and kept
+/// stable over compaction, rewinding and branches) can change in one
+/// place.
+pub fn entry_number(rows: &[Item], index: usize) -> Option<usize> {
+    if rows.get(index)?.role != "user" {
+        return None;
+    }
+    Some(
+        rows[..=index]
+            .iter()
+            .filter(|row| row.role == "user")
+            .count(),
+    )
+}
+
+/// The row of the latest entry: the last of the user's messages.
+pub fn latest_entry(rows: &[Item]) -> Option<usize> {
+    rows.iter().rposition(|row| row.role == "user")
+}
+
+/// The longest question set as a title, in characters (a Chinese one
+/// counts as one).
+pub const TITLE_QUESTION: usize = 120;
+
+/// Whether a question is set in the serif Title role: only a short one, of
+/// one paragraph and at most `TITLE_QUESTION` characters. Anything longer
+/// reads as body text, so a long prompt is not a wall of serif.
+pub fn title_question(text: &str) -> bool {
+    let text = text.trim();
+    !text.contains('\n') && text.chars().count() <= TITLE_QUESTION
+}
+
+/// What a built-in tool call works on, in the words it was given, when its
+/// input names it: the command line of a shell, the path of a file read,
+/// written or edited, the pattern or query of a search. None when the input
+/// does not say; nothing is made up. A call from an ACP agent is already
+/// named by its title.
+pub fn tool_summary(item: &Item) -> Option<String> {
+    if item.role != "tool" || item.kind.is_some() {
+        return None;
+    }
+    let name = item.tool_name.as_deref()?;
+    let input: serde_json::Value = serde_json::from_str(item.input.as_deref()?).ok()?;
+    let keys: &[&str] = match name {
+        "shell" => &["cmd", "command"],
+        "read" | "write" | "edit" | "read_docx" | "suggest_docx_edit" | "view_image" => {
+            &["path", "file_path"]
+        }
+        "grep" => &["pat", "pattern"],
+        _ if name.contains("search") => &["query"],
+        _ => return None,
+    };
+    keys.iter()
+        .find_map(|key| input.get(*key)?.as_str())
+        .map(one_line)
+        .filter(|said| !said.is_empty())
+}
+
+/// Whether a question runs past three lines of the reading column, and is
+/// folded to three until it is opened. Counted, not measured: a line of
+/// body text holds about 96 Latin characters, or half as many Chinese. A
+/// question set as a title is short enough never to fold.
+pub fn long_question(text: &str) -> bool {
+    const LINE: usize = 96;
+    let lines: usize = text
+        .lines()
+        .map(|line| {
+            let columns: usize = line
+                .chars()
+                .map(|ch| if (ch as u32) >= 0x1100 { 2 } else { 1 })
+                .sum();
+            columns.div_ceil(LINE).max(1)
+        })
+        .sum();
+    lines > 3
+}
+
+/// How long a run has run, or ran, in milliseconds: from its start (or its
+/// creation) to its end, or to `now` (Unix seconds) while it goes on. None
+/// when that is no time at all, so a row can say the call's own time.
+pub fn run_elapsed_ms(run: &RunRecord, now: i64) -> Option<u64> {
+    let started = run.started_at.unwrap_or(run.created_at);
+    let until = run.ended_at.unwrap_or(now);
+    let seconds = until.saturating_sub(started);
+    (seconds > 0).then(|| seconds as u64 * 1000)
+}
+
+/// The one way a duration is written as a record row's value: `1 ms`,
+/// `14.0 s`, `2 min 05 s`.
 pub fn duration_label(ms: u64) -> String {
     if ms < 1000 {
         format!("{ms} ms")
     } else if ms < 60_000 {
         format!("{:.1} s", ms as f64 / 1000.0)
     } else {
-        crate::i18n::fill(tr("{} min {} s"), &[&(ms / 60_000), &(ms % 60_000 / 1000)])
+        crate::i18n::fill(
+            tr("{} min {} s"),
+            &[&(ms / 60_000), &format!("{:02}", ms % 60_000 / 1000)],
+        )
     }
 }
 
@@ -133,6 +301,45 @@ pub fn pinned_first(rows: Vec<SessionSearchInfo>, pinned: &[String]) -> Vec<Sess
         rows.into_iter().partition(|row| pinned.contains(&row.id));
     first.extend(rest);
     first
+}
+
+/// The fixed heights of the sidebar, in pixels at the usual body size:
+/// its padding, the project's row, the search, the list's heading and the
+/// Settings row, with the gaps between; and the navigation as a column of
+/// seven rows of 32 px with their gaps.
+const SIDEBAR_FIXED: f32 = 16. + 36. + 44. + 34. + 32. + 5. * 4.;
+const SIDEBAR_NAV_ROWS: f32 = 7. * (32. + 4.);
+/// The share of the sidebar the conversation list must get before the
+/// navigation may stand as a column.
+const SIDEBAR_LIST_SHARE: f32 = 0.6;
+
+/// Whether the sidebar's navigation folds into one row of icons: when, as
+/// a column, it would leave the conversation list less than half of the
+/// sidebar's height. Reckoned from fixed heights, not from what is drawn,
+/// so folding does not change the answer and nothing flickers at the
+/// threshold (about 1085 px of sidebar).
+pub fn nav_folds(sidebar_height: f32) -> bool {
+    let list = sidebar_height - SIDEBAR_FIXED - SIDEBAR_NAV_ROWS;
+    list < sidebar_height * SIDEBAR_LIST_SHARE
+}
+
+/// What marks a conversation in the sidebar where there is room only for
+/// an icon: its icon, the word its tooltip says, and its tone. Running is
+/// the loader, waiting for the user the waiting circle, archived and
+/// pinned their own icons.
+pub fn session_mark(
+    row: &SessionSearchInfo,
+    pinned: bool,
+) -> Option<(&'static str, &'static str, Tone)> {
+    let (word, tone) = session_badge(row, pinned)?;
+    let icon = match row.status.as_str() {
+        "running" => "loader",
+        "needs_you" => "circle-ellipsis",
+        "failed" => "circle-alert",
+        _ if row.shelved => "inbox",
+        _ => "pin",
+    };
+    Some((icon, word, tone))
 }
 
 /// Label beside a conversation: its activity, else why it is set apart.
@@ -347,6 +554,190 @@ mod tests {
     }
 
     #[test]
+    fn entries_are_numbered_by_the_users_messages_from_one() {
+        let rows = vec![
+            item(json!({"role": "user", "text": "first"})),
+            item(json!({"role": "assistant", "text": "a"})),
+            item(json!({})),
+            item(json!({"role": "user", "text": "second"})),
+            item(json!({"role": "assistant", "text": "b"})),
+        ];
+        let numbers: Vec<_> = (0..rows.len()).map(|at| entry_number(&rows, at)).collect();
+        assert_eq!(numbers, [Some(1), None, None, Some(2), None]);
+        assert_eq!(entry_number(&rows, 9), None);
+        assert_eq!(latest_entry(&rows), Some(3));
+        assert_eq!(latest_entry(&rows[1..3]), None);
+    }
+
+    #[test]
+    fn a_tool_call_takes_the_icon_of_what_it_works_on() {
+        let named = |name: &str| item(json!({"tool_name": name}));
+        assert_eq!(tool_icon(&named("run_in_context")), "flask");
+        assert_eq!(tool_icon(&named("monitor_run")), "flask");
+        assert_eq!(tool_icon(&named("write")), "doc");
+        assert_eq!(tool_icon(&named("read")), "doc");
+        assert_eq!(tool_icon(&named("edit")), "doc");
+        assert_eq!(tool_icon(&named("shell")), "terminal");
+        assert_eq!(tool_icon(&named("python")), "terminal");
+        assert_eq!(tool_icon(&named("request_approval")), "hand");
+        assert_eq!(tool_icon(&named("grep")), "search");
+        assert_eq!(tool_icon(&named("pubmed_search_articles")), "search");
+        assert_eq!(tool_icon(&named("explore")), "swarm");
+        assert_eq!(tool_icon(&named("delegate_to_agents")), "swarm");
+        assert_eq!(tool_icon(&named("update_plan")), "wrench");
+        // An ACP agent's call is known by its kind.
+        assert_eq!(
+            tool_icon(&item(json!({"tool_name": "Bash", "kind": "execute"}))),
+            "terminal"
+        );
+        assert_eq!(
+            tool_icon(&item(json!({"tool_name": "Fetch", "kind": "fetch"}))),
+            "search"
+        );
+        // Every icon is one of the shared set.
+        for icon in [
+            "flask", "doc", "terminal", "hand", "search", "swarm", "wrench",
+        ] {
+            assert!(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join(format!("assets/icons/{icon}.svg"))
+                    .exists(),
+                "{icon}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tool_calls_outcome_is_a_stamp_and_unknown_is_none() {
+        assert_eq!(
+            tool_outcome(&item(json!({"role": "assistant"})), true),
+            None
+        );
+        let running = item(json!({"status": "running"}));
+        assert_eq!(
+            tool_outcome(&running, true),
+            Some(("Running", Tone::Active))
+        );
+        assert_eq!(
+            tool_outcome(&running, false),
+            Some(("Interrupted", Tone::Danger))
+        );
+        assert_eq!(
+            tool_outcome(&item(json!({"ok": true})), false),
+            Some(("Done", Tone::Success))
+        );
+        assert_eq!(
+            tool_outcome(&item(json!({"ok": false})), false),
+            Some(("Failed", Tone::Danger))
+        );
+        assert_eq!(
+            tool_outcome(&item(json!({"status": "complete"})), false),
+            None
+        );
+    }
+
+    #[test]
+    fn a_question_folds_past_three_lines() {
+        assert!(!long_question("What does the coverage look like?"));
+        assert!(!long_question("one\ntwo\nthree"));
+        assert!(long_question("one\ntwo\nthree\nfour"));
+        assert!(long_question(&"word ".repeat(60)));
+        assert!(!long_question(&"word ".repeat(50)));
+        assert!(long_question(&"字".repeat(150)));
+        assert!(!long_question(&"字".repeat(120)));
+        // A title is never long enough to fold.
+        assert!(!long_question(&"a".repeat(TITLE_QUESTION)));
+    }
+
+    #[test]
+    fn only_a_short_question_of_one_paragraph_is_a_title() {
+        assert!(title_question("What does the coverage look like?"));
+        assert!(title_question(&"a".repeat(TITLE_QUESTION)));
+        assert!(!title_question(&"a".repeat(TITLE_QUESTION + 1)));
+        // Chinese counts one a character.
+        assert!(title_question(&"字".repeat(TITLE_QUESTION)));
+        assert!(!title_question(&"字".repeat(TITLE_QUESTION + 1)));
+        assert!(!title_question("First this.\n\nThen that."));
+        assert!(!title_question("Line one\nline two"));
+        // Spaces round it do not count.
+        assert!(title_question("  Short.  \n"));
+    }
+
+    #[test]
+    fn a_tool_calls_summary_is_what_its_input_names() {
+        let call = |name: &str, input: serde_json::Value| {
+            item(json!({"tool_name": name, "input": input.to_string()}))
+        };
+        assert_eq!(
+            tool_summary(&call("shell", json!({"cmd": "bwa index  GRCh38.fa"}))).as_deref(),
+            Some("bwa index GRCh38.fa")
+        );
+        assert_eq!(
+            tool_summary(&call("read", json!({"path": "data/reads.fq"}))).as_deref(),
+            Some("data/reads.fq")
+        );
+        assert_eq!(
+            tool_summary(&call("grep", json!({"pat": "TODO"}))).as_deref(),
+            Some("TODO")
+        );
+        assert_eq!(
+            tool_summary(&call("pubmed_search_articles", json!({"query": "CRISPR"}))).as_deref(),
+            Some("CRISPR")
+        );
+        // Nothing made up: no input, another tool, an ACP call.
+        assert_eq!(tool_summary(&item(json!({"tool_name": "read"}))), None);
+        assert_eq!(tool_summary(&call("end_round", json!({"note": "x"}))), None);
+        assert_eq!(tool_summary(&call("shell", json!({"cmd": "  "}))), None);
+        assert_eq!(
+            tool_summary(&item(json!({
+                "tool_name": "Run ls", "kind": "execute", "input": "{\"cmd\":\"ls\"}"
+            }))),
+            None
+        );
+    }
+
+    #[test]
+    fn the_sidebars_navigation_folds_when_the_conversations_would_get_too_little() {
+        // The threshold is twice what the column and the fixed rows take.
+        let threshold = (SIDEBAR_FIXED + SIDEBAR_NAV_ROWS) / (1. - SIDEBAR_LIST_SHARE);
+        assert!((1050. ..1120.).contains(&threshold), "{threshold}");
+        // The smallest window and the usual one fold; a tall one does not.
+        assert!(nav_folds(540. - 40.));
+        assert!(nav_folds(780. - 40.));
+        assert!(nav_folds(threshold - 1.));
+        assert!(!nav_folds(threshold));
+        assert!(!nav_folds(1200.));
+    }
+
+    #[test]
+    fn a_conversations_state_is_an_icon_with_its_word() {
+        let row = |status: &str, shelved: bool| -> SessionSearchInfo {
+            serde_json::from_value(json!({
+                "id": "s", "title": "t", "status": status, "shelved": shelved,
+                "project_id": "p", "project_name": "P"
+            }))
+            .unwrap()
+        };
+        assert_eq!(
+            session_mark(&row("running", false), false),
+            Some(("loader", "Running", Tone::Active))
+        );
+        assert_eq!(
+            session_mark(&row("needs_you", false), false),
+            Some(("circle-ellipsis", "Needs you", Tone::Attention))
+        );
+        assert_eq!(session_mark(&row("idle", false), false), None);
+        assert_eq!(
+            session_mark(&row("idle", true), false).map(|mark| mark.0),
+            Some("inbox")
+        );
+        assert_eq!(
+            session_mark(&row("idle", false), true).map(|mark| mark.0),
+            Some("pin")
+        );
+    }
+
+    #[test]
     fn headings_name_the_speaker_or_tool() {
         assert_eq!(heading(&item(json!({}))), "shell");
         assert_eq!(
@@ -393,13 +784,30 @@ mod tests {
     }
 
     #[test]
+    fn a_runs_time_is_none_when_it_took_none() {
+        let mut record = run("succeeded", Some(0));
+        record.created_at = 100;
+        record.started_at = Some(100);
+        record.ended_at = Some(100);
+        assert_eq!(run_elapsed_ms(&record, 500), None);
+        record.ended_at = Some(114);
+        assert_eq!(run_elapsed_ms(&record, 500), Some(14_000));
+        // While it runs, up to now.
+        record.ended_at = None;
+        assert_eq!(run_elapsed_ms(&record, 160), Some(60_000));
+    }
+
+    #[test]
     fn durations_pick_a_readable_unit() {
         assert_eq!(duration_label(0), "0 ms");
         assert_eq!(duration_label(999), "999 ms");
         assert_eq!(duration_label(1000), "1.0 s");
         assert_eq!(duration_label(59_999), "60.0 s");
-        assert_eq!(duration_label(60_000), "1 min 0 s");
-        assert_eq!(duration_label(3_725_000), "62 min 5 s");
+        assert_eq!(duration_label(60_000), "1 min 00 s");
+        assert_eq!(duration_label(125_000), "2 min 05 s");
+        assert_eq!(duration_label(3_725_000), "62 min 05 s");
+        assert_eq!(duration_label(1), "1 ms");
+        assert_eq!(duration_label(14_000), "14.0 s");
     }
 
     #[test]

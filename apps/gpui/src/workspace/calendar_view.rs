@@ -12,7 +12,7 @@ use gpui_component::{
 };
 
 use super::{
-    Workspace, chip,
+    Workspace,
     shell::{error_banner, icon_button, nav_row},
     surfaces,
 };
@@ -21,7 +21,6 @@ use crate::{
     calendar,
     journey::{self, Month},
     layers::Layer,
-    present::Tone,
 };
 
 fn now() -> i64 {
@@ -99,6 +98,7 @@ impl Workspace {
         let muted = cx.theme().muted_foreground;
         let border = cx.theme().border;
         let hover = cx.theme().list_hover;
+        let today_ink = cx.theme().primary;
         let accent = cx.theme().primary;
         let month = self
             .calendar_month
@@ -120,10 +120,25 @@ impl Workspace {
                 nav_row("calendar-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_calendar(window, cx))),
             )
-            .child(surfaces::title(tr("Research calendar")).px_2().pt_3())
-            .child(div().px_2().pb_2().text_xs().text_color(muted).child(tr(
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .pt_3()
+                    .pb_1()
+                    .child(surfaces::title(tr("Research calendar")))
+                    // What the page is for, a tooltip away, not a paragraph in
+                    // the rail.
+                    .child(surfaces::help(
+                        "calendar-help",
+                        tr(
                 "How much happened in your projects on each day. Choose a day to see what.",
-            )))
+                        ),
+                        cx,
+                    )),
+            )
             .child(
                 div()
                     .h_flex()
@@ -135,13 +150,7 @@ impl Workspace {
                                 this.show_calendar_month(month.previous(), window, cx)
                             })),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(month.label()),
-                    )
+                    .child(div().flex_1().text_sm().child(month.label()))
                     .child(
                         icon_button("calendar-next", "chevron-right", tr("Later month"))
                             .disabled(month == this_month)
@@ -196,31 +205,29 @@ impl Workspace {
             );
         }
 
-        let mut body = div()
-            .id("calendar-body")
-            .v_flex()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .p_6()
-            .gap_3()
-            .overflow_y_scroll();
+        // The page's records in a centred column (`surfaces::page_column`).
+        let mut body = surfaces::page_column();
         if let Some(error) = &self.error {
             body = body.child(error_banner(error, cx));
         }
         let Some(projects) = &self.calendar else {
-            return div().h_flex().size_full().child(side).child(
-                body.child(
-                    div()
-                        .text_sm()
-                        .text_color(muted)
-                        .child(if self.error.is_some() {
-                            ""
-                        } else {
-                            tr("Loading…")
-                        }),
-                ),
-            );
+            return div()
+                .h_flex()
+                .size_full()
+                .child(side)
+                .child(surfaces::page_scroll(
+                    "calendar-body",
+                    body.child(
+                        div()
+                            .text_sm()
+                            .text_color(muted)
+                            .child(if self.error.is_some() {
+                                ""
+                            } else {
+                                tr("Loading…")
+                            }),
+                    ),
+                ));
         };
         // A project that could not be read is said, never silently empty.
         for project in projects.iter().filter(|project| project.error.is_some()) {
@@ -279,11 +286,8 @@ impl Workspace {
                     .child(
                         div()
                             .text_sm()
-                            .font_weight(if today == Some(day) {
-                                FontWeight::SEMIBOLD
-                            } else {
-                                FontWeight::NORMAL
-                            })
+                            // Today is said in teal, not in weight.
+                            .when(today == Some(day), |day| day.text_color(today_ink))
                             .child(day.to_string()),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -303,79 +307,48 @@ impl Workspace {
         body = body.child(grid);
 
         let Some(day) = self.calendar_day else {
-            return div().h_flex().size_full().child(side).child(
-                body.child(
-                    div()
-                        .text_sm()
-                        .text_color(muted)
-                        .child(tr("Nothing is recorded for this month.")),
-                ),
-            );
+            return div()
+                .h_flex()
+                .size_full()
+                .child(side)
+                .child(surfaces::page_scroll(
+                    "calendar-body",
+                    body.child(
+                        div()
+                            .text_sm()
+                            .text_color(muted)
+                            .child(tr("Nothing is recorded for this month.")),
+                    ),
+                ));
         };
         let items = calendar::on_day(projects, &self.calendar_hidden, month, day, &Local);
-        body = body.child(
-            div()
-                .pt_2()
-                .text_sm()
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(format!(
-                    "{} · {}",
-                    if crate::i18n::current() == crate::i18n::Locale::Zh {
-                        format!("{}{day}日", month.label())
-                    } else {
-                        format!("{day} {}", month.label())
-                    },
-                    match items.len() {
-                        0 => tr("nothing recorded").to_owned(),
-                        n => records(n),
-                    }
-                )),
-        );
+        body = body.child(div().pt_2().text_sm().child(format!(
+            "{} · {}",
+            if crate::i18n::current() == crate::i18n::Locale::Zh {
+                format!("{}{day}日", month.label())
+            } else {
+                format!("{day} {}", month.label())
+            },
+            match items.len() {
+                0 => tr("nothing recorded").to_owned(),
+                n => records(n),
+            }
+        )));
+        // The day's records: when, the kind's icon, what happened, the
+        // project faded after it, a run's state as a stamp.
+        let mut rows = Vec::new();
         for (index, item) in items.iter().enumerate() {
             let entry = item.entry;
-            let tone = match (entry.kind.as_str(), entry.status.as_str()) {
-                ("run", "failed") => Tone::Danger,
-                ("run", _) => Tone::Active,
-                _ => Tone::Neutral,
-            };
-            let mut row = div()
-                .id(("calendar-entry", index))
-                .h_flex()
-                .gap_3()
-                .px_2()
-                .py_1()
-                .rounded(cx.theme().radius)
-                .child(
-                    div()
-                        .w(px(44.))
-                        .flex_shrink_0()
-                        .text_xs()
-                        .text_color(muted)
-                        .font_family(cx.theme().mono_font_family.clone())
-                        .child(item.time.clone()),
-                )
-                .child(div().w(px(84.)).flex_shrink_0().child(chip(
-                    journey::kind_label(&entry.kind),
-                    tone,
-                    cx,
-                )))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_sm()
-                        .child(entry.title.clone()),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .max_w(px(180.))
-                        .truncate()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(self.project_name(item.project)),
-                );
+            let mut row = surfaces::record_row(("calendar-entry", index), entry.title.clone())
+                .time(item.time.clone())
+                .icon(journey::kind_icon(&entry.kind))
+                .suffix(self.project_name(item.project));
+            if let Some(status) = journey::status_label(entry) {
+                row = match surfaces::StampKind::from_tone(journey::status_tone(entry)) {
+                    Some(kind) => row.stamp(kind, status),
+                    None => row,
+                };
+            }
             // A record that came from a conversation opens it.
             if let Some(frame) = entry.frame_id.clone() {
                 let project = item.project.to_owned();
@@ -388,9 +361,16 @@ impl Workspace {
                         this.open_session(project.clone(), frame.clone(), window, cx);
                     }));
             }
-            body = body.child(row);
+            rows.push(row);
         }
-        div().h_flex().size_full().child(side).child(body)
+        if !rows.is_empty() {
+            body = body.child(surfaces::record_group(rows, cx));
+        }
+        div()
+            .h_flex()
+            .size_full()
+            .child(side)
+            .child(surfaces::page_scroll("calendar-body", body))
     }
 }
 

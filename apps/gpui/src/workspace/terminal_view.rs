@@ -859,7 +859,7 @@ impl Workspace {
                             HighlightStyle {
                                 color: Some(colour(fg)),
                                 background_color: bg.map(colour),
-                                font_weight: style.bold.then_some(FontWeight::BOLD),
+                                font_weight: style.bold.then_some(FontWeight::MEDIUM),
                                 font_style: style.italic.then_some(FontStyle::Italic),
                                 underline: style.underline.then(|| UnderlineStyle {
                                     thickness: px(1.),

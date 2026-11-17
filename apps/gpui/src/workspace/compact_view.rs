@@ -448,7 +448,6 @@ impl Workspace {
                         .child(icon("circle-alert").text_color(attention))
                         .child(
                             div()
-                                .font_weight(FontWeight::MEDIUM)
                                 .child(tr("This conversation is too long")),
                         ),
                 )

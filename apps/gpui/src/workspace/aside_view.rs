@@ -120,11 +120,7 @@ impl Workspace {
                 surfaces::panel_empty(hint, cx)
             });
         for (index, entry) in thread.iter().flat_map(|thread| &thread.entries).enumerate() {
-            let mut block = surfaces::panel_entry(cx).child(
-                div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(entry.question.clone()),
-            );
+            let mut block = surfaces::panel_entry(cx).child(div().child(entry.question.clone()));
             block = match &entry.answer {
                 Ok(answer) => {
                     let copied = answer.clone();
@@ -192,11 +188,7 @@ impl Workspace {
         if let Some(question) = thread.and_then(|thread| thread.asking.as_ref()) {
             list = list.child(
                 surfaces::panel_entry(cx)
-                    .child(
-                        div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(question.clone()),
-                    )
+                    .child(div().child(question.clone()))
                     .child(div().text_color(muted).child(tr("Asking…"))),
             );
         }

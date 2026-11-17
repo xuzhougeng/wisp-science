@@ -5,13 +5,18 @@ use std::time::Duration;
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::RemoteAccess;
 
-use super::{Workspace, settings_sections::setting, surfaces::switch, tone_color};
+use super::{
+    Workspace,
+    settings_sections::{explained_setting, setting},
+    shell::glyph,
+    surfaces::{self, IconTone, switch},
+    tone_color,
+};
 use crate::{
     backend::{Reply, receive},
     layers::Layer,
@@ -123,21 +128,24 @@ impl Workspace {
             .each_ref()
             .map(|field| field.read(cx).value().to_string());
         let (line, tone) = remote::status(access);
-        let copy = |id: &'static str, label: &'static str, text: String| {
-            Button::new(id)
-                .label(label)
-                .small()
-                .on_click(cx.listener(move |_, _, _, cx| {
+        let copy = |id: &'static str, icon: &'static str, label: &'static str, text: String| {
+            surfaces::icon_action(id, icon, label, IconTone::Faded, cx).on_click(cx.listener(
+                move |_, _, _, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
-                }))
+                },
+            ))
         };
         let mut page = page
-            .child(div().w(px(640.)).text_xs().text_color(muted).child(tr(
-                "Open this desktop's projects in a phone or a browser. Wisp dials out to \
-                 your self-hosted wisp-relay; no inbound port is opened, and the relay only \
-                 forwards encrypted frames. Anyone with the link or the code can use this \
-                 computer's projects, so keep them to yourself.",
-            )))
+            .child(surfaces::settings_note_help(
+                tr("Open this desktop's projects in a phone or a browser."),
+                tr(
+                    "Open this desktop's projects in a phone or a browser. Wisp dials out to \
+                     your self-hosted wisp-relay; no inbound port is opened, and the relay only \
+                     forwards encrypted frames. Anyone with the link or the code can use this \
+                     computer's projects, so keep them to yourself.",
+                ),
+                cx,
+            ))
             .child(
                 div()
                     .py_2()
@@ -145,8 +153,9 @@ impl Workspace {
                     .text_color(tone_color(tone, cx))
                     .child(line),
             )
-            .child(setting(
+            .child(explained_setting(
                 tr("Remote web access"),
+                "",
                 tr("On, the tunnel is dialled when the app starts and kept up while it runs."),
                 switch("remote-enabled", enabled, tr("Remote web access")).on_change(cx.listener(
                     move |this, _, window, cx| this.save_remote_access(!enabled, window, cx),
@@ -157,8 +166,8 @@ impl Workspace {
                 tr("Relay server URL"),
                 tr("An https address; http is taken only for this computer."),
                 div()
-                    .w(px(320.))
-                    .child(Input::new(&self.remote_fields[0]).small()),
+                    .w(px(300.))
+                    .child(surfaces::input(&self.remote_fields[0], cx).small()),
                 cx,
             ))
             .child(setting(
@@ -166,14 +175,16 @@ impl Workspace {
                 remote::token_note(access),
                 div()
                     .h_flex()
+                    .items_center()
                     .gap_2()
                     .child(
                         div()
                             .w(px(220.))
-                            .child(Input::new(&self.remote_fields[1]).small()),
+                            .child(surfaces::input(&self.remote_fields[1], cx).small()),
                     )
                     .child(
                         Button::new("remote-save")
+                            .icon(glyph("save"))
                             .label(tr("Save"))
                             .small()
                             .primary()
@@ -191,10 +202,21 @@ impl Workspace {
             let mut actions = div()
                 .h_flex()
                 .flex_shrink_0()
-                .gap_2()
+                .items_center()
+                .gap_0p5()
                 .justify_end()
-                .child(copy("remote-copy-link", tr("Copy link"), link.clone()))
-                .child(copy("remote-copy-code", tr("Copy code"), code.clone()));
+                .child(copy(
+                    "remote-copy-link",
+                    "link",
+                    tr("Copy link"),
+                    link.clone(),
+                ))
+                .child(copy(
+                    "remote-copy-code",
+                    "copy",
+                    tr("Copy code"),
+                    code.clone(),
+                ));
             if asking {
                 actions = actions
                     .child(
@@ -217,33 +239,32 @@ impl Workspace {
                     );
             } else {
                 actions = actions.child(
-                    Button::new("remote-reset")
-                        .label(tr("Reset code"))
-                        .small()
-                        .ghost()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.layers.open(Layer::ConfirmResetRemoteCode);
-                            cx.notify();
-                        })),
+                    surfaces::icon_action(
+                        "remote-reset",
+                        "refresh",
+                        tr("Reset code"),
+                        IconTone::Faded,
+                        cx,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.layers.open(Layer::ConfirmResetRemoteCode);
+                        cx.notify();
+                    })),
                 );
             }
-            page = page.child(setting(
+            page = page.child(explained_setting(
                 tr("Connection code"),
+                "",
                 if asking {
                     tr("A new code stops every old link and drops the browsers connected now.")
                 } else {
                     tr("Open the link in a browser, or type the code on the relay's page.")
                 },
                 div()
-                    .v_flex()
-                    .items_end()
+                    .h_flex()
+                    .items_center()
                     .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .child(code.clone()),
-                    )
+                    .child(surfaces::read_only(code.clone(), cx))
                     .child(actions),
                 cx,
             ));
@@ -251,18 +272,21 @@ impl Workspace {
             // it is shown only when asked for.
             let shown = self.remote_qr_shown;
             let mut scan = div().v_flex().items_end().gap_2().child(
-                Button::new("remote-qr")
-                    .label(if shown {
+                surfaces::icon_action(
+                    "remote-qr",
+                    "camera",
+                    if shown {
                         tr("Hide the QR code")
                     } else {
                         tr("Show the QR code")
-                    })
-                    .small()
-                    .selected(shown)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.remote_qr_shown = !this.remote_qr_shown;
-                        cx.notify();
-                    })),
+                    },
+                    if shown { IconTone::On } else { IconTone::Faded },
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.remote_qr_shown = !this.remote_qr_shown;
+                    cx.notify();
+                })),
             );
             if let (true, Some(matrix)) = (shown, &access.qr) {
                 scan = scan.child(super::settings_channels::qr_code(matrix));
@@ -275,16 +299,16 @@ impl Workspace {
             ));
         }
         page.child(
-            div()
-                .w(px(640.))
-                .pt_3()
-                .text_xs()
-                .text_color(muted)
-                .child(tr(
+            surfaces::settings_note_help(
+                tr("What a browser connected this way may do."),
+                tr(
                     "A browser can list projects and conversations, read and send messages, stop a \
              turn and answer an approval once. It cannot change settings, and what it starts \
              asks before writing files or running commands.",
-                )),
+                ),
+                cx,
+            )
+            .pt_3(),
         )
         .child(self.render_sync_settings(cx))
         .child(self.render_device_bridge(cx))
@@ -373,88 +397,81 @@ impl Workspace {
         let muted = cx.theme().muted_foreground;
         let mut card = div()
             .v_flex()
-            .gap_2()
-            .pt_6()
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("StickS3 desk display")),
-            )
-            .child(div().w(px(640.)).text_xs().text_color(muted).child(tr(
-                "A small device on your local network that shows what the agent is doing and \
-                 the pet, and can open the conversation that needs you. It reads only with its \
-                 token, and nothing it sends reaches an agent or a tool. Experimental.",
-            )));
+            .gap_1()
+            .child(surfaces::settings_heading(tr("StickS3 desk display"), cx))
+            .child(surfaces::settings_note_help(
+                tr("A small device on your network that shows what the agent does."),
+                tr(
+                    "A small device on your local network that shows what the agent is doing and \
+                     the pet, and can open the conversation that needs you. It reads only with its \
+                     token, and nothing it sends reaches an agent or a tool. Experimental.",
+                ),
+                cx,
+            ));
         let Some(bridge) = &self.device else {
             return card.child(div().text_sm().text_color(muted).child(tr("Loading…")));
         };
         let (line, tone) = remote::device_line(bridge);
         let enabled = bridge.enabled;
-        card = card
-            .child(div().text_sm().text_color(tone_color(tone, cx)).child(line))
-            .child(setting(
-                tr("Listen for the device"),
-                tr("On, the address below is listened on while the app runs."),
-                switch("device-enabled", enabled, tr("Listen for the device")).on_change(
-                    cx.listener(move |this, _, window, cx| {
-                        this.save_device_bridge(!enabled, window, cx)
-                    }),
-                ),
-                cx,
-            ))
-            .child(setting(
-                tr("Address and port"),
-                tr("One IPv4 address of this computer on the network the device is on."),
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .w(px(160.))
-                            .child(Input::new(&self.device_fields[0]).small()),
-                    )
-                    .child(
-                        div()
-                            .w(px(80.))
-                            .child(Input::new(&self.device_fields[1]).small()),
-                    )
-                    .child(
-                        Button::new("device-save")
-                            .label(tr("Save"))
-                            .small()
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.save_device_bridge(enabled, window, cx)
-                            })),
+        card =
+            card.child(div().text_sm().text_color(tone_color(tone, cx)).child(line))
+                .child(setting(
+                    tr("Listen for the device"),
+                    tr("On, the address below is listened on while the app runs."),
+                    switch("device-enabled", enabled, tr("Listen for the device")).on_change(
+                        cx.listener(move |this, _, window, cx| {
+                            this.save_device_bridge(!enabled, window, cx)
+                        }),
                     ),
-                cx,
-            ));
+                    cx,
+                ))
+                .child(explained_setting(
+                    tr("Address and port"),
+                    "",
+                    tr("One IPv4 address of this computer on the network the device is on."),
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .w(px(160.))
+                                .child(surfaces::input(&self.device_fields[0], cx).small()),
+                        )
+                        .child(
+                            div()
+                                .w(px(80.))
+                                .child(surfaces::input(&self.device_fields[1], cx).small()),
+                        )
+                        .child(
+                            surfaces::outlined_action("device-save", "save", tr("Save"), cx)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.save_device_bridge(enabled, window, cx)
+                                })),
+                        ),
+                    cx,
+                ));
         if bridge.has_token {
-            let mut token = div().h_flex().gap_2();
+            let mut token = div().h_flex().items_center().gap_1();
             match &self.device_token {
                 Some(shown) => {
                     let copied = shown.clone();
-                    token = token
-                        .child(
-                            div()
-                                .text_xs()
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .child(shown.clone()),
+                    token = token.child(surfaces::read_only(shown.clone(), cx)).child(
+                        surfaces::icon_action(
+                            "device-token-copy",
+                            "copy",
+                            tr("Copy"),
+                            IconTone::Faded,
+                            cx,
                         )
-                        .child(
-                            Button::new("device-token-copy")
-                                .label(tr("Copy"))
-                                .small()
-                                .on_click(cx.listener(move |_, _, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))
-                                })),
-                        );
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))
+                        })),
+                    );
                 }
                 None => {
                     token = token.child(
-                        Button::new("device-token-show")
-                            .label(tr("Show token"))
-                            .small()
+                        surfaces::outlined_action("device-token-show", "eye", tr("Show token"), cx)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.show_device_token(false, window, cx)
                             })),
@@ -462,13 +479,16 @@ impl Workspace {
                 }
             }
             token = token.child(
-                Button::new("device-token-new")
-                    .label(tr("New token"))
-                    .small()
-                    .ghost()
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.show_device_token(true, window, cx)),
-                    ),
+                surfaces::icon_action(
+                    "device-token-new",
+                    "refresh",
+                    tr("New token"),
+                    IconTone::Faded,
+                    cx,
+                )
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.show_device_token(true, window, cx)),
+                ),
             );
             card = card.child(setting(
                 tr("Device token"),
@@ -479,10 +499,14 @@ impl Workspace {
         }
         if let Some(note) = &self.device_note {
             card = card.child(match note {
-                Ok(said) => super::chip(said.clone(), crate::present::Tone::Success, cx),
-                Err(error) => {
-                    super::chip(crate::i18n::host(error), crate::present::Tone::Danger, cx)
-                }
+                Ok(said) => div()
+                    .text_xs()
+                    .text_color(tone_color(crate::present::Tone::Success, cx))
+                    .child(said.clone()),
+                Err(error) => div()
+                    .text_xs()
+                    .text_color(tone_color(crate::present::Tone::Danger, cx))
+                    .child(crate::i18n::host(error)),
             });
         }
         card

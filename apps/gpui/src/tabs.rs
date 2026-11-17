@@ -28,11 +28,6 @@ impl Tabs {
         &self.open
     }
 
-    /// Whether the strip is worth showing: one tab is just the window.
-    pub fn shown(&self) -> bool {
-        self.open.len() > 1
-    }
-
     /// Notes that a conversation is being looked at: it gets a tab if it
     /// has none, at the end, and an older one makes room when there are
     /// too many.
@@ -110,15 +105,15 @@ mod tests {
     #[test]
     fn a_visited_conversation_gets_one_tab_in_the_order_it_was_opened() {
         let mut tabs = Tabs::default();
-        assert!(!tabs.shown());
+        assert!(tabs.open().is_empty());
+        // One conversation has its tab too: the window's bar always shows
+        // the conversation in view.
         tabs.visit("p", "a");
-        // One conversation is just the window.
-        assert!(!tabs.shown());
+        assert_eq!(sessions(&tabs), ["a"]);
         tabs.visit("p", "b");
         tabs.visit("q", "c");
         tabs.visit("p", "a");
         assert_eq!(sessions(&tabs), ["a", "b", "c"]);
-        assert!(tabs.shown());
         // A tab is named once its conversation is, and keeps the name.
         assert_eq!(label(&tabs.open()[1]), "New conversation");
         tabs.name("b", "  Count the reads ");

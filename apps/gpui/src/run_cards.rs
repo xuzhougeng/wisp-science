@@ -95,10 +95,16 @@ pub fn status_icon(status: &str) -> &'static str {
 /// Where and how long a run ran, as the WebView's card says it: context,
 /// kind and time so far, and while it goes on, its last heartbeat and its
 /// time limit. Times are Unix seconds.
-pub fn meta(run: &RunRecord, now: i64) -> String {
+/// How long a run has run, or ran: from its start (or its creation) to its
+/// end, or to now while it goes on.
+pub fn elapsed(run: &RunRecord, now: i64) -> String {
     let started = run.started_at.unwrap_or(run.created_at);
     let until = run.ended_at.unwrap_or(now);
-    let elapsed = crate::transfers::duration(until.saturating_sub(started).max(0) as u64);
+    crate::transfers::duration(until.saturating_sub(started).max(0) as u64)
+}
+
+pub fn meta(run: &RunRecord, now: i64) -> String {
+    let elapsed = elapsed(run, now);
     let mut parts = vec![
         run.context_id.clone(),
         run.kind.clone(),

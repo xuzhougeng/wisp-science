@@ -132,10 +132,8 @@ fn open_window_noting(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(820.), px(540.))),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Wisp Science".into()),
-                ..Default::default()
-            }),
+            // macOS: the page draws the bar, the traffic lights inside it.
+            titlebar: Some(workspace::window_titlebar()),
             app_id: Some("science.wisp.gpui".into()),
             ..Default::default()
         },
@@ -248,6 +246,8 @@ fn main() -> anyhow::Result<()> {
         .with_assets(assets::Assets)
         .run(move |cx| {
             gpui_component::init(cx);
+            // Source Serif 4 for titles, IBM Plex Mono for facts.
+            assets::register_fonts(cx);
             theme::install(cx);
             // The system's language until the saved choice has been read.
             i18n::apply(i18n::Language::System);

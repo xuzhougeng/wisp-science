@@ -6,7 +6,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::BranchMerge;
 
@@ -235,7 +234,7 @@ impl Workspace {
                     .child(
                         div()
                             .h(px(300.))
-                            .child(Input::new(&self.merge_summary).h_full()),
+                            .child(super::surfaces::input(&self.merge_summary, cx).h_full()),
                     );
                 card =
                     card.action(

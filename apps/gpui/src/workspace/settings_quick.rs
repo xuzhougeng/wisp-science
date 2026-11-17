@@ -5,13 +5,16 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Selectable, Sizable, StyledExt,
+    ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::{QuickAction, QuickActionInput};
 
-use super::{Workspace, shell::glyph};
+use super::{
+    Workspace,
+    settings_sections::{setting, stacked_setting},
+    surfaces,
+};
 use crate::{
     backend::{Reply, receive},
     layers::Layer,
@@ -98,36 +101,52 @@ impl Workspace {
         self.change_quick_actions(reply, window, cx);
     }
 
+    /// The form of a new or changed action, under the list in the same
+    /// column: a setting row for each field, then Save and Cancel.
     fn quick_action_form(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
-        let label = |text: &'static str| div().text_xs().text_color(muted).child(text);
+        let adding = self.quick_editing.as_deref() == Some("");
         div()
             .v_flex()
-            .gap_2()
-            .p_3()
-            .w(px(620.))
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
-            .child(label(tr("Name")))
-            .child(Input::new(&self.quick_fields[0]).small())
-            .child(label(tr("What it does")))
-            .child(self.quick_workflow_choice(cx))
-            .child(label(if self.quick_workflow.is_empty() {
-                tr("The request. End it where you will go on typing, for example \"Question: \".")
-            } else {
-                tr("Told to every task before what was typed. Optional.")
-            }))
-            .child(
+            .w_full()
+            .child(surfaces::settings_heading(
+                if adding {
+                    tr("Add a quick action")
+                } else {
+                    tr("Change")
+                },
+                cx,
+            ))
+            .child(setting(
+                tr("Name"),
+                "",
+                div()
+                    .w(px(300.))
+                    .child(surfaces::input(&self.quick_fields[0], cx)),
+                cx,
+            ))
+            .child(stacked_setting(
+                tr("What it does"),
+                "",
+                self.quick_workflow_choice(cx),
+                cx,
+            ))
+            .child(stacked_setting(
+                tr("Prompt"),
+                if self.quick_workflow.is_empty() {
+                    tr("The request; end it where you will go on typing.")
+                } else {
+                    tr("Told to every task before what was typed. Optional.")
+                },
                 div()
                     .h(px(180.))
-                    .child(Input::new(&self.quick_fields[1]).h_full()),
-            )
+                    .child(surfaces::input(&self.quick_fields[1], cx).h_full()),
+                cx,
+            ))
             .child(
                 div()
                     .h_flex()
                     .gap_2()
-                    .pt_1()
+                    .pt_3()
                     .child(
                         Button::new("quick-save")
                             .label(tr("Save"))
@@ -141,6 +160,7 @@ impl Workspace {
                         Button::new("quick-cancel")
                             .label(tr("Cancel"))
                             .small()
+                            .ghost()
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.layers.close(Layer::QuickActionForm);
                                 this.quick_editing = None;
@@ -151,13 +171,17 @@ impl Workspace {
     }
 
     /// Whether the action puts its request into the composer or starts one
-    /// of the library's workflows.
+    /// of the library's workflows: one chip each, in a group that wraps.
     fn quick_workflow_choice(&self, cx: &mut Context<Self>) -> Div {
         let mut row = div().h_flex().flex_wrap().gap_1().child(
-            Button::new("quick-starts-none")
-                .label(tr("Puts the request into the composer"))
-                .xsmall()
-                .selected(self.quick_workflow.is_empty())
+            surfaces::choice_chip("quick-starts-none", self.quick_workflow.is_empty(), cx)
+                .child(surfaces::sized_icon(
+                    "chat",
+                    surfaces::IconSize::Inline,
+                    surfaces::IconTone::Faded,
+                    cx,
+                ))
+                .child(tr("Puts the request into the composer"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.quick_workflow.clear();
                     cx.notify();
@@ -166,53 +190,97 @@ impl Workspace {
         for (index, workflow) in self.workflows.iter().enumerate() {
             let id = workflow.id.clone();
             row = row.child(
-                Button::new(("quick-starts", index))
-                    .icon(glyph("swarm"))
-                    .label(crate::i18n::fill(tr("Starts {}"), &[&workflow.name]))
-                    .xsmall()
-                    .selected(self.quick_workflow == workflow.id)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.quick_workflow = id.clone();
-                        cx.notify();
-                    })),
+                surfaces::choice_chip(
+                    ("quick-starts", index),
+                    self.quick_workflow == workflow.id,
+                    cx,
+                )
+                .child(surfaces::sized_icon(
+                    "swarm",
+                    surfaces::IconSize::Inline,
+                    surfaces::IconTone::Faded,
+                    cx,
+                ))
+                .child(crate::i18n::fill(tr("Starts {}"), &[&workflow.name]))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.quick_workflow = id.clone();
+                    cx.notify();
+                })),
             );
         }
         row
     }
 
-    fn quick_action_row(&self, action: &QuickAction, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
+    /// One action as a record row: its name, the first line of its request
+    /// (or the workflow it starts) after it; Change as an icon button,
+    /// Remove last in the danger colour, the remove question under it.
+    fn quick_action_row(
+        &self,
+        action: &QuickAction,
+        cx: &mut Context<Self>,
+    ) -> surfaces::RecordRow {
         let id = action.id.clone();
         let asking = self.layers.contains(Layer::ConfirmRemoveQuickAction)
             && self.quick_editing.as_deref() == Some(id.as_str());
-        let about = div()
-            .v_flex()
-            .flex_1()
-            .min_w_0()
-            .gap_1()
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(action.name.clone()),
+        let what = if action.workflow.is_empty() {
+            action.prompt.lines().next().unwrap_or_default().to_owned()
+        } else {
+            crate::i18n::fill(
+                tr("Starts {} as agents on what was typed"),
+                &[&self
+                    .workflows
+                    .iter()
+                    .find(|workflow| workflow.id == action.workflow)
+                    .map_or(action.workflow.as_str(), |workflow| workflow.name.as_str())],
             )
-            .child(div().truncate().text_xs().text_color(muted).child(
-                if action.workflow.is_empty() {
-                    action.prompt.lines().next().unwrap_or_default().to_owned()
-                } else {
-                    crate::i18n::fill(
-                        tr("Starts {} as agents on what was typed"),
-                        &[&self
-                            .workflows
-                            .iter()
-                            .find(|workflow| workflow.id == action.workflow)
-                            .map_or(action.workflow.as_str(), |workflow| workflow.name.as_str())],
-                    )
-                },
-            ));
-        let mut actions = div().h_flex().gap_1().flex_shrink_0();
-        if asking {
-            actions = actions
+        };
+        let mut row = surfaces::record_row(
+            SharedString::from(format!("quick-{id}")),
+            action.name.clone(),
+        )
+        .icon(if action.workflow.is_empty() {
+            "file-play"
+        } else {
+            "swarm"
+        });
+        if !what.is_empty() {
+            row = row.suffix(what);
+        }
+        let editing = action.clone();
+        let removing = id.clone();
+        row = row
+            .action(
+                surfaces::icon_action(
+                    SharedString::from(format!("quick-edit-{id}")),
+                    "edit",
+                    tr("Change"),
+                    surfaces::IconTone::Faded,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.edit_quick_action(Some(&editing), window, cx)
+                })),
+            )
+            .action(
+                surfaces::danger_action(
+                    SharedString::from(format!("quick-remove-{id}")),
+                    "trash",
+                    tr("Remove"),
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.layers.close(Layer::QuickActionForm);
+                    this.quick_editing = Some(removing.clone());
+                    this.layers.open(Layer::ConfirmRemoveQuickAction);
+                    cx.notify();
+                })),
+            );
+        let question = asking.then(|| {
+            div()
+                .h_flex()
+                .items_center()
+                .gap_2()
+                .child(div().flex_1())
                 .child(
                     Button::new(SharedString::from(format!("quick-remove-yes-{id}")))
                         .label(tr("Remove"))
@@ -230,82 +298,56 @@ impl Workspace {
                     Button::new(SharedString::from(format!("quick-remove-no-{id}")))
                         .label(tr("Keep"))
                         .small()
+                        .ghost()
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.layers.close(Layer::ConfirmRemoveQuickAction);
                             this.quick_editing = None;
                             cx.notify();
                         })),
-                );
-        } else {
-            let editing = action.clone();
-            actions = actions
-                .child(
-                    Button::new(SharedString::from(format!("quick-edit-{id}")))
-                        .label(tr("Change"))
-                        .small()
-                        .ghost()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.edit_quick_action(Some(&editing), window, cx)
-                        })),
                 )
-                .child(
-                    Button::new(SharedString::from(format!("quick-remove-{id}")))
-                        .label(tr("Remove"))
-                        .small()
-                        .ghost()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.layers.close(Layer::QuickActionForm);
-                            this.quick_editing = Some(id.clone());
-                            this.layers.open(Layer::ConfirmRemoveQuickAction);
-                            cx.notify();
-                        })),
-                );
-        }
-        div()
-            .h_flex()
-            .items_start()
-            .gap_4()
-            .py_3()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(about)
-            .child(actions)
+                .into_any_element()
+        });
+        row.below(question)
     }
 
     pub(super) fn render_quick_settings(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
-        let mut page =
-            self.settings_page(cx)
-                .child(div().pb_2().text_xs().text_color(muted).child(tr(
+        let mut page = self.settings_page(cx).child(
+            surfaces::settings_note_help(
+                tr("Requests you make often, kept under a name."),
+                tr(
                     "Requests you make often, kept under a name. The composer's quick actions \
                  menu puts one into the message box, to finish and send, or starts a workflow \
                  of the library as agents on what is typed there.",
-                )));
+                ),
+                cx,
+            )
+            .pb_3(),
+        );
         let form_open = self.layers.contains(Layer::QuickActionForm);
         let editing = self.quick_editing.as_deref();
         if self.quick_actions.is_empty() {
-            page = page.child(
-                div()
-                    .py_3()
-                    .text_sm()
-                    .text_color(muted)
-                    .child(tr("None yet.")),
-            );
+            page = page.child(surfaces::settings_note(tr("None yet."), cx).pb_2());
+        } else {
+            let hover = cx.theme().list_hover;
+            let paper = cx.theme().popover;
+            let rows: Vec<_> = self
+                .quick_actions
+                .iter()
+                .map(|action| {
+                    let chosen = form_open && editing == Some(action.id.as_str());
+                    self.quick_action_row(action, cx)
+                        .when(chosen, |row| row.bg(paper))
+                        .when(!chosen, |row| row.hover(move |style| style.bg(hover)))
+                })
+                .collect();
+            page = page.child(surfaces::record_group(rows, cx));
         }
-        for action in &self.quick_actions {
-            page = page.child(self.quick_action_row(action, cx));
-            if form_open && editing == Some(action.id.as_str()) {
-                page = page.child(div().py_2().child(self.quick_action_form(cx)));
-            }
-        }
-        if form_open && editing == Some("") {
-            page.child(div().py_2().child(self.quick_action_form(cx)))
+        if form_open {
+            page.child(self.quick_action_form(cx))
         } else {
             page.child(
                 div().pt_3().h_flex().child(
-                    Button::new("quick-add")
-                        .label(tr("Add a quick action"))
-                        .small()
+                    surfaces::outlined_action("quick-add", "plus", tr("Add a quick action"), cx)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.edit_quick_action(None, window, cx)
                         })),

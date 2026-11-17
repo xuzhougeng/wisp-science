@@ -56,19 +56,21 @@ impl PanelTab {
         }
     }
 
+    /// The tab's icon in the strip, from the shared vocabulary: what the
+    /// tab holds, each its own.
     pub fn icon(self) -> &'static str {
         match self {
             PanelTab::Files => "folder",
-            PanelTab::Runs => "activity-orbit",
+            PanelTab::Runs => "flask",
             PanelTab::Environments => "server",
             PanelTab::Artifacts => "layers",
             PanelTab::Memos => "note-plus",
             PanelTab::Memory => "memory",
-            PanelTab::Highlights => "star",
-            PanelTab::Notebook => "notebook",
-            PanelTab::Aside => "circle-help",
+            PanelTab::Highlights => "highlighter",
+            PanelTab::Notebook => "code",
+            PanelTab::Aside => "bubble",
             PanelTab::Agents => "swarm",
-            PanelTab::Provenance => "research-trail",
+            PanelTab::Provenance => "timeline",
         }
     }
 
@@ -214,6 +216,38 @@ pub fn outputs_at_stake(refusal: &str) -> bool {
 }
 
 /// How many of the conversation's runs have not ended, for the tab.
+/// How many tabs besides the open one fit the strip, by the panel's width
+/// in pixels: the open tab is a chip of its icon and name, each other tab
+/// an icon button, and More and the close button end the strip.
+pub fn strip_capacity(width: f32) -> usize {
+    const INSET: f32 = 6. + 8.;
+    const CHIP: f32 = 96.;
+    const BUTTON: f32 = 28.;
+    const GAP: f32 = 2.;
+    let room = width - INSET - CHIP - 2. * (BUTTON + 8.);
+    (room / (BUTTON + GAP)).floor().max(0.) as usize
+}
+
+/// The strip's tabs on its one line, and those that go into its More
+/// menu: the open tab always shows; the others in their order while there
+/// is room.
+pub fn strip(tabs: &[PanelTab], open: PanelTab, room: usize) -> (Vec<PanelTab>, Vec<PanelTab>) {
+    let mut shown = Vec::new();
+    let mut more = Vec::new();
+    let mut left = room;
+    for tab in tabs.iter().copied() {
+        if tab == open {
+            shown.push(tab);
+        } else if left > 0 {
+            left -= 1;
+            shown.push(tab);
+        } else {
+            more.push(tab);
+        }
+    }
+    (shown, more)
+}
+
 pub fn active_runs(runs: &[RunRecord]) -> usize {
     runs.iter()
         .filter(|run| can_cancel(&run.status) || run.status == "cancelling")
@@ -442,6 +476,46 @@ mod tests {
         for tab in PanelTab::ALL {
             assert!(!tab.label().is_empty() && !tab.icon().is_empty());
         }
+    }
+
+    #[test]
+    fn every_tab_has_an_icon_of_its_own_from_the_set() {
+        let mut seen = std::collections::HashSet::new();
+        for tab in PanelTab::ALL {
+            assert!(seen.insert(tab.icon()), "{:?} shares its icon", tab);
+            assert!(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join(format!("assets/icons/{}.svg", tab.icon()))
+                    .exists(),
+                "{:?}",
+                tab
+            );
+        }
+        assert_eq!(PanelTab::Runs.icon(), "flask");
+        assert_eq!(PanelTab::Highlights.icon(), "highlighter");
+    }
+
+    #[test]
+    fn the_strip_keeps_one_line_and_sends_the_rest_to_more() {
+        use PanelTab::*;
+        let all = PanelTab::ALL.to_vec();
+        // At the usual width most tabs fit; at the narrowest fewer; never
+        // less than none.
+        let usual = strip_capacity(340.);
+        assert!(usual >= 5, "{usual}");
+        assert!(strip_capacity(480.) > usual);
+        assert!(strip_capacity(240.) < usual);
+        assert_eq!(strip_capacity(0.), 0);
+        // The open tab always shows, wherever it is in the order.
+        let (shown, more) = strip(&all, Aside, 2);
+        assert_eq!(shown, [Files, Runs, Aside]);
+        assert_eq!(more.len(), all.len() - 3);
+        assert!(!more.contains(&Aside));
+        let (shown, more) = strip(&all, Files, 20);
+        assert_eq!(shown, all);
+        assert!(more.is_empty());
+        let (shown, _) = strip(&all, Runs, 0);
+        assert_eq!(shown, [Runs]);
     }
 
     #[test]

@@ -7,11 +7,10 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::{Pet, PetLook};
 
-use super::{Workspace, settings_sections::setting, surfaces::switch};
+use super::{Workspace, settings_sections::explained_setting, surfaces::switch};
 use crate::{
     backend::{Reply, receive},
     pet::{self, Activity, CELL, COLUMNS, Player, ROWS},
@@ -215,16 +214,15 @@ impl Workspace {
         };
         let mut folder = div()
             .h_flex()
+            .items_center()
             .gap_2()
             .child(
                 div()
-                    .w(px(280.))
-                    .child(Input::new(&self.pet_folder).small()),
+                    .w(px(260.))
+                    .child(super::surfaces::input(&self.pet_folder, cx).small()),
             )
             .child(
-                Button::new("pet-choose")
-                    .label(tr("Choose…"))
-                    .small()
+                super::surfaces::outlined_action("pet-choose", "folder", tr("Choose…"), cx)
                     .on_click(
                         cx.listener(|this, _, window, cx| this.choose_pet_folder(window, cx)),
                     ),
@@ -232,6 +230,7 @@ impl Workspace {
         if !pet::unchanged(&typed, &kept.directory) {
             folder = folder.child(
                 Button::new("pet-save")
+                    .icon(super::shell::glyph("save"))
                     .label(tr("Save"))
                     .small()
                     .primary()
@@ -251,8 +250,9 @@ impl Workspace {
                 })
                 .child(about),
         )
-        .child(setting(
+        .child(explained_setting(
             tr("Show pet"),
+            "",
             tr(
                 "An animated companion in the corner of the conversation. It works while a \
                  turn runs, waits when you are needed, and jumps when the turn is done.",
@@ -262,8 +262,9 @@ impl Workspace {
             ),
             cx,
         ))
-        .child(setting(
+        .child(explained_setting(
             tr("Pet folder"),
+            "",
             tr(
                 "A folder holding pet.json and a sprite sheet (Codex-compatible, version 2). \
                  Nothing is read from it until the pet is turned on.",

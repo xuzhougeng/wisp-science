@@ -647,7 +647,7 @@ button.run-status:hover { filter:brightness(0.96); }
 .file-preview-crop-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; height: 28px; padding: 0 7px; border: 1px solid var(--border-strong); background: var(--bg-elev); color: var(--text-muted); border-radius: var(--radius-xs); cursor: pointer; }
 .file-preview-crop-btn:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
 .file-preview-crop-btn.active { color: var(--on-clay); background: var(--clay); border-color: var(--clay); }
-.file-preview-crop-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.file-preview-crop-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .file-preview-crop-layer { position: absolute; inset: 0; z-index: 3; cursor: crosshair; touch-action: none; }
 .file-preview-crop-rect { position: absolute; z-index: 4; border: 1.5px solid var(--clay); background: color-mix(in srgb, var(--clay) 18%, transparent); pointer-events: none; }
 .file-preview-crop-rect.selected { border-width: 2px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg-elev) 70%, transparent); }

@@ -7,11 +7,10 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::{CodexAccount, SignInStatus, Subscription};
 
-use super::{Workspace, chip, shell::glyph};
+use super::{Workspace, surfaces};
 use crate::{backend::receive, codex_pool, layers::Layer, present::Tone, settings};
 
 /// What a subscription is called on the page.
@@ -195,7 +194,15 @@ impl Workspace {
             )
     }
 
-    fn codex_account_row(&self, account: &CodexAccount, cx: &mut Context<Self>) -> Div {
+    /// One account of the ChatGPT (Codex) pool as a record row: its
+    /// address, its plan, In use as a stamp; Use and Remove as icon
+    /// buttons, Remove last in the danger colour. Its usage meters and the
+    /// question before removing it open under it.
+    fn codex_account_row(
+        &self,
+        account: &CodexAccount,
+        cx: &mut Context<Self>,
+    ) -> surfaces::RecordRow {
         let muted = cx.theme().muted_foreground;
         let id = account.id.clone();
         let asking = self.layers.contains(Layer::ConfirmRemoveCodexAccount)
@@ -205,65 +212,63 @@ impl Workspace {
         } else {
             account.email.clone()
         };
-        let mut heading = div().h_flex().gap_2().child(div().text_sm().child(name));
+        let mut row =
+            surfaces::record_row(SharedString::from(format!("codex-{id}")), name).icon("user");
         if !account.plan.is_empty() {
-            heading = heading.child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(codex_pool::plan_label(&account.plan)),
-            );
+            row = row.suffix(codex_pool::plan_label(&account.plan));
         }
         if account.active {
-            heading = heading.child(chip(tr("In use"), Tone::Active, cx));
-        }
-        let mut buttons = div().h_flex().gap_1();
-        if !account.active {
+            row = row.stamp(surfaces::StampKind::Running, tr("In use"));
+        } else {
             let using = id.clone();
-            buttons = buttons.child(
-                Button::new(SharedString::from(format!("codex-use-{id}")))
-                    .label(tr("Use"))
-                    .xsmall()
-                    .ghost()
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.use_codex_account(using.clone(), window, cx)
-                    })),
+            row = row.action(
+                surfaces::icon_action(
+                    SharedString::from(format!("codex-use-{id}")),
+                    "check",
+                    tr("Use"),
+                    surfaces::IconTone::Faded,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.use_codex_account(using.clone(), window, cx)
+                })),
             );
         }
         let removing = id.clone();
-        buttons = buttons.child(
-            Button::new(SharedString::from(format!("codex-remove-{id}")))
-                .label(tr("Remove"))
-                .xsmall()
-                .ghost()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.codex_removing = Some(removing.clone());
-                    this.layers.open(Layer::ConfirmRemoveCodexAccount);
-                    cx.notify();
-                })),
+        row = row.action(
+            surfaces::danger_action(
+                SharedString::from(format!("codex-remove-{id}")),
+                "trash",
+                tr("Remove"),
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.codex_removing = Some(removing.clone());
+                this.layers.open(Layer::ConfirmRemoveCodexAccount);
+                cx.notify();
+            })),
         );
-        let mut row = div()
-            .v_flex()
-            .gap_1()
-            .py_1()
-            .pl_3()
-            .border_l_2()
-            .border_color(cx.theme().border)
-            .child(heading);
+        let mut below = div().v_flex().gap_1();
+        let mut opened = false;
         match self.codex_usage.get(&id) {
             Some(Ok(usage)) => {
+                opened = true;
                 if usage.limit_reached {
-                    row = row.child(chip(tr("Limit reached"), Tone::Danger, cx));
+                    below = below.child(div().h_flex().child(surfaces::stamp(
+                        surfaces::StampKind::Failed,
+                        tr("Limit reached"),
+                        cx,
+                    )));
                 }
                 for window in [usage.short, usage.weekly].into_iter().flatten() {
-                    row = row.child(self.usage_meter(
+                    below = below.child(self.usage_meter(
                         codex_pool::window_label(window.window_seconds),
                         &window,
                         cx,
                     ));
                 }
                 if usage.short.is_none() && usage.weekly.is_none() {
-                    row = row.child(
+                    below = below.child(
                         div()
                             .text_xs()
                             .text_color(muted)
@@ -271,16 +276,25 @@ impl Workspace {
                     );
                 }
             }
-            Some(Err(error)) => row = row.child(chip(crate::i18n::host(error), Tone::Danger, cx)),
+            Some(Err(error)) => {
+                opened = true;
+                below = below.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().danger)
+                        .child(crate::i18n::host(error)),
+                );
+            }
             None => {}
         }
-        row = row.child(buttons);
         if asking {
-            row = row.child(
+            opened = true;
+            below = below.child(
                 div()
                     .h_flex()
+                    .items_center()
                     .gap_2()
-                    .child(div().text_xs().child(tr(
+                    .child(div().flex_1().min_w_0().text_xs().child(tr(
                         "Remove this account? Its sign-in is forgotten on this computer.",
                     )))
                     .child(
@@ -305,38 +319,49 @@ impl Workspace {
                     ),
             );
         }
-        row
+        row.below(opened.then(|| below.into_any_element()))
     }
 
-    /// The accounts kept for ChatGPT (Codex), under its row.
+    /// The accounts kept for ChatGPT (Codex), under its row: their record
+    /// rows, then importing from the Codex CLI and checking their usage as
+    /// icon and word.
     fn codex_accounts_block(&self, cx: &mut Context<Self>) -> Div {
+        let rows: Vec<_> = self
+            .codex_accounts
+            .iter()
+            .map(|account| self.codex_account_row(account, cx))
+            .collect();
         let mut block = div().v_flex().gap_1();
-        for account in &self.codex_accounts {
-            block = block.child(self.codex_account_row(account, cx));
+        if !rows.is_empty() {
+            block = block.child(surfaces::record_group(rows, cx));
         }
         let mut actions = div().h_flex().gap_1().child(
-            Button::new("codex-import")
-                .label(tr("Import from Codex CLI"))
-                .xsmall()
-                .ghost()
-                .on_click(
-                    cx.listener(|this, _, window, cx| this.import_codex_accounts(window, cx)),
-                ),
+            surfaces::labelled_action(
+                "codex-import",
+                "archive-import",
+                tr("Import from Codex CLI"),
+                surfaces::IconSize::Inline,
+                surfaces::IconTone::Faded,
+                cx,
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.import_codex_accounts(window, cx))),
         );
         if !self.codex_accounts.is_empty() {
             actions = actions.child(
-                Button::new("codex-usage")
-                    .label(if self.codex_usage_checking {
+                surfaces::labelled_action(
+                    "codex-usage",
+                    "gauge",
+                    if self.codex_usage_checking {
                         tr("Checking usage…")
                     } else {
                         tr("Check usage")
-                    })
-                    .xsmall()
-                    .ghost()
-                    .disabled(self.codex_usage_checking)
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.check_codex_usage(window, cx)),
-                    ),
+                    },
+                    surfaces::IconSize::Inline,
+                    surfaces::IconTone::Faded,
+                    cx,
+                )
+                .disabled(self.codex_usage_checking)
+                .on_click(cx.listener(|this, _, window, cx| this.check_codex_usage(window, cx))),
             );
         }
         block.child(actions)
@@ -514,7 +539,8 @@ impl Workspace {
         .detach();
     }
 
-    fn sign_in_panel(&self, cx: &mut Context<Self>) -> Option<Div> {
+    /// A sign-in under way: a card, since it is acted on in place.
+    fn sign_in_panel(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let (subscription, challenge) = self.sign_in.as_ref()?;
         let muted = cx.theme().muted_foreground;
         let message = self
@@ -527,51 +553,43 @@ impl Workspace {
             .as_ref()
             .is_some_and(|state| state.status == SignInStatus::Failed);
         let url = challenge.url.clone();
-        let mut panel = div()
+        let mut panel = surfaces::card("sign-in", cx)
             .v_flex()
             .gap_2()
             .p_3()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
+            .child(div().text_sm().child(crate::i18n::fill(
+                tr("Signing in to {}"),
+                &[&subscription_name(*subscription)],
+            )))
             .child(
                 div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(crate::i18n::fill(
-                        tr("Signing in to {}"),
-                        &[&subscription_name(*subscription)],
-                    )),
-            )
-            .child(if failed {
-                chip(crate::i18n::host(&message), Tone::Danger, cx)
-            } else {
-                div()
                     .text_xs()
-                    .text_color(muted)
-                    .child(crate::i18n::host(&message))
-            });
-        if !challenge.user_code.is_empty() {
-            panel = panel.child(
-                div()
-                    .font_family("Menlo")
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(challenge.user_code.clone()),
+                    .text_color(if failed { cx.theme().danger } else { muted })
+                    .child(crate::i18n::host(&message)),
             );
+        if !challenge.user_code.is_empty() {
+            panel = panel.child(surfaces::read_only(challenge.user_code.clone(), cx));
         }
-        let mut actions = div().h_flex().gap_2().child(
-            Button::new("sign-in-open")
-                .icon(glyph("external-link"))
-                .label(tr("Open the sign-in page"))
-                .small()
+        let actions = div()
+            .h_flex()
+            .items_center()
+            .gap_2()
+            .child(
+                surfaces::outlined_action(
+                    "sign-in-open",
+                    "external-link",
+                    tr("Open the sign-in page"),
+                    cx,
+                )
                 .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&url))),
-        );
-        actions = actions.child(
-            Button::new("sign-in-cancel")
-                .label(tr("Cancel"))
-                .small()
-                .on_click(cx.listener(|this, _, _, cx| this.cancel_sign_in(cx))),
-        );
+            )
+            .child(
+                Button::new("sign-in-cancel")
+                    .label(tr("Cancel"))
+                    .small()
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| this.cancel_sign_in(cx))),
+            );
         panel = panel.child(actions);
         // In the browser the answer comes to this computer; when it cannot,
         // the address the browser ended on is pasted here.
@@ -583,116 +601,138 @@ impl Workspace {
                 .child(
                     div()
                         .h_flex()
+                        .items_center()
                         .gap_2()
                         .child(
                             div()
                                 .flex_1()
-                                .child(Input::new(&self.sign_in_redirect).small()),
+                                .min_w_0()
+                                .child(surfaces::input(&self.sign_in_redirect, cx).small()),
                         )
                         .child(
-                            Button::new("sign-in-redirect")
-                                .label(tr("Use this address"))
-                                .small()
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.submit_redirect(window, cx)
-                                })),
+                            surfaces::outlined_action(
+                                "sign-in-redirect",
+                                "check",
+                                tr("Use this address"),
+                                cx,
+                            )
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.submit_redirect(window, cx)),
+                            ),
                         ),
                 );
         }
         Some(panel)
     }
 
-    /// The subscriptions, each with who is signed in and a way to sign in
-    /// or out, under the list of models.
+    /// The subscriptions under the models, in the same column: a faded
+    /// heading, then one record row each with who is signed in as a stamp;
+    /// Sign in is icon and word, signing in with a code and signing out
+    /// are icon buttons.
     pub(super) fn render_subscriptions(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
         let editable = self
             .settings
             .current()
             .is_none_or(|current| settings::editable(current.source));
         let mut block = div()
             .v_flex()
-            .gap_2()
-            .pt_6()
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Subscriptions")),
-            )
-            .child(div().text_xs().text_color(muted).child(tr(
-                "Use a model through your subscription instead of an API key. The sign-in \
+            .gap_1()
+            .child(surfaces::settings_heading(tr("Subscriptions"), cx).pt_0())
+            .child(surfaces::settings_note_help(
+                tr("Use a model through your subscription instead of an API key."),
+                tr(
+                    "Use a model through your subscription instead of an API key. The sign-in \
                  is kept in the system keychain and shared with the WebView desktop.",
-            )));
+                ),
+                cx,
+            ));
         if !editable {
-            return block.child(div().text_xs().text_color(muted).child(tr(
-                "The model is set by WISP_* variables; subscriptions are signed in to when \
+            return block.child(surfaces::settings_note_help(
+                tr("The model is set by WISP_* variables."),
+                tr(
+                    "The model is set by WISP_* variables; subscriptions are signed in to when \
                  it is not.",
-            )));
+                ),
+                cx,
+            ));
         }
+        let mut rows = Vec::new();
         for row in &self.subscriptions {
             let subscription = row.subscription;
-            let mut line = div().v_flex().gap_1().py_1().child(
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .child(div().text_sm().child(subscription_name(subscription)))
-                    .child(match &row.account {
-                        Some(account) => chip(
-                            crate::i18n::fill(tr("Signed in as {}"), &[account]),
-                            Tone::Success,
-                            cx,
-                        ),
-                        None => chip(tr("Not signed in"), Tone::Neutral, cx),
-                    }),
-            );
-            let mut buttons = div().h_flex().gap_1();
+            let mut line = surfaces::record_row(
+                SharedString::from(format!("subscription-{subscription:?}")),
+                subscription_name(subscription),
+            )
+            .icon("lock");
+            line = match &row.account {
+                Some(account) => line.stamp(
+                    surfaces::StampKind::Success,
+                    crate::i18n::fill(tr("Signed in as {}"), &[account]),
+                ),
+                None => line.suffix(tr("Not signed in")),
+            };
             if subscription != Subscription::Xai {
-                buttons = buttons.child(
-                    Button::new(SharedString::from(format!("sign-in-{subscription:?}")))
-                        .label(tr("Sign in"))
-                        .xsmall()
-                        .ghost()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.start_sign_in(subscription, false, window, cx)
-                        })),
+                line = line.action(
+                    surfaces::outlined_action(
+                        SharedString::from(format!("sign-in-{subscription:?}")),
+                        "external-link",
+                        tr("Sign in"),
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.start_sign_in(subscription, false, window, cx)
+                    })),
                 );
             }
             if subscription != Subscription::ChatGpt {
-                buttons = buttons.child(
-                    Button::new(SharedString::from(format!("sign-in-code-{subscription:?}")))
-                        .label(tr("Sign in with a code"))
-                        .xsmall()
-                        .ghost()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.start_sign_in(subscription, true, window, cx)
-                        })),
+                line = line.action(
+                    surfaces::icon_action(
+                        SharedString::from(format!("sign-in-code-{subscription:?}")),
+                        "clipboard",
+                        tr("Sign in with a code"),
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.start_sign_in(subscription, true, window, cx)
+                    })),
                 );
             }
             if row.account.is_some() {
-                buttons = buttons.child(
-                    Button::new(SharedString::from(format!("sign-out-{subscription:?}")))
-                        .label(tr("Sign out"))
-                        .xsmall()
-                        .ghost()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.sign_out(subscription, window, cx)
-                        })),
+                line = line.action(
+                    surfaces::icon_action(
+                        SharedString::from(format!("sign-out-{subscription:?}")),
+                        "arrow-left",
+                        tr("Sign out"),
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.sign_out(subscription, window, cx)
+                    })),
                 );
             }
-            line = line.child(buttons);
             if subscription == Subscription::Codex {
-                line = line.child(self.codex_accounts_block(cx));
+                line = line.below(Some(self.codex_accounts_block(cx).into_any_element()));
             }
-            block = block.child(line);
+            rows.push(line);
+        }
+        if !rows.is_empty() {
+            block = block.child(surfaces::record_group(rows, cx));
         }
         if let Some(panel) = self.sign_in_panel(cx) {
-            block = block.child(panel);
+            block = block.child(div().pt_2().child(panel));
         }
         if let Some(note) = &self.sign_in_note {
             block = block.child(match note {
-                Ok(said) => chip(said.clone(), Tone::Success, cx),
-                Err(error) => chip(crate::i18n::host(error), Tone::Danger, cx),
+                Ok(said) => div()
+                    .text_xs()
+                    .text_color(cx.theme().success)
+                    .child(said.clone()),
+                Err(error) => div()
+                    .text_xs()
+                    .text_color(cx.theme().danger)
+                    .child(crate::i18n::host(error)),
             });
         }
         block

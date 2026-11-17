@@ -10,7 +10,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
     text::TextView,
 };
 use wisp_server::desktop::{ArchiveScript, ResearchArchive};
@@ -506,12 +505,12 @@ impl Workspace {
         if review.shown.is_some() {
             part = part
                 .child(note(tr("Script filename")))
-                .child(Input::new(&self.archive_fields[2]).small())
+                .child(super::surfaces::input(&self.archive_fields[2], cx).small())
                 .child(note(tr("Script content")))
                 .child(
                     div()
                         .h(px(240.))
-                        .child(Input::new(&self.archive_fields[3]).h_full()),
+                        .child(super::surfaces::input(&self.archive_fields[3], cx).h_full()),
                 );
         }
         part.child(note(tr(
@@ -563,12 +562,7 @@ impl Workspace {
                     .v_flex()
                     .gap_1()
                     .py_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(file.path.clone()),
-                    )
+                    .child(div().text_sm().child(file.path.clone()))
                     .child(note(format!(
                         "{} · {}",
                         crate::files::size_label(file.size_bytes),
@@ -579,12 +573,7 @@ impl Workspace {
         }
         // What is deleted, said plainly before Freeze can be pressed.
         let deleted = review.deletions();
-        part = part.child(
-            div()
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .child(review.deletion_line()),
-        );
+        part = part.child(div().text_sm().child(review.deletion_line()));
         if !deleted.is_empty() {
             let mut names = div().v_flex().gap_0p5();
             for file in deleted {
@@ -708,12 +697,12 @@ impl Workspace {
                         .into(),
                     ))
                     .child(note(tr("Title").into()))
-                    .child(Input::new(&self.archive_fields[0]).small())
+                    .child(super::surfaces::input(&self.archive_fields[0], cx).small())
                     .child(note(tr("Report, in Markdown").into()))
                     .child(
                         div()
                             .h(px(300.))
-                            .child(Input::new(&self.archive_fields[1]).h_full()),
+                            .child(super::surfaces::input(&self.archive_fields[1], cx).h_full()),
                     )
                     .child(self.archive_scripts(review, cx))
                     .child(self.archive_files(review, cx));
@@ -763,7 +752,6 @@ impl Workspace {
                     .child(
                         div()
                             .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
                             .child(frozen.title.clone()),
                     )
                     .child(note(fill(

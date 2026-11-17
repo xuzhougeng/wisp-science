@@ -23,14 +23,7 @@ impl Workspace {
                         .h_flex()
                         .gap_2()
                         .child(icon("refresh").text_color(cx.theme().warning))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .text_sm()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(title),
-                        ),
+                        .child(div().flex_1().min_w_0().text_sm().child(title)),
                 )
                 .child(div().text_xs().text_color(muted).child(note))
                 .children(

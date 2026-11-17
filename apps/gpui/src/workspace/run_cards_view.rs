@@ -15,7 +15,7 @@ use gpui_component::{
     text::TextView,
 };
 
-use super::{Workspace, chip, shell::icon_button, tone_color};
+use super::{Workspace, chip, shell::icon_button, surfaces, tone_color};
 use crate::{
     assets::icon,
     backend::receive,
@@ -141,6 +141,54 @@ impl Workspace {
         cx.notify();
     }
 
+    /// A run as a record row, the same in the transcript and the Runs tab:
+    /// `flask`, its title, where it ran after it, its own state as a stamp
+    /// (live while it goes on), how long it has run as the value (the call's
+    /// own time, `fallback_ms`, when the run has none), and an icon button
+    /// to ask aside about it. The caller adds its other actions and what
+    /// the row opens to.
+    pub(super) fn run_record_row(
+        &self,
+        key: &str,
+        run: &wisp_dto::RunRecord,
+        fallback_ms: Option<u64>,
+        cx: &mut Context<Self>,
+    ) -> surfaces::RecordRow {
+        let (state, tone) = present::run_status(run);
+        let mut row = surfaces::record_row(
+            SharedString::from(format!("run-row-{key}")),
+            if run.title.trim().is_empty() {
+                tr("Run").to_owned()
+            } else {
+                run.title.clone()
+            },
+        )
+        .icon("flask")
+        .suffix(run.context_id.clone())
+        .value_column();
+        if let Some(ms) = present::run_elapsed_ms(run, super::shell::unix_now()).or(fallback_ms) {
+            row = row.value(present::duration_label(ms));
+        }
+        if let Some(kind) = surfaces::StampKind::from_tone(tone) {
+            row = row.stamp(kind, state);
+        }
+        let (asked, title) = (run.id.clone(), run.title.clone());
+        row.action(
+            surfaces::icon_action(
+                SharedString::from(format!("run-row-ask-{key}")),
+                "bubble",
+                tr("Ask aside about this run, with its live state"),
+                surfaces::IconTone::Faded,
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                // Not a click on the row underneath.
+                cx.stop_propagation();
+                this.open_aside_about_run(asked.clone(), title.clone(), window, cx)
+            })),
+        )
+    }
+
     /// The card of the run `id`: under the tool row at `index`, `open` when
     /// that row is unfolded, or with no row (`None`), a card of its own.
     pub(super) fn run_card(
@@ -174,25 +222,31 @@ impl Workspace {
         let colour = tone_color(tone, cx);
         let backgrounded = record
             .is_some_and(|run| run_cards::backgrounded(run, self.backgrounded_runs.contains(id)));
-        let mut head =
-            div()
-                .h_flex()
-                .gap_2()
-                .child(icon(run_cards::status_icon(&status)).text_color(colour))
-                .child(
-                    div().flex_1().min_w_0().truncate().text_sm().child(
+        // Under its tool row, which already says its title, state and
+        // time and holds Ask and Show in Runs, the card keeps only the rest.
+        let under_row = index.is_some();
+        let mut head = div().h_flex().gap_2();
+        if under_row {
+            head = head.child(div().flex_1());
+        } else {
+            head =
+                head.child(icon(run_cards::status_icon(&status)).text_color(colour))
+                    .child(div().flex_1().min_w_0().truncate().text_sm().child(
                         record.map_or_else(|| tr("Run").to_owned(), |run| run.title.clone()),
-                    ),
-                )
-                .child(chip(state, tone, cx));
+                    ))
+                    .child(chip(state, tone, cx));
+        }
         let actions = record.map_or_else(Vec::new, |run| run_cards::actions(run, backgrounded));
-        for action in actions {
+        for action in actions
+            .into_iter()
+            .filter(|action| !(under_row && matches!(action, Action::Ask)))
+        {
             let wanted = id.to_owned();
             let title = record.map(|run| run.title.clone()).unwrap_or_default();
             head = head.child(match action {
                 Action::Ask => icon_button(
                     SharedString::from(format!("run-card-ask-{key}")),
-                    "chat",
+                    "bubble",
                     "Ask aside about this run, with its live state",
                 )
                 .xsmall()
@@ -237,7 +291,7 @@ impl Workspace {
                 })),
             });
         }
-        {
+        if !under_row {
             let wanted = id.to_owned();
             head = head.child(
                 Button::new(SharedString::from(format!("show-run-{key}")))
@@ -268,7 +322,12 @@ impl Workspace {
                 ),
             );
         }
-        let mut card = div().v_flex().gap_1().px_3().pb_2().child(head);
+        // Under its row it sits on the paper at the row's text edge.
+        let mut card = div()
+            .v_flex()
+            .gap_1()
+            .when(!under_row, |card| card.px_3().pb_2())
+            .child(head);
         let Some(run) = record else {
             return card.into_any_element();
         };

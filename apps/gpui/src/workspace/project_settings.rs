@@ -6,7 +6,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::{ProjectSettings, RunRetention};
 
@@ -144,7 +143,7 @@ impl Workspace {
                         div()
                             .h_flex()
                             .gap_1()
-                            .child(Input::new(&self.project_fields[index]).small())
+                            .child(super::surfaces::input(&self.project_fields[index], cx).small())
                             .child(div().text_xs().text_color(muted).child(tr("days"))),
                     ),
             );
@@ -158,7 +157,7 @@ impl Workspace {
             div()
                 .v_flex()
                 .gap_1()
-                .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(text))
+                .child(div().text_sm().child(text))
                 .child(div().text_xs().text_color(muted).child(note))
         };
         let mut card = surfaces::dialog(
@@ -175,12 +174,12 @@ impl Workspace {
             tr("Name"),
             tr("What the project is called in lists."),
         ))
-        .child(Input::new(&self.project_fields[0]).small())
+        .child(super::surfaces::input(&self.project_fields[0], cx).small())
         .child(label(
             tr("Description"),
             tr("For you: what the project is about. The model is not shown it."),
         ))
-        .child(Input::new(&self.project_fields[1]).small())
+        .child(super::surfaces::input(&self.project_fields[1], cx).small())
         .child(label(
             tr("Rules for the model"),
             tr(
@@ -191,7 +190,7 @@ impl Workspace {
         .child(
             div()
                 .h(px(220.))
-                .child(Input::new(&self.project_fields[2]).h_full()),
+                .child(super::surfaces::input(&self.project_fields[2], cx).h_full()),
         )
         .child(label(
             tr("Automatic server cleanup"),

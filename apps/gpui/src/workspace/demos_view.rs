@@ -9,7 +9,7 @@ use gpui_component::{
 use wisp_server::desktop::{Demo, DemoRole};
 
 use super::{
-    Workspace, chip,
+    Workspace,
     shell::{error_banner, glyph},
     surfaces::{self, DialogWidth},
 };
@@ -148,11 +148,12 @@ impl Workspace {
         if !demos::folded(row) {
             let id = SharedString::from(format!("demo-{}-{index}", demo.id));
             let you = row.role == DemoRole::You;
-            let mut head = div().h_flex().gap_2().text_xs().text_color(muted).child(
-                div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(demos::label(row)),
-            );
+            let mut head = div()
+                .h_flex()
+                .gap_2()
+                .text_xs()
+                .text_color(muted)
+                .child(div().child(demos::label(row)));
             if let Some(model) = &row.model {
                 head = head.child(model.clone());
             }
@@ -203,7 +204,6 @@ impl Workspace {
                     .w(px(120.))
                     .flex_shrink_0()
                     .truncate()
-                    .font_weight(FontWeight::MEDIUM)
                     .child(demos::label(row)),
             )
             .child(
@@ -215,7 +215,7 @@ impl Workspace {
                     .child(demos::line(row)),
             );
         if failed {
-            line = line.child(chip(tr("Failed"), Tone::Danger, cx));
+            line = line.child(super::surfaces::status(tr("Failed"), Tone::Danger, cx));
         }
         if opens {
             line = line
@@ -367,7 +367,7 @@ impl Workspace {
                                 .flex_1()
                                 .min_w_0()
                                 .gap_0p5()
-                                .child(div().font_weight(FontWeight::MEDIUM).child(title))
+                                .child(div().child(title))
                                 .child(div().text_xs().text_color(muted).child(
                                     if demo.rows.is_empty() {
                                         if self.demo_note.is_some() {

@@ -10,7 +10,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::{
     Paper, PaperAudience, PaperCheck, PaperFinding, PaperInput, PaperItem, PaperItemInput,
@@ -738,7 +737,7 @@ impl Workspace {
             .rounded(cx.theme().radius)
             .border_1()
             .border_color(cx.theme().border)
-            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(title))
+            .child(div().text_sm().child(title))
     }
 
     fn form_actions(&self, save: Button, cx: &mut Context<Self>) -> Div {
@@ -766,16 +765,16 @@ impl Workspace {
                 cx,
             )
             .child(label(tr("Title")))
-            .child(Input::new(&self.paper_fields[0]).small())
+            .child(super::surfaces::input(&self.paper_fields[0], cx).small())
             .child(label(tr("Description, if any")))
-            .child(Input::new(&self.paper_fields[1]).small());
+            .child(super::surfaces::input(&self.paper_fields[1], cx).small());
         if !self.paper_renaming {
             form = form
                 .child(div().text_xs().text_color(muted).child(crate::i18n::fill(
                     tr("What its first version is called. Empty: {}"),
                     &[&tr("Initial submission")],
                 )))
-                .child(Input::new(&self.paper_fields[2]).small());
+                .child(super::surfaces::input(&self.paper_fields[2], cx).small());
         }
         let save = Button::new("paper-form-save")
             .label(tr("Save"))
@@ -847,14 +846,14 @@ impl Workspace {
         )
         .child(kinds)
         .child(label(tr("What it is called in the paper")))
-        .child(Input::new(&self.paper_item_fields[0]).small())
+        .child(super::surfaces::input(&self.paper_item_fields[0], cx).small())
         .child(label(tr("Parent item")))
         .child(parents)
         .child(label(tr("What it shows, if you want to note it")))
         .child(
             div()
                 .h(px(96.))
-                .child(Input::new(&self.paper_item_fields[1]).h_full()),
+                .child(super::surfaces::input(&self.paper_item_fields[1], cx).h_full()),
         )
         .child(self.form_actions(save, cx))
     }
@@ -944,7 +943,7 @@ impl Workspace {
                 .min_w(px(120.))
                 .gap_0p5()
                 .child(label(text))
-                .child(Input::new(&self.paper_anchor_fields[index]).small())
+                .child(super::surfaces::input(&self.paper_anchor_fields[index], cx).small())
         };
         let fields = match self.paper_anchor_kind {
             "message_span" => div()
@@ -971,12 +970,7 @@ impl Workspace {
             .rounded(cx.theme().radius)
             .border_1()
             .border_color(cx.theme().border)
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Add precise evidence")),
-            )
+            .child(div().text_sm().child(tr("Add precise evidence")))
             .child(label(tr(
                 "Anchor an exact message range, tool result, execution, code cell, or external \
                  resource.",
@@ -1078,45 +1072,43 @@ impl Workspace {
                     })),
             );
         }
-        let mut form = self
-            .form_frame(tr("Add evidence"), cx)
-            .child(div().text_xs().text_color(muted).child(tr(
-                "Say why it supports the item, then choose a result, a run or a passage of a \
+        let mut form =
+            self.form_frame(tr("Add evidence"), cx)
+                .child(div().text_xs().text_color(muted).child(tr(
+                    "Say why it supports the item, then choose a result, a run or a passage of a \
                  conversation. What you choose is kept as it is now; later changes do not \
                  alter it.",
-            )))
-            .child(Input::new(&self.paper_source_fields[1]).small())
-            .child(self.paper_standing_choices(
-                "paper-source",
-                self.paper_source_selection,
-                self.paper_source_audience,
-                |this, selection, audience, _, cx| {
-                    this.paper_source_selection = selection;
-                    this.paper_source_audience = audience;
-                    cx.notify();
-                },
-                cx,
-            ))
-            .child(
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .child(kinds)
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(Input::new(&self.paper_source_fields[0]).small()),
-                    )
-                    .child(
-                        Button::new("paper-source-search")
-                            .label(tr("Search"))
-                            .small()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.search_paper_sources(false, window, cx)
-                            })),
-                    ),
-            )
-            .child(list);
+                )))
+                .child(super::surfaces::input(&self.paper_source_fields[1], cx).small())
+                .child(self.paper_standing_choices(
+                    "paper-source",
+                    self.paper_source_selection,
+                    self.paper_source_audience,
+                    |this, selection, audience, _, cx| {
+                        this.paper_source_selection = selection;
+                        this.paper_source_audience = audience;
+                        cx.notify();
+                    },
+                    cx,
+                ))
+                .child(
+                    div()
+                        .h_flex()
+                        .gap_2()
+                        .child(kinds)
+                        .child(div().flex_1().child(
+                            super::surfaces::input(&self.paper_source_fields[0], cx).small(),
+                        ))
+                        .child(
+                            Button::new("paper-source-search")
+                                .label(tr("Search"))
+                                .small()
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.search_paper_sources(false, window, cx)
+                                })),
+                        ),
+                )
+                .child(list);
         if self.paper_choices_more {
             form = form.child(
                 div().h_flex().child(
@@ -1138,23 +1130,18 @@ impl Workspace {
                     .pt_2()
                     .border_t_1()
                     .border_color(cx.theme().border)
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(format!(
-                                "{} · {}",
-                                choice.name,
-                                papers::role_label(&choice.detail)
-                            )),
-                    )
+                    .child(div().text_sm().child(format!(
+                        "{} · {}",
+                        choice.name,
+                        papers::role_label(&choice.detail)
+                    )))
                     .child(div().text_xs().text_color(muted).child(tr(
                         "Select a passage below, or continue to use the full preview (up to \
                          16 KiB).",
                     )))
                     .child(
                         div().h(px(180.)).child(
-                            Input::new(&self.paper_passage_field)
+                            super::surfaces::input(&self.paper_passage_field, cx)
                                 .disabled(true)
                                 .h_full(),
                         ),
@@ -1245,7 +1232,7 @@ impl Workspace {
                     .child(
                         div()
                             .flex_1()
-                            .child(Input::new(&self.paper_waiver_field).small()),
+                            .child(super::surfaces::input(&self.paper_waiver_field, cx).small()),
                     )
                     .child(
                         Button::new(("paper-waiver-save", index))
@@ -1297,7 +1284,6 @@ impl Workspace {
         let mut section = div().v_flex().gap_1().pt_1().child(
             div()
                 .text_xs()
-                .font_weight(FontWeight::MEDIUM)
                 .child(crate::i18n::fill(title, &[&findings.len()])),
         );
         for (index, finding) in findings.iter().enumerate() {
@@ -1323,7 +1309,7 @@ impl Workspace {
                 div()
                     .h_flex()
                     .gap_2()
-                    .child(chip(papers::verdict(check), tone, cx))
+                    .child(super::surfaces::status(papers::verdict(check), tone, cx))
                     .child(div().text_xs().text_color(muted).child(crate::i18n::fill(
                         tr("Evidence level: {}"),
                         &[&papers::level_label(check.level)],
@@ -1512,12 +1498,10 @@ impl Workspace {
         let muted = cx.theme().muted_foreground;
         let mut records = div().v_flex().gap_2().pt_2();
         if !paper.reruns.is_empty() {
-            let mut section = div().v_flex().gap_1().child(
-                div()
-                    .text_xs()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Reproduction reports")),
-            );
+            let mut section = div()
+                .v_flex()
+                .gap_1()
+                .child(div().text_xs().child(tr("Reproduction reports")));
             for rerun in &paper.reruns {
                 let mut entry = div()
                     .v_flex()
@@ -1535,7 +1519,7 @@ impl Workspace {
                         div()
                             .h_flex()
                             .gap_2()
-                            .child(chip(
+                            .child(surfaces::status(
                                 if output.passed {
                                     tr("Matches")
                                 } else {
@@ -1570,12 +1554,10 @@ impl Workspace {
             records = records.child(section);
         }
         if !paper.capsules.is_empty() {
-            let mut section = div().v_flex().gap_1().child(
-                div()
-                    .text_xs()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Capsule builds")),
-            );
+            let mut section = div()
+                .v_flex()
+                .gap_1()
+                .child(div().text_xs().child(tr("Capsule builds")));
             for capsule in &paper.capsules {
                 let mut entry = div()
                     .v_flex()
@@ -1640,11 +1622,13 @@ impl Workspace {
                     cx.notify();
                 })),
             )
-            .child(div().w(px(64.)).flex_shrink_0().child(chip(
-                papers::source_kind_label(source.kind),
-                Tone::Active,
-                cx,
-            )))
+            // Its kind as a faded fact: a tag, not a status.
+            .child(
+                div()
+                    .w(px(64.))
+                    .flex_shrink_0()
+                    .child(surfaces::fact(papers::source_kind_label(source.kind), cx)),
+            )
             .child(
                 div()
                     .flex_1()
@@ -1653,7 +1637,7 @@ impl Workspace {
                     .text_xs()
                     .child(papers::source_line(source)),
             )
-            .child(chip(
+            .child(surfaces::status(
                 papers::selection_label(source.selection),
                 match source.selection {
                     PaperSelection::Selected => Tone::Success,
@@ -1708,12 +1692,7 @@ impl Workspace {
             .p_2()
             .rounded(cx.theme().radius)
             .bg(cx.theme().muted)
-            .child(
-                div()
-                    .text_xs()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Analysis source")),
-            );
+            .child(div().text_xs().child(tr("Analysis source")));
         for (heading, value) in papers::lineage_chain(source) {
             details = details.child(
                 div()
@@ -1734,7 +1713,6 @@ impl Workspace {
             div()
                 .pt_1()
                 .text_xs()
-                .font_weight(FontWeight::MEDIUM)
                 .child(tr("Source and environment details")),
         );
         details = details.child(
@@ -1764,12 +1742,12 @@ impl Workspace {
     fn paper_item_row(&self, paper: &Paper, item: &PaperItem, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let version = paper.shown.clone();
-        let mut words = div().v_flex().flex_1().min_w_0().gap_1().child(
-            div()
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .child(item.title.clone()),
-        );
+        let mut words = div()
+            .v_flex()
+            .flex_1()
+            .min_w_0()
+            .gap_1()
+            .child(div().text_sm().child(item.title.clone()));
         if !item.note.is_empty() {
             words = words.child(div().text_xs().text_color(muted).child(item.note.clone()));
         }
@@ -1822,11 +1800,14 @@ impl Workspace {
                             })),
                     )
                     .child(
-                        Button::new(SharedString::from(format!("paper-item-remove-{}", item.id)))
-                            .label(tr("Remove"))
-                            .small()
-                            .ghost()
-                            .on_click(cx.listener(move |this, _, window, cx| {
+                        super::surfaces::danger_action(
+                            SharedString::from(format!("paper-item-remove-{}", item.id)),
+                            "trash",
+                            tr("Remove"),
+                            cx,
+                        )
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
                                 let Some(project) = this.state.project.clone() else {
                                     return;
                                 };
@@ -1836,7 +1817,8 @@ impl Workspace {
                                     removed.clone(),
                                 );
                                 this.change_paper(reply, window, cx);
-                            })),
+                            },
+                        )),
                     ),
             );
         }
@@ -1866,61 +1848,64 @@ impl Workspace {
                         })),
                 );
         } else {
+            // The main action is an icon and a word, outlined; the rest
+            // are icon buttons, Remove last in the danger colour.
             if paper.editable && !self.layers.contains(Layer::PaperFinalize) {
                 actions = actions.child(
-                    Button::new("paper-finalize")
-                        .icon(glyph("lock"))
-                        .label(tr("Finalize…"))
-                        .small()
-                        .ghost()
+                    surfaces::outlined_action("paper-finalize", "lock", tr("Finalize…"), cx)
                         .on_click(cx.listener(|this, _, _, cx| this.open_paper_finalize(cx))),
                 );
             }
             if papers::shown_is_finalized(paper) {
                 actions = actions.child(
-                    Button::new("paper-capsule")
-                        .icon(glyph("download"))
-                        .label(tr("Build capsule…"))
-                        .small()
-                        .ghost()
-                        .disabled(self.paper_capsule_saving)
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.save_paper_capsule(window, cx)),
-                        ),
+                    surfaces::icon_action(
+                        "paper-capsule",
+                        "download",
+                        tr("Build capsule…"),
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .disabled(self.paper_capsule_saving)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.save_paper_capsule(window, cx)),
+                    ),
                 );
             }
             if !paper.shown.is_empty() {
                 actions = actions.child(
-                    Button::new("paper-new-version")
-                        .icon(glyph("note-plus"))
-                        .label(tr("New version"))
-                        .small()
-                        .ghost()
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.new_paper_version(window, cx)),
-                        ),
+                    surfaces::icon_action(
+                        "paper-new-version",
+                        "history",
+                        tr("New version"),
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.new_paper_version(window, cx)),
+                    ),
                 );
             }
             actions = actions
                 .child(
-                    Button::new("paper-rename")
-                        .label(tr("Rename"))
-                        .small()
-                        .ghost()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_paper_form(true, window, cx)
-                        })),
+                    surfaces::icon_action(
+                        "paper-rename",
+                        "edit",
+                        tr("Rename"),
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.open_paper_form(true, window, cx)),
+                    ),
                 )
                 .child(
-                    Button::new("paper-remove")
-                        .label(tr("Remove"))
-                        .small()
-                        .ghost()
-                        .on_click(cx.listener(|this, _, _, cx| {
+                    surfaces::danger_action("paper-remove", "trash", tr("Remove"), cx).on_click(
+                        cx.listener(|this, _, _, cx| {
                             this.close_paper_forms();
                             this.layers.open(Layer::ConfirmRemovePaper);
                             cx.notify();
-                        })),
+                        }),
+                    ),
                 );
         }
         let mut heading = div()
@@ -1937,20 +1922,24 @@ impl Workspace {
                     .child(paper.description.clone()),
             );
         }
-        let mut versions = div().h_flex().flex_wrap().gap_1();
-        for version in &paper.versions {
-            let (id, target) = (paper.id.clone(), version.id.clone());
-            versions = versions.child(
-                Button::new(SharedString::from(format!("paper-version-{}", version.id)))
-                    .label(papers::version_label(version))
-                    .small()
-                    .selected(version.id == paper.shown)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.close_paper_forms();
-                        this.show_paper(id.clone(), Some(target.clone()), window, cx)
-                    })),
-            );
-        }
+        // Its versions, one of which is shown: a segmented choice.
+        let versions = surfaces::segmented(
+            paper.versions.iter().map(|version| {
+                let (id, target) = (paper.id.clone(), version.id.clone());
+                surfaces::plain_segment(
+                    SharedString::from(format!("paper-version-{}", version.id)),
+                    papers::version_label(version),
+                    version.id == paper.shown,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.close_paper_forms();
+                    this.show_paper(id.clone(), Some(target.clone()), window, cx)
+                }))
+                .into_any_element()
+            }),
+            cx,
+        );
         let mut body = div()
             .v_flex()
             .gap_2()
@@ -2034,13 +2023,15 @@ impl Workspace {
         if paper.editable && !self.layers.contains(Layer::PaperItemForm) {
             body = body.child(
                 div().pt_2().h_flex().child(
-                    Button::new("paper-item-add")
-                        .icon(glyph("plus"))
-                        .label(tr("Add a figure, table or claim"))
-                        .small()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_paper_item_form(None, window, cx)
-                        })),
+                    surfaces::outlined_action(
+                        "paper-item-add",
+                        "plus",
+                        tr("Add a figure, table or claim"),
+                        cx,
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_paper_item_form(None, window, cx)
+                    })),
                 ),
             );
         }
@@ -2073,7 +2064,24 @@ impl Workspace {
                 nav_row("papers-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_papers(window, cx))),
             )
-            .child(surfaces::title(tr("Paper evidence")).px_2().pt_3())
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .pt_3()
+                    .child(surfaces::title(tr("Paper evidence")))
+                    // What the page is for, a tooltip away.
+                    .child(surfaces::help(
+                        "papers-help",
+                        tr(
+                            "The papers this project is writing: each figure, table and claim kept \
+                 together with the results and runs it rests on.",
+                        ),
+                        cx,
+                    )),
+            )
             .child(
                 div()
                     .px_2()
@@ -2083,27 +2091,17 @@ impl Workspace {
                     .text_color(muted)
                     .child(project_name),
             )
-            .child(div().px_2().pb_2().text_xs().text_color(muted).child(tr(
-                "The papers this project is writing: each figure, table and claim kept \
-                 together with the results and runs it rests on.",
-            )))
-            .child(
-                div().px_1().pb_2().child(
-                    Button::new("paper-new")
-                        .icon(glyph("plus"))
-                        .label(tr("New paper"))
-                        .small()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_paper_form(false, window, cx)
-                        })),
+            .child(div().px_1().pt_1().pb_2().child(
+                surfaces::outlined_action("paper-new", "plus", tr("New paper"), cx).on_click(
+                    cx.listener(|this, _, window, cx| this.open_paper_form(false, window, cx)),
                 ),
-            );
+            ));
         for paper in &self.papers {
             let id = paper.id.clone();
             side = side.child(
                 nav_row(
                     SharedString::from(format!("paper-{}", paper.id)),
-                    "doc",
+                    "book",
                     paper.title.clone(),
                     showing == Some(paper.id.as_str()),
                     true,
@@ -2116,15 +2114,14 @@ impl Workspace {
             );
         }
 
+        // The paper in a reading column centred in the page.
         let mut body = div()
-            .id("papers-body")
             .v_flex()
-            .flex_1()
-            .min_w_0()
-            .h_full()
+            .w_full()
+            .max_w(px(surfaces::READING_WIDTH))
+            .mx_auto()
             .p_6()
-            .gap_3()
-            .overflow_y_scroll();
+            .gap_3();
         if let Some(error) = &self.error {
             body = body.child(error_banner(error, cx));
         }
@@ -2146,6 +2143,14 @@ impl Workspace {
                 ))),
             None => body,
         };
-        div().h_flex().size_full().child(side).child(body)
+        div().h_flex().size_full().child(side).child(
+            div()
+                .id("papers-body")
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .overflow_y_scroll()
+                .child(body),
+        )
     }
 }

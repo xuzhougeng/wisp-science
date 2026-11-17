@@ -14,8 +14,9 @@ use gpui_component::{
 use wisp_server::desktop::BatchAction;
 
 use super::{
-    Workspace, chip,
+    Workspace,
     shell::{glyph, icon_button},
+    surfaces,
 };
 use crate::{
     assets::icon,
@@ -698,74 +699,143 @@ impl Workspace {
                 );
         }
         let sorting = self.layers.contains(Layer::SortMenu);
-        let mut heading = heading.child(div().flex_1().text_xs().text_color(muted).child(
-            if self.show_archived {
-                tr("Archived")
+        let listing = self.layers.contains(Layer::ListMenu);
+        // The list's name is its icon and its count; the words are the
+        // tooltip.
+        let (glyph_name, name) = if self.show_archived {
+            ("inbox", tr("Archived"))
+        } else {
+            ("chat", tr("Conversations"))
+        };
+        let count = self.sessions.len();
+        let tone = |on: bool| {
+            if on {
+                surfaces::IconTone::Ink
             } else {
-                tr("Conversations")
-            },
-        ));
+                surfaces::IconTone::Faded
+            }
+        };
+        let mut heading = heading.child(
+            div()
+                .id("list-heading")
+                .h_flex()
+                .flex_1()
+                .items_center()
+                .gap_1p5()
+                .tooltip(move |window, cx| {
+                    gpui_component::tooltip::Tooltip::new(name).build(window, cx)
+                })
+                .child(surfaces::sized_icon(
+                    glyph_name,
+                    surfaces::IconSize::Inline,
+                    surfaces::IconTone::Faded,
+                    cx,
+                ))
+                .child(surfaces::fact(count.to_string(), cx)),
+        );
+        // Three shown, by how often they are needed: a new group, sorting
+        // and grouping, selecting several; the rest in More.
         if !self.show_archived {
             heading = heading.child(
-                icon_button("new-group", "folder-plus", tr("New group"))
-                    .xsmall()
-                    .disabled(disabled)
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.begin_folder_name(None, window, cx)),
-                    ),
-            );
-            heading = heading.child(
-                icon_button(
-                    "import-conversations",
-                    "conversation-import",
-                    "Import from Codex or Claude Code",
+                surfaces::icon_action(
+                    "new-group",
+                    "grid",
+                    tr("New group"),
+                    surfaces::IconTone::Faded,
+                    cx,
                 )
-                .xsmall()
                 .disabled(disabled)
-                .on_click(cx.listener(|this, _, window, cx| this.open_imports(window, cx))),
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.begin_folder_name(None, window, cx)),
+                ),
             );
         }
-        heading =
-            heading
-                .child(
-                    icon_button("select", "check-square", tr("Select conversations"))
-                        .xsmall()
-                        .disabled(disabled || self.sessions.is_empty())
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_select_mode(cx))),
-                )
-                .child(
-                    icon_button("sort", "adjustments", tr("Sort and group"))
-                        .xsmall()
-                        .selected(sorting)
-                        .on_click(cx.listener(|this, _, _, cx| {
+        heading = heading
+            .child(
+                surfaces::icon_action("sort", "sort", tr("Sort and group"), tone(sorting), cx)
+                    .on_click(
+                        cx.listener(|this, _, _, cx| {
                             this.toggle_sidebar_layer(Layer::SortMenu, cx)
-                        })),
+                        }),
+                    ),
+            )
+            .child(
+                surfaces::icon_action(
+                    "select",
+                    "check",
+                    tr("Select conversations"),
+                    surfaces::IconTone::Faded,
+                    cx,
                 )
-                .child(
-                    icon_button(
-                        "archive-view",
-                        "archive",
-                        if self.show_archived {
-                            tr("Back to conversations")
-                        } else {
-                            tr("Archived conversations")
-                        },
-                    )
-                    .xsmall()
-                    .selected(self.show_archived)
-                    .disabled(disabled)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.show_archived = !this.show_archived;
-                        this.sessions.clear();
-                        this.picks.clear();
-                        this.load_sessions(window, cx);
-                        cx.notify();
-                    })),
-                );
+                .disabled(disabled || self.sessions.is_empty())
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_select_mode(cx))),
+            )
+            .child(
+                surfaces::icon_action(
+                    "list-more",
+                    "more",
+                    tr("More for the conversations"),
+                    tone(listing),
+                    cx,
+                )
+                .on_click(
+                    cx.listener(|this, _, _, cx| this.toggle_sidebar_layer(Layer::ListMenu, cx)),
+                ),
+            );
         if sorting {
             heading = heading.child(deferred(self.sort_menu(cx)));
         }
+        if listing {
+            heading = heading.child(deferred(self.list_menu(disabled, cx)));
+        }
         heading
+    }
+
+    /// The rest of the conversation list's heading actions, under its More:
+    /// importing conversations, and the archived ones. Each an icon and a
+    /// word.
+    fn list_menu(&self, disabled: bool, cx: &mut Context<Self>) -> Div {
+        let mut menu = popup(250., cx).top(px(34.)).right(px(4.));
+        if !self.show_archived {
+            let mut import = Self::menu_item(
+                "import-conversations",
+                "conversation-import",
+                tr("Import from Codex or Claude Code"),
+                cx,
+            );
+            import = if disabled {
+                import.opacity(0.5).cursor_default()
+            } else {
+                import.on_click(cx.listener(|this, _, window, cx| {
+                    this.layers.close(Layer::ListMenu);
+                    this.open_imports(window, cx)
+                }))
+            };
+            menu = menu.child(import);
+        }
+        let mut archived = Self::menu_item(
+            "archive-view",
+            "inbox",
+            if self.show_archived {
+                tr("Back to conversations")
+            } else {
+                tr("Archived conversations")
+            },
+            cx,
+        );
+        archived = if disabled {
+            archived.opacity(0.5).cursor_default()
+        } else {
+            archived.on_click(cx.listener(|this, _, window, cx| {
+                this.layers.close(Layer::ListMenu);
+                this.show_archived = !this.show_archived;
+                this.sessions.clear();
+                this.picks.clear();
+                this.load_sessions(window, cx);
+                cx.notify();
+            }))
+        };
+        menu.child(archived)
     }
 
     /// The name field of a new group or of one being renamed.
@@ -855,11 +925,10 @@ impl Workspace {
                         .min_w_0()
                         .truncate()
                         .text_xs()
-                        .font_weight(FontWeight::MEDIUM)
                         .text_color(muted)
                         .child(label.to_owned()),
                 )
-                .child(div().text_xs().text_color(muted).child(count.to_string()))
+                .child(surfaces::fact(count.to_string(), cx))
                 .on_click(cx.listener(move |this, _, _, cx| this.toggle_section(&section, cx))),
         );
         if let Some(folder) = folder {
@@ -999,7 +1068,12 @@ impl Workspace {
             .flex_shrink_0()
             .rounded(cx.theme().radius)
             .text_sm()
-            .when(open && !selecting, |row| row.bg(accent))
+            .border_1()
+            .border_color(cx.theme().transparent)
+            // The open one is white with a hairline.
+            .when(open && !selecting, |row| {
+                row.bg(cx.theme().popover).border_color(cx.theme().border)
+            })
             .when(picked, |row| row.bg(accent.opacity(0.6)));
         if selecting {
             row = row.child(if picked {
@@ -1018,8 +1092,24 @@ impl Workspace {
                 .truncate()
                 .child(crate::present::one_line(&session.title)),
         );
-        if let Some((label, tone)) = present::session_badge(session, self.pinned.contains(&id)) {
-            row = row.child(chip(label, tone, cx));
+        // Its state is an icon alone in the state's colour, the word its
+        // tooltip, so the title keeps its room.
+        if let Some((glyph_name, word, tone)) =
+            present::session_mark(session, self.pinned.contains(&id))
+        {
+            let colour = match surfaces::StampKind::from_tone(tone) {
+                Some(kind) => surfaces::stamp_color(kind, cx),
+                None => cx.theme().muted_foreground,
+            };
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("session-mark-{id}")))
+                    .flex_none()
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(word).build(window, cx)
+                    })
+                    .child(icon(glyph_name).text_color(colour)),
+            );
         }
         if !self.pending {
             row = row
@@ -1256,6 +1346,7 @@ impl Workspace {
     /// A row of the conversation's menu that opens another menu beside it.
     fn submenu_row(
         id: &'static str,
+        icon_name: &'static str,
         label: &'static str,
         layer: Layer,
         open: bool,
@@ -1263,7 +1354,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let hover = cx.theme().list_hover;
-        let row = Self::menu_row(id.into(), label, "", false, cx)
+        let row = Self::menu_item(id, icon_name, label, cx)
             .child(icon("chevron-right").text_color(cx.theme().muted_foreground))
             .when(open, |row| row.bg(hover));
         if disabled {
@@ -1278,6 +1369,7 @@ impl Workspace {
         let open = self.layers.contains(Layer::GroupMenu);
         let mut button = div().relative().child(Self::submenu_row(
             "conversation-group",
+            "grid",
             tr("Group"),
             Layer::GroupMenu,
             open,
@@ -1305,6 +1397,7 @@ impl Workspace {
         let open = self.layers.contains(Layer::TransferMenu);
         let mut button = div().relative().child(Self::submenu_row(
             "conversation-transfer",
+            "conversation-move",
             tr("Move"),
             Layer::TransferMenu,
             open,
@@ -1341,11 +1434,13 @@ impl Workspace {
         );
         // A move waiting for its artifacts' preview to be confirmed.
         if let Some((_, name, preview)) = &self.transfer_preview {
-            let mut confirm = div().v_flex().gap_1().px_2().py_1().text_xs().child(
-                div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(crate::i18n::fill(tr("Move to {}"), &[name])),
-            );
+            let mut confirm = div()
+                .v_flex()
+                .gap_1()
+                .px_2()
+                .py_1()
+                .text_xs()
+                .child(div().child(crate::i18n::fill(tr("Move to {}"), &[name])));
             for line in crate::organise::move_preview_lines(preview) {
                 confirm = confirm.child(div().text_color(muted).child(line));
             }

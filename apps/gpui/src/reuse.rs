@@ -83,9 +83,9 @@ impl Selection {
 /// here once a range was started; its icon and its name.
 pub fn action(selecting: bool) -> (&'static str, &'static str) {
     if selecting {
-        ("check-square", tr("End quote here"))
+        ("check", tr("End quote here"))
     } else {
-        ("list", tr("Quote / reuse"))
+        ("square-pen", tr("Quote / reuse"))
     }
 }
 
@@ -361,8 +361,8 @@ mod tests {
 
     #[test]
     fn the_action_says_whether_it_starts_or_ends_the_range() {
-        assert_eq!(action(false), ("list", "Quote / reuse"));
-        assert_eq!(action(true), ("check-square", "End quote here"));
+        assert_eq!(action(false), ("square-pen", "Quote / reuse"));
+        assert_eq!(action(true), ("check", "End quote here"));
     }
 
     #[test]

@@ -18,7 +18,7 @@ pub(super) fn meter(progress: &wisp_dto::RunProgress, cx: &App) -> Div {
         .h_flex()
         .gap_2()
         .text_xs()
-        .child(div().font_semibold().child(shown.phase));
+        .child(div().child(shown.phase));
     if let Some(file) = shown.file {
         head = head.child(div().min_w_0().truncate().text_color(muted).child(file));
     }
@@ -64,7 +64,6 @@ impl Workspace {
                     div()
                         .flex_1()
                         .text_xs()
-                        .font_weight(FontWeight::MEDIUM)
                         .child(fill(tr("Transfers ({})"), &[&shown.len()])),
                 )
                 .child(

@@ -14,10 +14,10 @@
 //! one draft, wherever it is edited.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
-use gpui_component::{ActiveTheme, Selectable, Sizable, StyledExt};
+use gpui_component::{ActiveTheme, Selectable, StyledExt};
 
-use super::{Workspace, shell::icon_button};
-use crate::{assets::icon, centre, layers::Layer};
+use super::{Workspace, shell::icon_button, surfaces};
+use crate::{centre, layers::Layer};
 
 /// What is dragged when the divider between the document and the
 /// conversation moves.
@@ -269,8 +269,6 @@ impl Workspace {
         else {
             return Vec::new();
         };
-        let muted = cx.theme().muted_foreground;
-        let accent = cx.theme().accent;
         let shown = documents.shown();
         let mut tabs = Vec::new();
         for (index, document) in documents.tabs().iter().enumerate() {
@@ -281,45 +279,35 @@ impl Workspace {
                 document.path.clone(),
             );
             let full = SharedString::from(document.path.clone());
-            let mut tab = div()
-                .id(("centre-tab", index))
-                .relative()
-                .h_flex()
-                .flex_shrink_0()
-                .gap_1()
-                .pl_3()
-                .pr_1()
-                .h(px(30.))
-                .max_w(px(220.))
-                .rounded_t(cx.theme().radius)
-                .text_sm()
-                .tooltip(move |window, cx| {
-                    gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
-                })
-                .when(selected, |tab| tab.bg(accent))
-                .when(!selected, |tab| {
-                    tab.text_color(muted)
-                        .cursor_pointer()
-                        .hover(|tab| tab.bg(accent.opacity(0.5)))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.show_centre(Some(opened.clone()), window, cx)
-                        }))
-                })
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, _, _, cx| this.open_centre_menu(asked.clone(), cx)),
-                )
-                .child(icon("doc").text_color(muted))
-                .child(div().min_w_0().truncate().child(document.name().to_owned()))
-                .child(
-                    icon_button(("centre-tab-close", index), "close", "Close tab")
-                        .xsmall()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            // Not a click on the tab underneath.
-                            cx.stop_propagation();
-                            this.close_centre_tab(closed.clone(), window, cx)
-                        })),
-                );
+            let mut tab = surfaces::window_tab(
+                ("centre-tab", index),
+                "doc",
+                document.name().to_owned(),
+                selected,
+                cx,
+            )
+            .relative()
+            .tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
+            })
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _, _, cx| this.open_centre_menu(asked.clone(), cx)),
+            )
+            .child(
+                surfaces::tab_close(("centre-tab-close", index), tr("Close tab"), cx).on_click(
+                    cx.listener(move |this, _, window, cx| {
+                        // Not a click on the tab underneath.
+                        cx.stop_propagation();
+                        this.close_centre_tab(closed.clone(), window, cx)
+                    }),
+                ),
+            );
+            if !selected {
+                tab = tab.on_click(cx.listener(move |this, _, window, cx| {
+                    this.show_centre(Some(opened.clone()), window, cx)
+                }));
+            }
             if self.layers.contains(Layer::CentreTabMenu)
                 && self.centre_menu.as_deref() == Some(document.path.as_str())
             {

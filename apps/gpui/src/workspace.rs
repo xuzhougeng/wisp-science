@@ -88,6 +88,7 @@ use std::{
 
 actions!(composer, [SendMessage]);
 pub use file_editor_view::file_editor_bindings;
+pub use surfaces::window_titlebar;
 
 /// The composer's own keys, bound after the input component's so they win
 /// where both apply: with the Return choice, Return sends and Shift+Return
@@ -179,6 +180,8 @@ pub struct Workspace {
     turn_tokens: Vec<wisp_server::desktop::TurnTokens>,
     /// Transcript row whose text was just copied, for a moment of feedback.
     copied: Option<usize>,
+    /// The message whose More menu is open (`Layer::MessageMenu`).
+    message_menu: Option<usize>,
     palette: PaletteState,
     palette_input: Entity<InputState>,
     /// The overview of what the open project can draw on, once read, and
@@ -410,6 +413,9 @@ pub struct Workspace {
     centre_menu: Option<String>,
     /// How wide the split centre was when last drawn, for its widths.
     centre_width: std::rc::Rc<std::cell::Cell<Option<f32>>>,
+    /// The side panel's width as last drawn, for how many tabs its strip
+    /// shows.
+    panel_width: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     /// The SSH host folder the Files tab is looking at, instead of the
     /// project's own files.
     remote: Option<crate::files::RemoteBrowse>,
@@ -1735,6 +1741,7 @@ impl Workspace {
             artifact_open: None,
             artifact_versions: HashMap::new(),
             copied: None,
+            message_menu: None,
             palette: PaletteState::default(),
             palette_input,
             find: Default::default(),
@@ -1866,6 +1873,7 @@ impl Workspace {
             centre: Default::default(),
             centre_menu: None,
             centre_width: std::rc::Rc::default(),
+            panel_width: std::rc::Rc::default(),
             remote: None,
             run_logs: HashMap::new(),
             open_search: None,
@@ -2207,7 +2215,9 @@ impl Workspace {
                 self.ensure_files(window, cx);
             }
             Some(Layer::FilesPanel) => self.restore_focus(window, cx),
-            Some(Layer::PanelTabMenu) => {}
+            Some(Layer::PanelTabMenu | Layer::StartMenu | Layer::FilesMenu) => {}
+            Some(Layer::MessageMenu) => self.message_menu = None,
+            Some(Layer::Inbox) => {}
             Some(Layer::ConfirmCleanRun) => self.run_cleaning = None,
             Some(Layer::HostStorageForm) => self.storage_host = None,
             Some(Layer::RemotePreview) => self.close_remote_look(),
@@ -2239,7 +2249,8 @@ impl Workspace {
                 | Layer::RunsOnMenu
                 | Layer::ExpertMenu
                 | Layer::AgentMenu
-                | Layer::QuickMenu,
+                | Layer::QuickMenu
+                | Layer::PlusMenu,
             ) => self.focus_composer(window, cx),
             Some(Layer::SlashMenu) => {
                 // Shut while a word follows the `/`, it stays shut.
@@ -2458,6 +2469,7 @@ impl Workspace {
             // Menus and questions that hold no focus of their own.
             Some(
                 Layer::SortMenu
+                | Layer::ListMenu
                 | Layer::BatchGroupMenu
                 | Layer::ConfirmBatchDelete
                 | Layer::GroupMenu
@@ -2737,7 +2749,9 @@ impl Workspace {
             Layer::AgentMenu,
             Layer::AcpSettingMenu,
             Layer::QuickMenu,
+            Layer::PlusMenu,
             Layer::SlashMenu,
+            Layer::MessageMenu,
             Layer::Find,
             Layer::Outline,
             Layer::Trajectory,
@@ -2973,6 +2987,8 @@ impl Workspace {
         self.state
             .save_draft(self.composer.read(cx).value().to_string());
         self.layers.close(Layer::FilesPanel);
+        // What waits was opened from the project's bar.
+        self.layers.close(Layer::Inbox);
         self.choose(None, None);
         self.sessions.clear();
         self.pinned.clear();
@@ -4871,9 +4887,13 @@ impl Render for Workspace {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground);
         if !self.ready {
-            return root.child(self.render_startup(cx));
+            let bar = surfaces::window_bar(None, window, cx);
+            return root.child(surfaces::window_frame(bar, self.render_startup(cx)));
         }
-        // A page takes the whole window; of two, the one opened last shows.
+        // A page takes the whole window under its bar; of two, the one
+        // opened last shows. The home page's top bar and a project's tabs
+        // and actions are in the window's bar; the other pages have a plain
+        // one.
         let page = self.layers.top_of(&[
             Layer::Settings,
             Layer::Favorites,
@@ -4883,36 +4903,43 @@ impl Render for Workspace {
             Layer::Mandates,
             Layer::Calendar,
         ]);
-        let root = if page == Some(Layer::Settings) {
-            root.child(self.render_settings(cx))
+        let mut bar_content = None;
+        let content: AnyElement = if page == Some(Layer::Settings) {
+            self.render_settings(cx).into_any_element()
         } else if page == Some(Layer::Calendar) {
-            root.child(self.render_calendar(cx))
+            self.render_calendar(cx).into_any_element()
         } else if page == Some(Layer::Journey) {
-            root.child(self.render_journey(cx))
+            self.render_journey(cx).into_any_element()
         } else if page == Some(Layer::Papers) {
-            root.child(self.render_papers(cx))
+            self.render_papers(cx).into_any_element()
         } else if page == Some(Layer::Schedules) {
-            root.child(self.render_schedules(cx))
+            self.render_schedules(cx).into_any_element()
         } else if page == Some(Layer::Mandates) {
-            root.child(self.render_mandates(cx))
+            self.render_mandates(cx).into_any_element()
         } else if page == Some(Layer::Favorites) {
-            root.child(self.render_favorites(window, cx))
+            self.render_favorites(window, cx).into_any_element()
         } else {
             match self.screen {
-                Screen::Home => root.child(self.render_home(cx)),
+                Screen::Home => {
+                    bar_content = Some(self.render_home_bar(window, cx).into_any_element());
+                    self.render_home(cx).into_any_element()
+                }
                 Screen::Project => {
+                    bar_content = Some(self.render_project_bar(window, cx).into_any_element());
                     let mut row = div().h_flex().size_full();
                     if !self.sidebar_hidden {
-                        row = row.child(self.render_sidebar(cx));
+                        row = row.child(self.render_sidebar(window, cx));
                     }
                     row = row.child(self.render_conversation(window, cx));
                     if self.layers.contains(Layer::FilesPanel) {
                         row = row.child(self.render_files(window, cx));
                     }
-                    root.child(row)
+                    row.into_any_element()
                 }
             }
         };
+        let bar = surfaces::window_bar(bar_content, window, cx);
+        let root = root.child(surfaces::window_frame(bar, content));
         // Conversations of other projects that finished, in a corner over
         // the page and under the dialogs.
         let root = root.children(self.render_session_notices(cx));

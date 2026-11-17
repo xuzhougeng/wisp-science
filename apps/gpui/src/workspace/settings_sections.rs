@@ -4,9 +4,9 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::{Input, InputState},
+    input::InputState,
 };
 use wisp_server::desktop::TurnDefaults;
 
@@ -50,50 +50,211 @@ const LAST_OPEN: &str = "last_open";
 /// make it again.
 static CHECKED_AT_START: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// How wide a setting's name and note are, and the page that holds them.
-const NOTE_WIDTH: f32 = 460.;
-const PAGE_WIDTH: f32 = 720.;
-
 /// Steps one turn may take; the host's range.
 const STEPS: std::ops::RangeInclusive<usize> = 1..=1_000;
 
-/// A setting: its name and what it does on the left, its control on the right.
+/// A setting, the one row shape of every settings page: its name in ink
+/// and, where the name alone is not enough, one faded note under it, on
+/// the left; its control on the right, centred on the row; a hairline
+/// under it. Name and note are the same, regular weight.
 pub(super) fn setting(
     title: &'static str,
     note: impl Into<SharedString>,
     control: impl IntoElement,
     cx: &App,
 ) -> Div {
+    let note: SharedString = note.into();
+    item_row(
+        SharedString::from(tr(title)),
+        (!note.trim().is_empty()).then(|| surfaces::settings_note(note, cx).into_any_element()),
+        control,
+        cx,
+    )
+}
+
+/// `setting` whose name is followed by a `help` icon: the note stays one
+/// short line (or none), the rest of what it says is the icon's tooltip.
+pub(super) fn explained_setting(
+    title: &'static str,
+    note: impl Into<SharedString>,
+    explained: impl Into<SharedString>,
+    control: impl IntoElement,
+    cx: &App,
+) -> Div {
+    let note: SharedString = note.into();
+    item_row(
+        div()
+            .h_flex()
+            .items_center()
+            .gap_1()
+            .child(tr(title))
+            .child(surfaces::help(
+                SharedString::from(format!("help-{title}")),
+                explained,
+                cx,
+            )),
+        (!note.trim().is_empty()).then(|| surfaces::settings_note(note, cx).into_any_element()),
+        control,
+        cx,
+    )
+}
+
+/// A setting whose control needs the column's width (a long text, a group
+/// of chips): its name and note on top, the control under them, a hairline
+/// under it all.
+pub(super) fn stacked_setting(
+    title: &'static str,
+    note: impl Into<SharedString>,
+    control: impl IntoElement,
+    cx: &App,
+) -> Div {
+    let note: SharedString = note.into();
+    div()
+        .v_flex()
+        .gap_2()
+        .py_3()
+        .border_b_1()
+        .border_color(cx.theme().border)
+        .child(
+            div()
+                .v_flex()
+                .gap_0p5()
+                .child(div().text_sm().child(title))
+                .when(!note.trim().is_empty(), |text| {
+                    text.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(note),
+                    )
+                }),
+        )
+        .child(control)
+}
+
+/// The row shape of `setting` for an item of a list whose name is data (a
+/// skill, a connector): its name in ink, what is under it faded, its
+/// controls at the right.
+fn item_row(
+    name: impl IntoElement,
+    under: Option<AnyElement>,
+    control: impl IntoElement,
+    cx: &App,
+) -> Div {
     div()
         .h_flex()
-        .items_start()
+        .items_center()
         .justify_between()
         .gap_6()
         .py_3()
         .border_b_1()
         .border_color(cx.theme().border)
         .child(
-            // A fixed measure: the note wraps to it whatever the control
-            // beside it needs.
             div()
                 .v_flex()
-                .w(px(NOTE_WIDTH))
-                .flex_shrink_0()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(tr(title)),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(note.into()),
-                ),
+                .flex_1()
+                .min_w_0()
+                .gap_0p5()
+                .child(div().text_sm().child(name))
+                .children(under),
         )
-        .child(div().flex_shrink_0().child(control))
+        .child(div().flex_shrink_0().max_w(relative(0.6)).child(control))
+}
+
+/// A count with a step down and a step up in one segmented box: `minus` |
+/// the value as a fact | `plus`. A step that cannot be taken now has no
+/// handler and is faded.
+fn count_stepper(
+    id: &'static str,
+    value: String,
+    down: (
+        &'static str,
+        Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    ),
+    up: (
+        &'static str,
+        Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    ),
+    cx: &App,
+) -> Div {
+    let end = |part: &'static str,
+               icon_name: &'static str,
+               (tip, run): (
+        &'static str,
+        Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    )| {
+        let live = run.is_some();
+        surfaces::pressable(SharedString::from(format!("{id}-{part}")))
+            .group(surfaces::ICON_HOVER)
+            .h_flex()
+            .items_center()
+            .justify_center()
+            .w(px(surfaces::ICON_BUTTON))
+            .h(px(26.))
+            .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip).build(window, cx))
+            .when(!live, |end| end.opacity(0.4))
+            .when_some(run, |end, run| {
+                let hover = cx.theme().list_hover;
+                end.cursor_pointer()
+                    .hover(move |style| style.bg(hover))
+                    .on_click(move |event, window, cx| run(event, window, cx))
+            })
+            .child(surfaces::sized_icon(
+                icon_name,
+                surfaces::IconSize::Inline,
+                surfaces::IconTone::Faded,
+                cx,
+            ))
+            .into_any_element()
+    };
+    surfaces::segmented(
+        [
+            end("down", "minus", down),
+            div()
+                .h_flex()
+                .items_center()
+                .justify_center()
+                .min_w(px(44.))
+                .px_2()
+                .h(px(26.))
+                .child(surfaces::fact(value, cx).text_color(cx.theme().foreground))
+                .into_any_element(),
+            end("up", "plus", up),
+        ],
+        cx,
+    )
+}
+
+/// A control with the detail a setting's note leaves out as its tooltip.
+fn tipped(id: &'static str, tip: &'static str, control: impl IntoElement) -> Stateful<Div> {
+    div()
+        .id(id)
+        .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip).build(window, cx))
+        .child(control)
+}
+
+/// A wrapping group of model chips, kept to the right of its row.
+fn model_chips() -> Div {
+    div()
+        .h_flex()
+        .flex_wrap()
+        .justify_end()
+        .gap_1()
+        .max_w(px(380.))
+}
+
+/// A search field across the column: white, a search icon before it.
+fn search_field(state: &Entity<InputState>, cx: &App) -> Div {
+    div().py_3().w_full().child(
+        surfaces::input(state, cx)
+            .small()
+            .prefix(surfaces::sized_icon(
+                "search",
+                surfaces::IconSize::Inline,
+                surfaces::IconTone::Faded,
+                cx,
+            )),
+    )
 }
 
 impl Workspace {
@@ -388,76 +549,85 @@ impl Workspace {
     /// The open project's approval mode, and the tools that have a rule of
     /// their own, on the Permissions page.
     fn approval_settings(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
-        let mut section = div().v_flex().gap_2().pt_4().child(
-            div()
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .child(tr("Tool approval mode")),
-        );
+        let mut section = div().v_flex();
         let Some((project, approvals)) = &self.approvals else {
-            return section.child(
-                div()
-                    .w(px(NOTE_WIDTH))
-                    .text_xs()
-                    .text_color(muted)
-                    .child(tr("Open a project to choose how its tools are approved.")),
-            );
+            return section.child(setting(
+                tr("Tool approval mode"),
+                tr("Open a project to choose how its tools are approved."),
+                div(),
+                cx,
+            ));
         };
         let name = self
             .projects
             .iter()
             .find(|row| &row.id == project)
             .map_or_else(|| project.clone(), |row| row.name.clone());
-        let mut modes = div().h_flex().gap_1();
-        for (scope, label, _) in settings::APPROVAL_SCOPES {
-            modes = modes.child(
-                Button::new(SharedString::from(format!("approval-scope-{label}")))
-                    .label(tr(label))
-                    .small()
-                    .selected(approvals.scope == scope)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.save_approval_scope(scope, window, cx)
-                    })),
-            );
-        }
-        section = section
-            .child(div().text_xs().text_color(muted).child(crate::i18n::fill(
-                tr("For {}, from the next turn."),
-                &[&name],
-            )))
-            .child(modes)
-            .child(
-                div()
-                    .w(px(NOTE_WIDTH))
-                    .text_xs()
-                    .text_color(muted)
-                    .child(settings::approval_note(approvals.scope)),
-            );
+        let modes = surfaces::segmented(
+            settings::APPROVAL_SCOPES.map(|(scope, label, _)| {
+                surfaces::plain_segment(
+                    SharedString::from(format!("approval-scope-{label}")),
+                    tr(label),
+                    approvals.scope == scope,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.save_approval_scope(scope, window, cx)
+                }))
+                .into_any_element()
+            }),
+            cx,
+        );
+        let note = settings::approval_note(approvals.scope);
+        section = section.child(setting(
+            tr("Tool approval mode"),
+            crate::i18n::fill(tr("For {}, from the next turn."), &[&name]),
+            div()
+                .id("approval-scope")
+                .tooltip(move |window, cx| {
+                    gpui_component::tooltip::Tooltip::new(note.clone()).build(window, cx)
+                })
+                .child(modes),
+            cx,
+        ));
         if !approvals.rules.is_empty() {
-            let mut rules = div().h_flex().flex_wrap().gap_2();
+            let mut rows = Vec::new();
             for (tool, rule) in &approvals.rules {
                 let name = tool.clone();
                 let said = match rule {
                     wisp_server::desktop::ToolRule::Ask => tr("Ask first"),
                     wisp_server::desktop::ToolRule::Deny => tr("Deny"),
                 };
-                rules = rules.child(
-                    Button::new(SharedString::from(format!("tool-rule-{tool}")))
-                        .icon(glyph("close"))
-                        .label(format!("{tool} · {said}"))
-                        .small()
-                        .tooltip(tr("Allow it again"))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.save_tool_rule(name.clone(), None, window, cx)
-                        })),
+                rows.push(
+                    surfaces::record_row(
+                        SharedString::from(format!("tool-rule-{tool}")),
+                        tool.clone(),
+                    )
+                    .icon("wrench")
+                    .mono()
+                    .suffix(said)
+                    .action(
+                        surfaces::icon_action(
+                            SharedString::from(format!("tool-rule-clear-{tool}")),
+                            "close",
+                            tr("Allow it again"),
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.save_tool_rule(name.clone(), None, window, cx)
+                            },
+                        )),
+                    ),
                 );
             }
             section = section
-                .child(div().text_xs().text_color(muted).child(tr(
-                    "Tools with a rule of their own, set on the Connections page:",
-                )))
-                .child(rules);
+                .child(surfaces::settings_heading(
+                    tr("Tools with a rule of their own, set on the Connections page:"),
+                    cx,
+                ))
+                .child(surfaces::record_group(rows, cx));
         }
         section
     }
@@ -469,16 +639,23 @@ impl Workspace {
         let on = approvals.skip.contains(connector);
         let domain = connector.to_owned();
         Some(
-            div().h_flex().child(
-                Button::new(SharedString::from(format!("connector-skip-{connector}")))
-                    .label(tr("Skip approvals"))
-                    .xsmall()
-                    .selected(on)
-                    .tooltip(tr("Its tools run without asking, whatever their rules"))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.save_connector_skip(domain.clone(), !on, window, cx)
-                    })),
-            ),
+            div()
+                .h_flex()
+                .items_center()
+                .gap_2()
+                .child(surfaces::settings_note(tr("Skip approvals"), cx))
+                .child(
+                    switch(
+                        SharedString::from(format!("connector-skip-{connector}")),
+                        on,
+                        tr("Its tools run without asking, whatever their rules"),
+                    )
+                    .on_change(cx.listener(
+                        move |this, value: &bool, window, cx| {
+                            this.save_connector_skip(domain.clone(), *value, window, cx)
+                        },
+                    )),
+                ),
         )
     }
 
@@ -506,39 +683,41 @@ impl Workspace {
         tools: &[String],
         cx: &mut Context<Self>,
     ) -> Div {
-        let mono = cx.theme().mono_font_family.clone();
         let Some((_, approvals)) = &self.approvals else {
-            return div().text_xs().font_family(mono).child(tools.join("  "));
+            return surfaces::fact(tools.join("  "), cx);
         };
         // Skipped, the rules do not apply.
         let skipped = approvals.skip.contains(connector);
         let mut list = div().v_flex().gap_1();
         for tool in tools {
             let current = approvals.rules.get(tool).copied();
-            let mut row = div().h_flex().gap_2().child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_xs()
-                    .font_family(mono.clone())
-                    .child(tool.clone()),
-            );
-            for (rule, label) in settings::TOOL_RULES {
-                let name = tool.clone();
-                row = row.child(
-                    Button::new(SharedString::from(format!("rule-{tool}-{label}")))
-                        .label(tr(label))
-                        .xsmall()
-                        .ghost()
-                        .selected(current == rule)
-                        .disabled(skipped)
-                        .on_click(cx.listener(move |this, _, window, cx| {
+            let rules = surfaces::segmented(
+                settings::TOOL_RULES.map(|(rule, label)| {
+                    let name = tool.clone();
+                    surfaces::plain_segment(
+                        SharedString::from(format!("rule-{tool}-{label}")),
+                        tr(label),
+                        current == rule,
+                        cx,
+                    )
+                    .when(!skipped, |segment| {
+                        segment.on_click(cx.listener(move |this, _, window, cx| {
                             this.save_tool_rule(name.clone(), rule, window, cx)
-                        })),
-                );
-            }
-            list = list.child(row);
+                        }))
+                    })
+                    .into_any_element()
+                }),
+                cx,
+            )
+            .when(skipped, |rules| rules.opacity(0.5));
+            list = list.child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(surfaces::read_only(tool.clone(), cx).flex_1())
+                    .child(rules),
+            );
         }
         list
     }
@@ -711,6 +890,7 @@ impl Workspace {
             .child(
                 div()
                     .h_flex()
+                    .items_center()
                     .gap_3()
                     .child(
                         div()
@@ -718,34 +898,36 @@ impl Workspace {
                             .flex_1()
                             .min_w_0()
                             .child(div().text_sm().child(settings::skills_summary(skills)))
-                            .child(div().text_xs().text_color(muted).child(
-                                if self.state.project.is_some() {
-                                    tr("The open project's skills and the ones for every project. \
-                                     A skill that is off is not offered to the model.")
-                                } else {
+                            .child(if self.state.project.is_some() {
+                                surfaces::settings_note_help(
+                                    tr("The open project's skills and those for every project."),
+                                    tr(
+                                        "The open project's skills and the ones for every project. \
+                                     A skill that is off is not offered to the model.",
+                                    ),
+                                    cx,
+                                )
+                            } else {
+                                surfaces::settings_note_help(
+                                    tr("Skills for every project."),
                                     tr("Skills for every project. Open a project to see its own \
-                                     as well. A skill that is off is not offered to the model.")
-                                },
-                            )),
+                                     as well. A skill that is off is not offered to the model."),
+                                    cx,
+                                )
+                            }),
                     )
                     .child(
-                        Button::new("skills-reload")
-                            .icon(glyph("refresh"))
-                            .label(tr("Reload"))
-                            .small()
-                            .flex_shrink_0()
-                            .tooltip(tr("Read the skill folders again"))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.load_skills(window, cx)),
-                            ),
+                        surfaces::icon_action(
+                            "skills-reload",
+                            "refresh",
+                            tr("Read the skill folders again"),
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| this.load_skills(window, cx))),
                     ),
             )
-            .child(
-                div()
-                    .py_3()
-                    .w(px(320.))
-                    .child(Input::new(&self.skills_search).small()),
-            );
+            .child(search_field(&self.skills_search, cx));
         let shown: Vec<_> = skills
             .iter()
             .filter(|row| settings::skill_matches(row, &query))
@@ -758,6 +940,7 @@ impl Workspace {
                     .child(tr("No skill matches.")),
             );
         }
+        let mut list = div().v_flex().border_t_1().border_color(cx.theme().border);
         for row in shown {
             let name = row.name.clone();
             let enabled = row.enabled;
@@ -768,101 +951,92 @@ impl Workspace {
             if !row.tags.is_empty() {
                 about = format!("{about} · {}", row.tags.join(", "));
             }
-            page = page.child(
-                div()
-                    .h_flex()
-                    .items_start()
-                    .justify_between()
-                    .gap_6()
-                    .py_3()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        div()
-                            .v_flex()
-                            .w(px(NOTE_WIDTH + 80.))
-                            .flex_shrink_0()
-                            .gap_1()
-                            .when(!enabled, |text| text.opacity(0.6))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(row.name.clone()),
+            let under = div()
+                .v_flex()
+                .gap_0p5()
+                .child(surfaces::settings_note(row.description.clone(), cx))
+                .child(surfaces::fact(about, cx));
+            list = list.child(
+                item_row(
+                    SharedString::from(row.name.clone()),
+                    Some(under.into_any_element()),
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            surfaces::icon_action(
+                                SharedString::from(format!("skill-tags-{}", row.name)),
+                                "edit",
+                                tr("Give it your own tags in place of the ones it came with"),
+                                if editing {
+                                    surfaces::IconTone::Ink
+                                } else {
+                                    surfaces::IconTone::Faded
+                                },
+                                cx,
                             )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(muted)
-                                    .child(row.description.clone()),
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    this.edit_skill_tags(tagged.clone(), &current, window, cx)
+                                },
+                            )),
+                        )
+                        .child(
+                            switch(
+                                SharedString::from(format!("skill-{}", row.name)),
+                                enabled,
+                                tr("Use this skill"),
                             )
-                            .child(div().text_xs().text_color(muted).child(about))
-                            .when(editing, |about| {
-                                about.child(
-                                    div()
-                                        .h_flex()
-                                        .gap_1()
-                                        .pt_1()
-                                        .child(
-                                            div()
-                                                .w(px(260.))
-                                                .child(Input::new(&self.skill_tags_input).small()),
-                                        )
-                                        .child(
-                                            Button::new("skill-tags-save")
-                                                .label(tr("Save"))
-                                                .small()
-                                                .primary()
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    this.save_skill_tags(window, cx)
-                                                })),
-                                        )
-                                        .child(
-                                            Button::new("skill-tags-cancel")
-                                                .label(tr("Cancel"))
-                                                .small()
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.skill_tags_editing = None;
-                                                    this.layers.close(Layer::SkillTags);
-                                                    cx.notify();
-                                                })),
-                                        ),
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_1()
-                            .flex_shrink_0()
-                            .child(
-                                Button::new(SharedString::from(format!("skill-tags-{}", row.name)))
-                                    .label(tr("Tags"))
-                                    .small()
-                                    .ghost()
-                                    .tooltip(tr(
-                                        "Give it your own tags in place of the ones it came with",
-                                    ))
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.edit_skill_tags(tagged.clone(), &current, window, cx)
-                                    })),
-                            )
-                            .child(
-                                switch(
-                                    SharedString::from(format!("skill-{}", row.name)),
-                                    enabled,
-                                    tr("Use this skill"),
-                                )
-                                .on_change(cx.listener(
-                                    move |this, _, window, cx| {
-                                        this.set_skill_enabled(name.clone(), !enabled, window, cx)
-                                    },
-                                )),
-                            ),
-                    ),
+                            .on_change(cx.listener(
+                                move |this, _, window, cx| {
+                                    this.set_skill_enabled(name.clone(), !enabled, window, cx)
+                                },
+                            )),
+                        ),
+                    cx,
+                )
+                .when(!enabled, |row| row.text_color(muted)),
             );
+            if editing {
+                // The skill's tags, under it, as a row of the same shape.
+                list = list.child(setting(
+                    tr("Tags"),
+                    "",
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .w(px(240.))
+                                .child(surfaces::input(&self.skill_tags_input, cx).small()),
+                        )
+                        .child(
+                            surfaces::outlined_action("skill-tags-save", "check", tr("Save"), cx)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.save_skill_tags(window, cx)
+                                })),
+                        )
+                        .child(
+                            surfaces::icon_action(
+                                "skill-tags-cancel",
+                                "close",
+                                tr("Cancel"),
+                                surfaces::IconTone::Faded,
+                                cx,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.skill_tags_editing = None;
+                                this.layers.close(Layer::SkillTags);
+                                cx.notify();
+                            })),
+                        ),
+                    cx,
+                ));
+            }
         }
-        page.child(self.skill_store_section(cx))
+        page.child(list).child(self.skill_store_section(cx))
     }
 
     fn load_connectors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -921,26 +1095,19 @@ impl Workspace {
         let query = self.connectors_search.read(cx).value().to_string();
         let mut page = page
             .child(self.render_mcp_servers(cx))
-            .child(
-                div()
-                    .v_flex()
-                    .w(px(NOTE_WIDTH + 80.))
-                    .child(
-                        div()
-                            .text_sm()
-                            .child(settings::connectors_summary(connectors)),
-                    )
-                    .child(div().text_xs().text_color(muted).child(tr(
-                        "Literature and biology sources that ship with Wisp. The model can \
-                         only read through them. A connector that is off gives it no tools.",
-                    ))),
-            )
-            .child(
-                div()
-                    .py_3()
-                    .w(px(320.))
-                    .child(Input::new(&self.connectors_search).small()),
-            );
+            .child(surfaces::settings_heading(
+                settings::connectors_summary(connectors),
+                cx,
+            ))
+            .child(surfaces::settings_note_help(
+                tr("Literature and biology sources that ship with Wisp."),
+                tr(
+                    "Literature and biology sources that ship with Wisp. The model can \
+                    only read through them. A connector that is off gives it no tools.",
+                ),
+                cx,
+            ))
+            .child(search_field(&self.connectors_search, cx));
         let shown: Vec<_> = connectors
             .iter()
             .filter(|row| settings::connector_matches(row, &query))
@@ -953,111 +1120,103 @@ impl Workspace {
                     .child(tr("No connector matches.")),
             );
         }
+        let mut list = div().v_flex().border_t_1().border_color(cx.theme().border);
         for row in shown {
             let enabled = row.enabled;
             let open = self.open_connector.as_deref() == Some(row.domain.as_str());
             let (toggling, unfolding) = (row.domain.clone(), row.domain.clone());
-            let mut about = div()
-                .v_flex()
-                .w(px(NOTE_WIDTH + 80.))
-                .flex_shrink_0()
+            let controls = div()
+                .h_flex()
+                .items_center()
                 .gap_1()
-                .when(!enabled, |text| text.opacity(0.6))
                 .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(row.domain.clone()),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(row.description.clone()),
-                )
-                // In a row of its own, so it keeps its width and its place
-                // at the left instead of stretching across the column.
-                .child(
-                    div().h_flex().child(
-                        Button::new(SharedString::from(format!(
-                            "connector-tools-{}",
-                            row.domain
-                        )))
-                        .icon(glyph(if open {
+                    surfaces::labelled_action(
+                        SharedString::from(format!("connector-tools-{}", row.domain)),
+                        if open {
                             "chevron-down"
                         } else {
                             "chevron-right"
-                        }))
-                        .label(settings::tool_count(row.tools.len()))
-                        .xsmall()
-                        .ghost()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.open_connector = (this.open_connector.as_deref()
-                                != Some(unfolding.as_str()))
-                            .then(|| unfolding.clone());
-                            cx.notify();
-                        })),
-                    ),
+                        },
+                        settings::tool_count(row.tools.len()),
+                        surfaces::IconSize::Inline,
+                        if open {
+                            surfaces::IconTone::Ink
+                        } else {
+                            surfaces::IconTone::Faded
+                        },
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_connector = (this.open_connector.as_deref()
+                            != Some(unfolding.as_str()))
+                        .then(|| unfolding.clone());
+                        cx.notify();
+                    })),
+                )
+                .child(
+                    switch(
+                        SharedString::from(format!("connector-{}", row.domain)),
+                        enabled,
+                        tr("Use this connector"),
+                    )
+                    .on_change(cx.listener(move |this, _, window, cx| {
+                        this.set_connector_enabled(toggling.clone(), !enabled, window, cx)
+                    })),
                 );
+            list = list.child(
+                item_row(
+                    SharedString::from(row.domain.clone()),
+                    Some(surfaces::settings_note(row.description.clone(), cx).into_any_element()),
+                    controls,
+                    cx,
+                )
+                .when(!enabled, |row| row.text_color(muted)),
+            );
             if open {
-                about = about
+                // What the connector opens to, under it: whether its tools
+                // ask, each tool's rule, and where it reads from.
+                let mut detail = div()
+                    .v_flex()
+                    .gap_2()
+                    .py_2()
+                    .pl_4()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
                     .children(self.connector_skip(&row.domain, cx))
                     .child(self.connector_tool_rules(&row.domain, &row.tools, cx));
                 for (index, (label, url)) in row.links.iter().enumerate() {
                     let target = url.clone();
-                    about = about.child(
+                    detail = detail.child(
                         div()
                             .h_flex()
+                            .items_center()
                             .gap_2()
+                            .child(surfaces::settings_note(label.clone(), cx).flex_none())
                             .child(
-                                div()
+                                surfaces::fact(url.clone(), cx)
                                     .flex_1()
                                     .min_w_0()
-                                    .truncate()
-                                    .text_xs()
-                                    .text_color(muted)
-                                    .child(format!("{label}: {url}")),
+                                    .truncate(),
                             )
                             .child(
-                                icon_button(
+                                surfaces::icon_action(
                                     SharedString::from(format!(
                                         "connector-link-{}-{index}",
                                         row.domain
                                     )),
                                     "external-link",
                                     tr("Open in your browser"),
+                                    surfaces::IconTone::Faded,
+                                    cx,
                                 )
-                                .xsmall()
                                 .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&target))),
                             ),
                     );
                 }
+                list = list.child(detail);
             }
-            page = page.child(
-                div()
-                    .h_flex()
-                    .items_start()
-                    .justify_between()
-                    .gap_6()
-                    .py_3()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .child(about)
-                    .child(
-                        switch(
-                            SharedString::from(format!("connector-{}", row.domain)),
-                            enabled,
-                            tr("Use this connector"),
-                        )
-                        .on_change(cx.listener(
-                            move |this, _, window, cx| {
-                                this.set_connector_enabled(toggling.clone(), !enabled, window, cx)
-                            },
-                        )),
-                    ),
-            );
         }
-        page
+        page.child(list)
     }
 
     /// Reads the choices of the General page and acts on them: wears the
@@ -1240,7 +1399,6 @@ impl Workspace {
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .font_weight(FontWeight::MEDIUM)
                                 .child(tr("Update available")),
                         )
                         .child(
@@ -1265,6 +1423,7 @@ impl Workspace {
                         .gap_1()
                         .child(
                             Button::new("update-card-open")
+                                .icon(glyph("external-link"))
                                 .label(tr("Open releases"))
                                 .xsmall()
                                 .outline()
@@ -1277,6 +1436,7 @@ impl Workspace {
                         )
                         .child(
                             Button::new("update-card-never")
+                                .icon(glyph("ban"))
                                 .label(tr("Don't check at start"))
                                 .xsmall()
                                 .ghost()
@@ -1488,6 +1648,8 @@ impl Workspace {
 
     /// One size of text, with buttons that make it smaller or larger and
     /// one that goes back to Wisp's own.
+    /// A text size as a stepper: smaller, the size, larger, and back to
+    /// Wisp's own.
     fn size_choice(
         &self,
         id: &'static str,
@@ -1495,84 +1657,62 @@ impl Workspace {
         change: fn(&mut crate::theme::Look, f32),
         cx: &mut Context<Self>,
     ) -> Div {
-        let smaller = cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.step_size(size, -1., change, window, cx)
-        });
-        let larger = cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.step_size(size, 1., change, window, cx)
-        });
-        let reset = cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.step_size(size, 0., change, window, cx)
-        });
-        div()
-            .h_flex()
-            .gap_1()
-            .child(
-                Button::new(SharedString::from(format!("{id}-smaller")))
-                    .icon(glyph("minus"))
-                    .small()
-                    .on_click(smaller),
-            )
-            .child(
-                div()
-                    .w(px(64.))
-                    .text_sm()
-                    .text_center()
-                    .child(if size == 0. {
-                        tr("Wisp's own").to_owned()
-                    } else {
-                        format!("{size} px")
-                    }),
-            )
-            .child(
-                Button::new(SharedString::from(format!("{id}-larger")))
-                    .icon(glyph("plus"))
-                    .small()
-                    .on_click(larger),
-            )
-            .child(
-                Button::new(SharedString::from(format!("{id}-reset")))
-                    .label(tr("Reset"))
-                    .small()
-                    .ghost()
-                    .disabled(size == 0.)
-                    .on_click(reset),
-            )
+        surfaces::stepper(
+            id,
+            if size == 0. {
+                tr("Wisp's own").to_owned()
+            } else {
+                format!("{size} px")
+            },
+            cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.step_size(size, -1., change, window, cx)
+            }),
+            cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.step_size(size, 1., change, window, cx)
+            }),
+            cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.step_size(size, 0., change, window, cx)
+            }),
+            cx,
+        )
     }
 
-    /// The palettes of one kind, the chosen one marked.
     fn palette_choice(&self, dark: bool, cx: &mut Context<Self>) -> Div {
         let chosen = if dark {
             self.look.dark
         } else {
             self.look.light
         };
-        let mut row = div().h_flex().flex_wrap().gap_1().max_w(px(360.));
+        // One group of chips, the colour's dot and its name; the chosen one
+        // has a teal line.
+        let mut row = div()
+            .h_flex()
+            .flex_wrap()
+            .justify_end()
+            .gap_1()
+            .max_w(px(360.));
         for palette in crate::theme::palettes(dark) {
+            let theme = cx.theme();
+            let dot = div()
+                .size(px(10.))
+                .rounded_full()
+                .border_1()
+                .border_color(theme.border)
+                .bg(gpui::Rgba::try_from(palette.accent)
+                    .map(Hsla::from)
+                    .unwrap_or(theme.primary));
             row = row.child(
-                Button::new(SharedString::from(format!(
-                    "palette-{}-{}",
-                    if dark { "dark" } else { "light" },
-                    palette.key
-                )))
-                .child(
-                    div()
-                        .h_flex()
-                        .gap_1()
-                        .child(
-                            div()
-                                .size(px(10.))
-                                .rounded_full()
-                                .border_1()
-                                .border_color(cx.theme().border)
-                                .bg(gpui::Rgba::try_from(palette.accent)
-                                    .map(Hsla::from)
-                                    .unwrap_or(cx.theme().primary)),
-                        )
-                        .child(palette.name),
+                surfaces::choice_chip(
+                    SharedString::from(format!(
+                        "palette-{}-{}",
+                        if dark { "dark" } else { "light" },
+                        palette.key
+                    )),
+                    palette == chosen,
+                    cx,
                 )
-                .small()
-                .selected(palette == chosen)
+                .child(dot)
+                .child(palette.name)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     let mut look = this.look.clone();
                     if dark {
@@ -1644,249 +1784,323 @@ impl Workspace {
     }
 
     pub(super) fn render_general_settings(&self, cx: &mut Context<Self>) -> Div {
-        let mut looks = div().h_flex().gap_1();
-        for choice in crate::theme::Appearance::ALL {
-            looks = looks.child(
-                Button::new(SharedString::from(format!("appearance-{}", choice.key())))
-                    .label(tr(choice.label()))
-                    .small()
-                    .selected(self.appearance == choice)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.set_appearance(choice, window, cx)
-                    })),
-            );
-        }
-        let mut languages = div().h_flex().gap_1();
-        for choice in crate::i18n::Language::ALL {
-            languages = languages.child(
-                Button::new(SharedString::from(format!("language-{}", choice.key())))
-                    // "System" is a word of the interface; the languages
-                    // are named in themselves.
-                    .label(tr(choice.label()))
-                    .small()
-                    .selected(self.language == choice)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.language = choice;
-                        crate::i18n::apply(choice);
-                        this.word_fields(window, cx);
-                        this.save_general(LANGUAGE, choice.key().into(), window, cx);
-                        cx.refresh_windows();
-                    })),
-            );
-        }
-        let mut sends = div().h_flex().gap_1();
-        for choice in settings::SendKey::ALL {
-            sends = sends.child(
-                Button::new(SharedString::from(format!("send-{}", choice.key())))
-                    .label(choice.label())
-                    .small()
-                    .selected(self.send_key == choice)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.send_key = choice;
-                        // The empty composer says which key it is now.
-                        this.word_fields(window, cx);
-                        this.save_general(SEND_KEY, choice.key().into(), window, cx);
-                    })),
-            );
-        }
-        let mut starts = div().h_flex().gap_1();
-        for choice in settings::Launch::ALL {
-            starts = starts.child(
-                Button::new(SharedString::from(format!("launch-{}", choice.key())))
-                    .label(choice.label())
-                    .small()
-                    .selected(self.launch == choice)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.launch = choice;
-                        this.save_general(LAUNCH, choice.key().into(), window, cx);
-                    })),
-            );
-        }
+        // One of a few: a segmented control each.
+        let looks = surfaces::segmented(
+            crate::theme::Appearance::ALL.map(|choice| {
+                surfaces::segment(
+                    SharedString::from(format!("appearance-{}", choice.key())),
+                    match choice {
+                        crate::theme::Appearance::System => "monitor",
+                        crate::theme::Appearance::Light => "sun",
+                        crate::theme::Appearance::Dark => "moon",
+                    },
+                    tr(choice.label()),
+                    self.appearance == choice,
+                    cx,
+                )
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.set_appearance(choice, window, cx)),
+                )
+                .into_any_element()
+            }),
+            cx,
+        );
+        let languages = surfaces::segmented(
+            crate::i18n::Language::ALL.map(|choice| {
+                // "System" is a word of the interface; the languages are
+                // named in themselves.
+                surfaces::plain_segment(
+                    SharedString::from(format!("language-{}", choice.key())),
+                    tr(choice.label()),
+                    self.language == choice,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.language = choice;
+                    crate::i18n::apply(choice);
+                    this.word_fields(window, cx);
+                    this.save_general(LANGUAGE, choice.key().into(), window, cx);
+                    cx.refresh_windows();
+                }))
+                .into_any_element()
+            }),
+            cx,
+        );
+        let sends = surfaces::segmented(
+            settings::SendKey::ALL.map(|choice| {
+                surfaces::plain_segment(
+                    SharedString::from(format!("send-{}", choice.key())),
+                    choice.label(),
+                    self.send_key == choice,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.send_key = choice;
+                    // The empty composer says which key it is now.
+                    this.word_fields(window, cx);
+                    this.save_general(SEND_KEY, choice.key().into(), window, cx);
+                }))
+                .into_any_element()
+            }),
+            cx,
+        );
+        let starts = surfaces::segmented(
+            settings::Launch::ALL.map(|choice| {
+                surfaces::plain_segment(
+                    SharedString::from(format!("launch-{}", choice.key())),
+                    choice.label(),
+                    self.launch == choice,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.launch = choice;
+                    this.save_general(LAUNCH, choice.key().into(), window, cx);
+                }))
+                .into_any_element()
+            }),
+            cx,
+        );
         self.settings_page(cx)
             .child(setting(
                 tr("Language"),
-                tr(
-                    "The language of the interface. System follows your computer's language: \
+                "",
+                tipped(
+                    "language-tip",
+                    tr(
+                        "The language of the interface. System follows your computer's language: \
                  Chinese when it is set to Chinese, English otherwise. What the model \
                  writes is not affected.",
+                    ),
+                    languages,
                 ),
-                languages,
                 cx,
             ))
             .child(setting(
                 tr("Appearance"),
-                tr("System follows your computer's light or dark setting and changes with it."),
-                looks,
+                "",
+                tipped(
+                    "appearance-tip",
+                    tr("System follows your computer's light or dark setting and changes with it."),
+                    looks,
+                ),
                 cx,
             ))
             .child(setting(
                 tr("Light palette"),
-                tr("The colours worn in light appearance. Wisp Paper is Wisp's own."),
-                self.palette_choice(false, cx),
+                "",
+                tipped(
+                    "light-palette-tip",
+                    tr("The colours worn in light appearance. Wisp Paper is Wisp's own."),
+                    self.palette_choice(false, cx),
+                ),
                 cx,
             ))
             .child(setting(
                 tr("Dark palette"),
-                tr("The colours worn in dark appearance. Wisp Charcoal is Wisp's own."),
-                self.palette_choice(true, cx),
+                "",
+                tipped(
+                    "dark-palette-tip",
+                    tr("The colours worn in dark appearance. Wisp Charcoal is Wisp's own."),
+                    self.palette_choice(true, cx),
+                ),
                 cx,
             ))
             .child(setting(
                 tr("Text size"),
-                tr("The size of the interface's text, from 10 to 24 pixels."),
-                self.size_choice(
-                    "text-size",
-                    self.look.text_size,
-                    |look, size| look.text_size = size,
-                    cx,
+                "",
+                tipped(
+                    "text-size-tip",
+                    tr("The size of the interface's text, from 10 to 24 pixels."),
+                    self.size_choice(
+                        "text-size",
+                        self.look.text_size,
+                        |look, size| look.text_size = size,
+                        cx,
+                    ),
                 ),
                 cx,
             ))
             .child(setting(
                 tr("Code size"),
-                tr("The size of code and other fixed-width text."),
-                self.size_choice(
-                    "code-size",
-                    self.look.code_size,
-                    |look, size| look.code_size = size,
-                    cx,
+                "",
+                tipped(
+                    "code-size-tip",
+                    tr("The size of code and other fixed-width text."),
+                    self.size_choice(
+                        "code-size",
+                        self.look.code_size,
+                        |look, size| look.code_size = size,
+                        cx,
+                    ),
                 ),
+                cx,
+            ))
+            // Two rows of the one shape, each its field at the right edge;
+            // Apply under them at the same edge.
+            .child(explained_setting(
+                tr("Interface font"),
+                "",
+                tr("A font installed on this computer for the interface, and one for code, \
+                     by name. Empty keeps Wisp's own."),
+                div()
+                    .w(px(220.))
+                    .child(surfaces::input(&self.font_fields[0], cx).small()),
                 cx,
             ))
             .child(setting(
-                tr("Fonts"),
-                tr(
-                    "A font installed on this computer for the interface, and one for code, \
-                     by name. Empty keeps Wisp's own.",
-                ),
+                tr("Code font"),
+                "",
                 div()
-                    .v_flex()
-                    .gap_1()
-                    .w(px(280.))
-                    .child(Input::new(&self.font_fields[0]).small())
-                    .child(Input::new(&self.font_fields[1]).small())
-                    .child(
-                        div().h_flex().child(
-                            Button::new("fonts-apply")
-                                .label(tr("Apply"))
-                                .small()
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    let [text, code] = [0, 1].map(|at| {
-                                        this.font_fields[at].read(cx).value().trim().to_owned()
-                                    });
-                                    let look = crate::theme::Look {
-                                        text_font: text,
-                                        code_font: code,
-                                        ..this.look.clone()
-                                    };
-                                    this.change_look(look, window, cx)
-                                })),
-                        ),
-                    ),
+                    .w(px(220.))
+                    .child(surfaces::input(&self.font_fields[1], cx).small()),
                 cx,
             ))
-            .child(setting(tr("Send with"), settings::send_key_note(), sends, cx))
+            .child(
+                div().h_flex().justify_end().pt_2().pb_1().child(
+                    surfaces::outlined_action("fonts-apply", "check", tr("Apply"), cx).on_click(
+                        cx.listener(|this, _, window, cx| {
+                            let [text, code] = [0, 1].map(|at| {
+                                this.font_fields[at].read(cx).value().trim().to_owned()
+                            });
+                            let look = crate::theme::Look {
+                                text_font: text,
+                                code_font: code,
+                                ..this.look.clone()
+                            };
+                            this.change_look(look, window, cx)
+                        }),
+                    ),
+                ),
+            )
+            .child(explained_setting(
+                tr("Send with"),
+                "",
+                settings::send_key_note(),
+                sends,
+                cx,
+            ))
             .child(setting(
                 tr("Workspace folder"),
-                tr(
-                    "Where the built-in project keeps its files. Empty uses the default shown in \
+                if self.workspace_saved {
+                    tr("Saved. Wisp uses that folder from its next start.")
+                } else {
+                    tr("Where the built-in project keeps its files.")
+                },
+                tipped(
+                    "workspace-tip",
+                    tr(
+                        "Where the built-in project keeps its files. Empty uses the default shown in \
                      the field. Used from Wisp's next start; WISP_GPUI_WORKSPACE overrides it.",
-                ),
-                div()
-                    .v_flex()
-                    .gap_1()
-                    .w(px(320.))
-                    .child(Input::new(&self.workspace_choice).small())
-                    .children(self.workspace_saved.then(|| {
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().success)
-                            .child(tr("Saved. Wisp uses that folder from its next start."))
-                    }))
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_1()
-                            .child(
-                                Button::new("workspace-pick")
-                                    .label(tr("Choose…"))
-                                    .small()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.pick_workspace_choice(window, cx)
-                                    })),
-                            )
-                            .child(
-                                Button::new("workspace-save")
-                                    .label(tr("Save"))
-                                    .small()
-                                    .primary()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.save_workspace_choice(window, cx)
-                                    })),
-                            ),
                     ),
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .w(px(200.))
+                                .child(surfaces::input(&self.workspace_choice, cx).small()),
+                        )
+                        .child(
+                            surfaces::outlined_action(
+                                "workspace-pick",
+                                "folder",
+                                tr("Choose…"),
+                                cx,
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.pick_workspace_choice(window, cx)
+                            })),
+                        )
+                        .child(
+                            // The page's one filled button: the folder is the
+                            // one choice here that waits for a save.
+                            Button::new("workspace-save")
+                                .label(tr("Save"))
+                                .small()
+                                .primary()
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.save_workspace_choice(window, cx)
+                                })),
+                        ),
+                ),
                 cx,
             ))
             .child({
                 let on = self.separate_storage.unwrap_or(false);
                 setting(
                     tr("Each project its own database"),
-                    tr(
-                        "New projects keep their conversations in a database inside their own \
+                    "",
+                    tipped(
+                        "separate-storage-tip",
+                        tr(
+                            "New projects keep their conversations in a database inside their own \
                          folder, so the folder can be moved or synced on its own. Projects that \
                          exist stay where they are.",
+                        ),
+                        switch(
+                            "separate-storage",
+                            on,
+                            tr("Each project its own database"),
+                        )
+                        .disabled(self.separate_storage.is_none())
+                        .on_change(cx.listener(move |this, _, window, cx| {
+                            this.set_separate_storage(!on, window, cx)
+                        })),
                     ),
-                    switch(
-                        "separate-storage",
-                        on,
-                        tr("Each project its own database"),
-                    )
-                    .disabled(self.separate_storage.is_none())
-                    .on_change(cx.listener(move |this, _, window, cx| {
-                        this.set_separate_storage(!on, window, cx)
-                    })),
                     cx,
                 )
             })
             .child(setting(
                 tr("Notify me"),
-                tr(
-                    "When a turn ends or a tool waits for approval while you are in another app, post a system notification. Windows has none without an installed app, so only the sound is available there.",
-                ),
-                switch("notify-banner", self.notify.banner, tr("Notify me")).on_change(
-                    cx.listener(|this, _, window, cx| {
-                        this.notify.banner = !this.notify.banner;
-                        let value = this.notify.banner.to_string();
-                        this.save_general(NOTIFY, value, window, cx);
-                    }),
+                tr("When a turn ends or a tool waits for approval."),
+                tipped(
+                    "notify-tip",
+                    tr(
+                        "When a turn ends or a tool waits for approval while you are in another app, post a system notification. Windows has none without an installed app, so only the sound is available there.",
+                    ),
+                    switch("notify-banner", self.notify.banner, tr("Notify me")).on_change(
+                        cx.listener(|this, _, window, cx| {
+                            this.notify.banner = !this.notify.banner;
+                            let value = this.notify.banner.to_string();
+                            this.save_general(NOTIFY, value, window, cx);
+                        }),
+                    ),
                 ),
                 cx,
             ))
             .child(setting(
                 tr("Play a sound"),
-                tr("Also play a sound then, whether or not a notification is posted."),
-                switch("notify-sound", self.notify.sound, tr("Play a sound")).on_change(
-                    cx.listener(|this, _, window, cx| {
-                        this.notify.sound = !this.notify.sound;
-                        let value = this.notify.sound.to_string();
-                        this.save_general(NOTIFY_SOUND, value, window, cx);
-                    }),
+                "",
+                tipped(
+                    "notify-sound-tip",
+                    tr("Also play a sound then, whether or not a notification is posted."),
+                    switch("notify-sound", self.notify.sound, tr("Play a sound")).on_change(
+                        cx.listener(|this, _, window, cx| {
+                            this.notify.sound = !this.notify.sound;
+                            let value = this.notify.sound.to_string();
+                            this.save_general(NOTIFY_SOUND, value, window, cx);
+                        }),
+                    ),
                 ),
                 cx,
             ))
             .child({
                 // Each name plays its sound when chosen, so it can be heard.
-                let mut tones = div().h_flex().flex_wrap().gap_1().max_w(px(380.));
+                let mut tones = div()
+                    .h_flex()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap_1()
+                    .max_w(px(380.));
                 for (index, tone) in crate::notify::sounds(crate::notify::System::current())
                     .iter()
                     .copied()
                     .enumerate()
                 {
                     tones = tones.child(
-                        Button::new(("notify-tone", index))
-                            .label(tone)
-                            .xsmall()
-                            .selected(self.notify_tone == tone)
+                        surfaces::choice_chip(("notify-tone", index), self.notify_tone == tone, cx)
+                            .child(tone)
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.notify_tone = tone;
                                 crate::notify::post(
@@ -1912,56 +2126,59 @@ impl Workspace {
             .child({
                 let (note, available) =
                     settings::update_note(self.update.as_ref(), self.update_at_start);
-                let mut actions = div().h_flex().gap_1().child(
-                    Button::new("update-check")
-                        .label(tr("Check for updates"))
-                        .small()
-                        .disabled(self.update == Some(settings::Update::Checking))
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.check_for_update(window, cx)),
-                        ),
-                );
-                let at_start = self.update_at_start;
-                actions = actions.child(
-                    div()
-                        .h_flex()
-                        .gap_2()
-                        .pl_2()
-                        .text_sm()
-                        .child(tr("Check at start"))
-                        .child(
-                            switch(
-                                "update-at-start",
-                                at_start,
-                                tr("Also look for a newer version each time Wisp starts"),
-                            )
-                            .on_change(cx.listener(
-                                move |this, _, window, cx| {
-                                    this.set_update_at_start(!at_start, window, cx)
-                                },
-                            )),
-                        ),
+                let mut actions = div().h_flex().items_center().gap_1().child(
+                    surfaces::outlined_action(
+                        "update-check",
+                        "refresh",
+                        tr("Check for updates"),
+                        cx,
+                    )
+                    .tooltip(tr("Nothing is downloaded; the release page opens."))
+                    .disabled(self.update == Some(settings::Update::Checking))
+                    .on_click(cx.listener(|this, _, window, cx| this.check_for_update(window, cx))),
                 );
                 if let (true, Some(settings::Update::Found(found))) = (available, &self.update) {
                     let url = found.url.clone();
                     actions = actions.child(
-                        Button::new("update-open")
-                            .label(tr("Open releases"))
-                            .small()
-                            .primary()
-                            .tooltip(tr("Open the release page in your browser"))
-                            .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&url))),
+                        surfaces::icon_action(
+                            "update-open",
+                            "external-link",
+                            tr("Open the release page in your browser"),
+                            surfaces::IconTone::On,
+                            cx,
+                        )
+                        .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&url))),
                     );
                 }
                 setting(tr("Updates"), note, actions, cx)
             })
+            .child({
+                let at_start = self.update_at_start;
+                setting(
+                    tr("Check at start"),
+                    "",
+                    switch(
+                        "update-at-start",
+                        at_start,
+                        tr("Also look for a newer version each time Wisp starts"),
+                    )
+                    .on_change(cx.listener(move |this, _, window, cx| {
+                        this.set_update_at_start(!at_start, window, cx)
+                    })),
+                    cx,
+                )
+            })
             .child(setting(
                 tr("When Wisp starts"),
-                tr(
-                    "Open on the home page with every project, or on the conversation that \
+                "",
+                tipped(
+                    "launch-tip",
+                    tr(
+                        "Open on the home page with every project, or on the conversation that \
                  was open when you last used it.",
+                    ),
+                    starts,
                 ),
-                starts,
                 cx,
             ))
     }
@@ -2107,181 +2324,144 @@ impl Workspace {
 
     /// Credentials of your own: what is saved, and a form to add one.
     fn custom_credential_section(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
         let mut section = div()
             .v_flex()
-            .gap_2()
-            .pt_4()
-            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(tr("Your own")))
-            .child(div().w(px(NOTE_WIDTH + 80.)).text_xs().text_color(muted).child(tr(
+            .child(surfaces::settings_heading(tr("Your own"), cx))
+            .child(surfaces::settings_note_help(tr("Any other key, given to the code the model runs."),tr(
                 "Any other key, given to the code the model runs under the environment variable you name. Adding one with a variable that is already here replaces its value.",
-            )));
-        for credential in &self.custom_credentials {
-            let id = credential.id.clone();
-            section = section.child(
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .py_1()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        div()
-                            .w(px(180.))
-                            .truncate()
-                            .text_sm()
-                            .child(credential.name.clone()),
+            ), cx).pb_2());
+        let rows: Vec<_> = self
+            .custom_credentials
+            .iter()
+            .map(|credential| {
+                let id = credential.id.clone();
+                let row = surfaces::record_row(
+                    SharedString::from(format!("custom-credential-{id}")),
+                    credential.name.clone(),
+                )
+                .icon("lock")
+                .suffix(credential.env_var.clone());
+                let row = if credential.saved {
+                    row.stamp(surfaces::StampKind::Success, tr("Saved"))
+                } else {
+                    row.stamp(surfaces::StampKind::Waiting, tr("Not set"))
+                };
+                row.action(
+                    surfaces::danger_action(
+                        SharedString::from(format!("custom-credential-remove-{id}")),
+                        "trash",
+                        tr("Remove it and its value from the keychain"),
+                        cx,
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_xs()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .text_color(muted)
-                            .child(credential.env_var.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(if credential.saved {
-                                tr("Saved")
-                            } else {
-                                tr("Not set")
-                            }),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("custom-credential-remove-{id}")))
-                            .label(tr("Remove"))
-                            .small()
-                            .ghost()
-                            .tooltip(tr("Remove it and its value from the keychain"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.remove_custom_credential(id.clone(), window, cx)
-                            })),
-                    ),
-            );
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.remove_custom_credential(id.clone(), window, cx)
+                    })),
+                )
+            })
+            .collect();
+        if !rows.is_empty() {
+            section = section.child(surfaces::record_group(rows, cx));
         }
         let ready = self
             .custom_credential_fields
             .iter()
             .all(|field| !field.read(cx).value().trim().is_empty());
+        let mut fields = div().h_flex().items_center().gap_1();
+        for field in &self.custom_credential_fields {
+            fields = fields.child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(surfaces::input(field, cx).small()),
+            );
+        }
         section.child(
-            div()
-                .h_flex()
-                .gap_2()
-                .child(
-                    div()
-                        .w(px(160.))
-                        .child(Input::new(&self.custom_credential_fields[0]).small()),
-                )
-                .child(
-                    div()
-                        .w(px(160.))
-                        .child(Input::new(&self.custom_credential_fields[1]).small()),
-                )
-                .child(
-                    div()
-                        .w(px(160.))
-                        .child(Input::new(&self.custom_credential_fields[2]).small()),
-                )
-                .child(
-                    Button::new("custom-credential-add")
-                        .label(tr("Add"))
-                        .small()
+            div().py_3().child(
+                fields.child(
+                    surfaces::outlined_action("custom-credential-add", "plus", tr("Add"), cx)
                         .disabled(!ready)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.add_custom_credential(window, cx)
                         })),
                 ),
+            ),
         )
     }
 
     pub(super) fn render_credential_settings(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let mut page = self.settings_page(cx).child(
-            div()
-                .w(px(NOTE_WIDTH + 80.))
-                .pb_2()
-                .text_xs()
-                .text_color(muted)
-                .child(tr(
+            surfaces::settings_note_help(
+                tr("Keys for the services the connectors read from."),
+                tr(
                     "Keys for the services the connectors read from. They are kept in the \
                      system keychain, never in the project database, and are not shown again \
                      once saved. They are used from the next turn.",
-                )),
+                ),
+                cx,
+            )
+            .pb_2(),
         );
         if self.credentials.is_empty() {
             page = page.child(div().text_sm().text_color(muted).child(tr("Loading…")));
         }
+        let mut list = div().v_flex().border_t_1().border_color(cx.theme().border);
         for (row, field) in &self.credentials {
             let id = row.id;
             // Save does nothing while the field is empty; an empty value is
             // what Forget is for.
-            let mut buttons = div().h_flex().gap_2().child(
-                Button::new(SharedString::from(format!("credential-save-{id}")))
-                    .label(tr("Save"))
-                    .small()
+            let mut controls = div()
+                .h_flex()
+                .items_center()
+                .gap_1()
+                .child(div().w(px(200.)).child(surfaces::input(field, cx).small()))
+                .child(
+                    surfaces::outlined_action(
+                        SharedString::from(format!("credential-save-{id}")),
+                        "check",
+                        tr("Save"),
+                        cx,
+                    )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.save_credential(id, false, window, cx)
                     })),
-            );
+                );
             if row.saved {
-                buttons = buttons.child(
-                    Button::new(SharedString::from(format!("credential-forget-{id}")))
-                        .label(tr("Forget"))
-                        .small()
-                        .ghost()
-                        .tooltip(tr("Remove it from the keychain"))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.save_credential(id, true, window, cx)
-                        })),
+                controls = controls.child(
+                    surfaces::danger_action(
+                        SharedString::from(format!("credential-forget-{id}")),
+                        "trash",
+                        tr("Remove it from the keychain"),
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.save_credential(id, true, window, cx)
+                    })),
                 );
             }
-            page = page.child(
-                div()
-                    .v_flex()
-                    .gap_2()
-                    .py_3()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(crate::i18n::host(row.label)),
-                            )
-                            .child(div().text_xs().text_color(muted).child(if row.saved {
-                                tr("Saved")
-                            } else {
-                                tr("Not set")
-                            })),
-                    )
-                    .child(
-                        div()
-                            .w(px(NOTE_WIDTH + 80.))
-                            .text_xs()
-                            .text_color(muted)
-                            .child(crate::i18n::host(row.note)),
-                    )
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .child(div().w(px(360.)).child(Input::new(field).small()))
-                            .child(buttons),
-                    ),
-            );
+            let under = div()
+                .v_flex()
+                .gap_1()
+                .child(surfaces::settings_note(crate::i18n::host(row.note), cx))
+                .child(div().h_flex().child(if row.saved {
+                    surfaces::stamp(surfaces::StampKind::Success, tr("Saved"), cx)
+                } else {
+                    surfaces::fact(tr("Not set"), cx)
+                }));
+            list = list.child(item_row(
+                SharedString::from(crate::i18n::host(row.label)),
+                Some(under.into_any_element()),
+                controls,
+                cx,
+            ));
         }
-        page.child(self.custom_credential_section(cx))
+        page.child(list).child(self.custom_credential_section(cx))
     }
 
     pub(super) fn settings_page(&self, cx: &App) -> Div {
-        let mut page = div().v_flex().w(px(PAGE_WIDTH)).p_6();
+        // The column (`surfaces::settings_column`) gives the page its width
+        // and inset.
+        let mut page = div().v_flex().w_full();
         if let Some(error) = &self.settings_error {
             page = page.child(div().pb_3().child(error_banner(error, cx)));
         }
@@ -2300,11 +2480,11 @@ impl Workspace {
         };
         let (low, high) = defaults.compact_range;
         let percent = defaults.auto_compact_percent;
-        let step = |id: &'static str, name: &'static str, tip: &'static str, up: bool| {
+        type Step = Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>>;
+        let compact_step = |up: bool| -> Step {
             let next = settings::step_percent(percent, up, defaults.compact_range);
-            icon_button(id, name, tip)
-                .disabled(!defaults.auto_compact || next == percent)
-                .on_click(cx.listener(move |this, _, window, cx| {
+            (defaults.auto_compact && next != percent).then(|| {
+                Box::new(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.save_turn_defaults(
                         TurnDefaults {
                             auto_compact_percent: next,
@@ -2313,10 +2493,28 @@ impl Workspace {
                         window,
                         cx,
                     )
-                }))
+                })) as Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>
+            })
         };
-        page.child(setting(
+        let limit = defaults.auto_continue_limit;
+        let continue_step = |up: bool| -> Step {
+            let next = settings::step_continues(limit, up);
+            (defaults.auto_continue && next != limit).then(|| {
+                Box::new(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.save_turn_defaults(
+                        TurnDefaults {
+                            auto_continue_limit: next,
+                            ..defaults
+                        },
+                        window,
+                        cx,
+                    )
+                })) as Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>
+            })
+        };
+        page.child(explained_setting(
             tr("Steps per turn"),
+"",
             crate::i18n::fill(
                 tr(
                     "How many times the model may call tools or answer within one turn, from {} \
@@ -2326,69 +2524,85 @@ impl Workspace {
             ),
             div()
                 .h_flex()
-                .gap_2()
+                .items_center()
+                .gap_1()
                 .child(
                     div()
                         .w(px(90.))
-                        .child(Input::new(&self.steps_input).small()),
+                        .child(surfaces::input(&self.steps_input, cx).small()),
                 )
                 .child(
-                    Button::new("steps-save")
-                        .label(tr("Save"))
-                        .small()
+                    surfaces::outlined_action("steps-save", "check", tr("Save"), cx)
                         .on_click(cx.listener(|this, _, window, cx| this.save_steps(window, cx))),
                 ),
             cx,
         ))
         .child(setting(
             tr("Compact automatically"),
-            tr(
-                "When the context fills up, older turns are summarised so the conversation \
+            "",
+            tipped(
+                "auto-compact-tip",
+                tr(
+                    "When the context fills up, older turns are summarised so the conversation \
              can go on. Off, a long conversation ends when the model's window is full.",
-            ),
-            switch(
-                "auto-compact",
-                defaults.auto_compact,
-                tr("Compact automatically"),
-            )
-            .on_change(cx.listener(move |this, _, window, cx| {
-                this.save_turn_defaults(
-                    TurnDefaults {
-                        auto_compact: !defaults.auto_compact,
-                        ..defaults
-                    },
-                    window,
-                    cx,
+                ),
+                switch(
+                    "auto-compact",
+                    defaults.auto_compact,
+                    tr("Compact automatically"),
                 )
-            })),
+                .on_change(cx.listener(move |this, _, window, cx| {
+                    this.save_turn_defaults(
+                        TurnDefaults {
+                            auto_compact: !defaults.auto_compact,
+                            ..defaults
+                        },
+                        window,
+                        cx,
+                    )
+                })),
+            ),
             cx,
         ))
-        .child({
-            let limit = defaults.auto_continue_limit;
-            let step = |id: &'static str, name: &'static str, tip: &'static str, up: bool| {
-                let next = settings::step_continues(limit, up);
-                icon_button(id, name, tip)
-                    .disabled(!defaults.auto_continue || next == limit)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.save_turn_defaults(
-                            TurnDefaults {
-                                auto_continue_limit: next,
-                                ..defaults
-                            },
-                            window,
-                            cx,
-                        )
-                    }))
-            };
-            setting(
-                tr("Continue cut-off answers"),
+        .child(explained_setting(
+            tr("Compact at"),
+"",
+            crate::i18n::fill(
+                tr(
+                    "How full the context is when that happens, from {}% to {}%. Lower \
+                 compacts sooner and keeps more room for long tool output.",
+                ),
+                &[&low, &high],
+            ),
+            count_stepper(
+                "compact",
+                format!("{percent}%"),
+                (tr("Compact sooner"), compact_step(false)),
+                (tr("Compact later"), compact_step(true)),
+                cx,
+            ),
+            cx,
+        ))
+        .child(setting(
+            tr("Continue cut-off answers"),
+            "",
+            tipped(
+                "auto-continue-tip",
                 tr(
                     "When an answer stops at the model's output limit, the turn carries on by \
                  itself, at most this many times. Off, a cut answer ends the turn.",
                 ),
                 div()
                     .h_flex()
-                    .gap_1()
+                    .items_center()
+                    .gap_2()
+                    .child(count_stepper(
+                        "continue",
+                        limit.to_string(),
+                        (tr("Fewer times"), continue_step(false)),
+                        (tr("More times"), continue_step(true)),
+                        cx,
+                    ))
                     .child(
                         switch(
                             "auto-continue",
@@ -2407,119 +2621,108 @@ impl Workspace {
                                 )
                             },
                         )),
-                    )
-                    .child(step("continue-down", "minus", tr("Fewer times"), false))
-                    .child(
-                        div()
-                            .w(px(36.))
-                            .text_center()
-                            .text_sm()
-                            .child(limit.to_string()),
-                    )
-                    .child(step("continue-up", "plus", tr("More times"), true)),
-                cx,
-            )
-        })
-        .child(setting(
-            tr("Compact at"),
-            crate::i18n::fill(
-                tr(
-                    "How full the context is when that happens, from {}% to {}%. Lower \
-                 compacts sooner and keeps more room for long tool output.",
-                ),
-                &[&low, &high],
+                    ),
             ),
-            div()
-                .h_flex()
-                .gap_1()
-                .child(step("compact-down", "minus", tr("Compact sooner"), false))
-                .child(
-                    div()
-                        .w(px(48.))
-                        .text_center()
-                        .text_sm()
-                        .child(format!("{percent}%")),
-                )
-                .child(step("compact-up", "plus", tr("Compact later"), true)),
             cx,
         ))
         .child(setting(
             tr("Suggest what to ask next"),
-            tr(
-                "After an answer the model is asked once more, briefly, for up to three \
+            "",
+            tipped(
+                "follow-ups-tip",
+                tr(
+                    "After an answer the model is asked once more, briefly, for up to three \
              questions you could ask next. They show above the composer. Off, that extra \
              request is not made.",
-            ),
-            switch(
-                "follow-ups",
-                defaults.follow_ups,
-                tr("Suggest what to ask next"),
-            )
-            .on_change(cx.listener(move |this, _, window, cx| {
-                this.save_turn_defaults(
-                    TurnDefaults {
-                        follow_ups: !defaults.follow_ups,
-                        ..defaults
-                    },
-                    window,
-                    cx,
+                ),
+                switch(
+                    "follow-ups",
+                    defaults.follow_ups,
+                    tr("Suggest what to ask next"),
                 )
-            })),
+                .on_change(cx.listener(move |this, _, window, cx| {
+                    this.save_turn_defaults(
+                        TurnDefaults {
+                            follow_ups: !defaults.follow_ups,
+                            ..defaults
+                        },
+                        window,
+                        cx,
+                    )
+                })),
+            ),
             cx,
         ))
         .child(setting(
             tr("Review turns"),
-            tr(
-                "When a turn that used a tool, or said a good deal, ends, a reviewer checks its \
+            "",
+            tipped(
+                "auto-review-tip",
+                tr(
+                    "When a turn that used a tool, or said a good deal, ends, a reviewer checks its \
              claims against the tool output and the result shows above the composer. This \
              is what conversations start with; each can be switched in its composer.",
-            ),
-            switch(
-                "auto-review-default",
-                defaults.auto_review,
-                tr("Review turns"),
-            )
-            .on_change(cx.listener(move |this, _, window, cx| {
-                this.save_turn_defaults(
-                    TurnDefaults {
-                        auto_review: !defaults.auto_review,
-                        ..defaults
-                    },
-                    window,
-                    cx,
+                ),
+                switch(
+                    "auto-review-default",
+                    defaults.auto_review,
+                    tr("Review turns"),
                 )
-            })),
+                .on_change(cx.listener(move |this, _, window, cx| {
+                    this.save_turn_defaults(
+                        TurnDefaults {
+                            auto_review: !defaults.auto_review,
+                            ..defaults
+                        },
+                        window,
+                        cx,
+                    )
+                })),
+            ),
             cx,
         ))
         .children(
             self.failure_analysis
                 .map(|failures| self.failure_analysis_setting(failures, cx)),
         )
+        .child(surfaces::settings_heading(tr("Models"), cx))
         .child(setting(
             tr("Reviewer model"),
-            tr(
-                "The model that reviews, for automatic reviews and those you ask for. A second \
+            "",
+            tipped(
+                "review-model-tip",
+                tr(
+                    "The model that reviews, for automatic reviews and those you ask for. A second \
              model catches more than a model checking itself.",
+                ),
+                self.review_model_choices(cx),
             ),
-            self.review_model_choices(cx),
             cx,
         ))
         .child(setting(
             tr("Sub-agent model"),
-            tr(
-                "The model that helpers the main model sends off to explore work on. A \
+            "",
+            tipped(
+                "subagent-model-tip",
+                tr(
+                    "The model that helpers the main model sends off to explore work on. A \
                  cheaper, faster model here keeps long searches off the conversation's model.",
+                ),
+                self.subagent_model_choices(cx),
             ),
-            self.subagent_model_choices(cx),
             cx,
         ))
         .child(setting(
             tr("Picture model"),
-            tr(
-                "When the conversation's model cannot see, this one looks at the pictures you \
+            "",
+            tipped(
+                "picture-model-tip",
+                tr(
+                    "When the conversation's model cannot see, this one looks at the pictures you \
                  attach and tells it what they show. Only models that can see are listed.",
+                ),
+                self.picture_model_choices(cx),
             ),
-            self.picture_model_choices(cx),
             cx,
         ))
     }
@@ -2531,10 +2734,35 @@ impl Workspace {
         failures: wisp_server::desktop::AutoFailureAnalysisSettings,
         cx: &mut Context<Self>,
     ) -> Div {
-        let value = |text: String| div().w(px(44.)).text_center().text_sm().child(text);
+        let step =
+            |rate: bool, up: bool| -> Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>> {
+                let next = settings::step_failures(failures, rate, up);
+                (failures.enabled && next != failures).then(|| {
+                    Box::new(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.save_failure_analysis(next, window, cx)
+                    })) as Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>
+                })
+            };
+        let rate = count_stepper(
+            "failure-rate",
+            format!("{}%", failures.failure_rate_threshold),
+            (tr("A smaller share"), step(true, false)),
+            (tr("A larger share"), step(true, true)),
+            cx,
+        );
+        let count = count_stepper(
+            "failure-count",
+            failures.minimum_failures.to_string(),
+            (tr("Fewer failures"), step(false, false)),
+            (tr("More failures"), step(false, true)),
+            cx,
+        );
         let controls = div()
             .h_flex()
-            .gap_1()
+            .items_center()
+            .gap_2()
+            .child(rate)
+            .child(count)
             .child(
                 switch(
                     "failure-analysis",
@@ -2548,75 +2776,21 @@ impl Workspace {
                     };
                     this.save_failure_analysis(next, window, cx)
                 })),
-            )
-            .child(Self::failure_step(
-                "failure-rate-down",
-                "minus",
-                tr("A smaller share"),
-                failures,
-                true,
-                false,
-                cx,
-            ))
-            .child(value(format!("{}%", failures.failure_rate_threshold)))
-            .child(Self::failure_step(
-                "failure-rate-up",
-                "plus",
-                tr("A larger share"),
-                failures,
-                true,
-                true,
-                cx,
-            ))
-            .child(Self::failure_step(
-                "failure-count-down",
-                "minus",
-                tr("Fewer failures"),
-                failures,
-                false,
-                false,
-                cx,
-            ))
-            .child(value(failures.minimum_failures.to_string()))
-            .child(Self::failure_step(
-                "failure-count-up",
-                "plus",
-                tr("More failures"),
-                failures,
-                false,
-                true,
-                cx,
-            ));
+            );
         setting(
             tr("Draft a memory when tools fail"),
-            tr(
-                "When this share of a turn's tool calls failed, and at least this many, the \
+            "",
+            tipped(
+                "failure-analysis-tip",
+                tr(
+                    "When this share of a turn's tool calls failed, and at least this many, the \
              model drafts what to remember about why, for you to confirm. A turn that asks \
              Wisp to remember something has a draft either way.",
+                ),
+                controls,
             ),
-            controls,
             cx,
         )
-    }
-
-    /// One step of a failure threshold, off while the drafting is off.
-    fn failure_step(
-        id: &'static str,
-        name: &'static str,
-        tip: &'static str,
-        failures: wisp_server::desktop::AutoFailureAnalysisSettings,
-        rate: bool,
-        up: bool,
-        cx: &mut Context<Self>,
-    ) -> Button {
-        let next = settings::step_failures(failures, rate, up);
-        icon_button(id, name, tip)
-            .disabled(!failures.enabled || next == failures)
-            .on_click(
-                cx.listener(move |this, _, window, cx| {
-                    this.save_failure_analysis(next, window, cx)
-                }),
-            )
     }
 
     /// Saves when a turn whose tools failed often has a memory drafted.
@@ -2652,11 +2826,9 @@ impl Workspace {
             .unwrap_or_default();
         // A profile removed since reads as the conversation's own.
         let own = !profiles.iter().any(|profile| profile.id == current);
-        let mut choices = div().h_flex().flex_wrap().gap_1().justify_end().child(
-            Button::new("subagent-model-own")
-                .label(tr("The conversation's"))
-                .small()
-                .selected(own)
+        let mut choices = model_chips().child(
+            surfaces::choice_chip("subagent-model-own", own, cx)
+                .child(tr("The conversation's"))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.save_subagent_model(String::new(), window, cx)
                 })),
@@ -2664,13 +2836,15 @@ impl Workspace {
         for profile in profiles {
             let id = profile.id.clone();
             choices = choices.child(
-                Button::new(SharedString::from(format!("subagent-model-{}", profile.id)))
-                    .label(profile.name.clone())
-                    .small()
-                    .selected(profile.id == current)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.save_subagent_model(id.clone(), window, cx)
-                    })),
+                surfaces::choice_chip(
+                    SharedString::from(format!("subagent-model-{}", profile.id)),
+                    profile.id == current,
+                    cx,
+                )
+                .child(profile.name.clone())
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.save_subagent_model(id.clone(), window, cx)
+                })),
             );
         }
         choices
@@ -2680,30 +2854,33 @@ impl Workspace {
     fn picture_model_choices(&self, cx: &mut Context<Self>) -> Div {
         let current = self.picture_model.as_str();
         let (profiles, first) = crate::settings::picture_choices(self.settings.current(), current);
-        let mut choices = div().h_flex().flex_wrap().gap_1().justify_end().child(
-            Button::new("picture-model-first")
-                .label(if profiles.is_empty() {
+        let none = profiles.is_empty();
+        let mut choices = model_chips().child(
+            surfaces::choice_chip("picture-model-first", first, cx)
+                .child(if none {
                     tr("None can see")
                 } else {
                     tr("The first that can see")
                 })
-                .small()
-                .selected(first)
-                .disabled(profiles.is_empty())
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.save_picture_model(String::new(), window, cx)
-                })),
+                .when(none, |chip| chip.opacity(0.5))
+                .when(!none, |chip| {
+                    chip.on_click(cx.listener(|this, _, window, cx| {
+                        this.save_picture_model(String::new(), window, cx)
+                    }))
+                }),
         );
         for profile in profiles {
             let id = profile.id.clone();
             choices = choices.child(
-                Button::new(SharedString::from(format!("picture-model-{}", profile.id)))
-                    .label(profile.name.clone())
-                    .small()
-                    .selected(profile.id == current)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.save_picture_model(id.clone(), window, cx)
-                    })),
+                surfaces::choice_chip(
+                    SharedString::from(format!("picture-model-{}", profile.id)),
+                    profile.id == current,
+                    cx,
+                )
+                .child(profile.name.clone())
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.save_picture_model(id.clone(), window, cx)
+                })),
             );
         }
         choices
@@ -2719,11 +2896,9 @@ impl Workspace {
             .unwrap_or_default();
         // A profile removed since reads as the conversation's own.
         let own = !profiles.iter().any(|profile| profile.id == current);
-        let mut choices = div().h_flex().flex_wrap().gap_1().justify_end().child(
-            Button::new("review-model-own")
-                .label(tr("The conversation's"))
-                .small()
-                .selected(own)
+        let mut choices = model_chips().child(
+            surfaces::choice_chip("review-model-own", own, cx)
+                .child(tr("The conversation's"))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.save_review_model(String::new(), window, cx)
                 })),
@@ -2731,13 +2906,15 @@ impl Workspace {
         for profile in profiles {
             let id = profile.id.clone();
             choices = choices.child(
-                Button::new(SharedString::from(format!("review-model-{}", profile.id)))
-                    .label(profile.name.clone())
-                    .small()
-                    .selected(profile.id == current)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.save_review_model(id.clone(), window, cx)
-                    })),
+                surfaces::choice_chip(
+                    SharedString::from(format!("review-model-{}", profile.id)),
+                    profile.id == current,
+                    cx,
+                )
+                .child(profile.name.clone())
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.save_review_model(id.clone(), window, cx)
+                })),
             );
         }
         choices
@@ -2749,11 +2926,15 @@ impl Workspace {
         let Some(defaults) = self.turn_defaults else {
             return page.child(div().text_sm().text_color(muted).child(tr("Loading…")));
         };
-        let mode = |id: &'static str, label: &'static str, full_access: bool| {
-            Button::new(id)
-                .label(label)
-                .small()
-                .selected(defaults.full_access == full_access)
+        let mode =
+            |id: &'static str, icon_name: &'static str, label: &'static str, full_access: bool| {
+                surfaces::segment(
+                    id,
+                    icon_name,
+                    label,
+                    defaults.full_access == full_access,
+                    cx,
+                )
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.save_turn_defaults(
                         TurnDefaults {
@@ -2764,69 +2945,78 @@ impl Workspace {
                         cx,
                     )
                 }))
-        };
+                .into_any_element()
+            };
         let mut page = page.child(setting(
             tr("New conversations start in"),
-            tr(
-                "Ask first: tools that change files or run commands wait for your answer. \
+            "",
+            tipped(
+                "default-access-tip",
+                tr(
+                    "Ask first: tools that change files or run commands wait for your answer. \
              Full access: they run at once. A dangerous shell command asks either way. \
              Conversations you already have keep their own choice.",
+                ),
+                surfaces::segmented(
+                    [
+                        mode("default-ask", "hand", tr("Ask first"), false),
+                        mode("default-full", "shield", tr("Full access"), true),
+                    ],
+                    cx,
+                ),
             ),
-            div()
-                .h_flex()
-                .gap_1()
-                .child(mode("default-ask", tr("Ask first"), false))
-                .child(mode("default-full", tr("Full access"), true)),
             cx,
         ));
         page = page.child(self.approval_settings(cx));
-        page = page.child(
-            div()
-                .v_flex()
-                .gap_1()
-                .pt_4()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(tr("Always allowed")),
-                )
-                .child(
-                    div()
-                        .w(px(NOTE_WIDTH))
-                        .text_xs()
-                        .text_color(muted)
-                        .child(tr(
-                            "Tools you answered \"Always in this project\" for. They run without \
+        page = page
+            .child(surfaces::settings_heading(tr("Always allowed"), cx))
+            .child(
+                surfaces::settings_note_help(
+                    tr("Tools you always allow, by project."),
+                    tr(
+                        "Tools you answered \"Always in this project\" for. They run without \
                      asking in every conversation of that project until you take them back.",
-                        )),
-                ),
-        );
+                    ),
+                    cx,
+                )
+                .pb_2(),
+            );
+        let grant_row =
+            |id: SharedString,
+             tool: &String,
+             revoke: Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>| {
+                surfaces::record_row(id.clone(), tool.clone())
+                    .icon("wrench")
+                    .mono()
+                    .action(
+                        surfaces::icon_action(
+                            SharedString::from(format!("{id}-revoke")),
+                            "close",
+                            tr("Ask again before this tool runs"),
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
+                        .on_click(move |event, window, cx| revoke(event, window, cx)),
+                    )
+            };
         if !self.global_grants.is_empty() {
-            let mut tools = div().h_flex().flex_wrap().gap_2();
-            for tool in &self.global_grants {
-                let name = tool.clone();
-                tools = tools.child(
-                    Button::new(SharedString::from(format!("revoke-everywhere-{tool}")))
-                        .icon(glyph("close"))
-                        .label(tool.clone())
-                        .small()
-                        .tooltip(tr("Ask again before this tool runs"))
-                        .on_click(cx.listener(move |this, _, window, cx| {
+            let rows: Vec<_> = self
+                .global_grants
+                .iter()
+                .map(|tool| {
+                    let name = tool.clone();
+                    grant_row(
+                        SharedString::from(format!("revoke-everywhere-{tool}")),
+                        tool,
+                        Box::new(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.revoke_global_grant(name.clone(), window, cx)
                         })),
-                );
-            }
-            page = page.child(
-                div()
-                    .v_flex()
-                    .gap_2()
-                    .py_3()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .child(div().text_sm().child(tr("Every project")))
-                    .child(tools),
-            );
+                    )
+                })
+                .collect();
+            page = page
+                .child(surfaces::settings_heading(tr("Every project"), cx))
+                .child(surfaces::record_group(rows, cx));
         }
         if self.grants.is_empty() && self.global_grants.is_empty() {
             page = page.child(
@@ -2838,33 +3028,23 @@ impl Workspace {
             );
         }
         for grants in &self.grants {
-            let mut tools = div().h_flex().flex_wrap().gap_2();
-            for tool in &grants.tools {
-                let (project, name) = (grants.project_id.clone(), tool.clone());
-                tools = tools.child(
-                    Button::new(SharedString::from(format!(
-                        "revoke-{}-{tool}",
-                        grants.project_id
-                    )))
-                    .icon(glyph("close"))
-                    .label(tool.clone())
-                    .small()
-                    .tooltip(tr("Ask again before this tool runs"))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.revoke_grant(project.clone(), name.clone(), window, cx)
-                    })),
-                );
-            }
-            page = page.child(
-                div()
-                    .v_flex()
-                    .gap_2()
-                    .py_3()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .child(div().text_sm().child(grants.project_name.clone()))
-                    .child(tools),
-            );
+            let rows: Vec<_> = grants
+                .tools
+                .iter()
+                .map(|tool| {
+                    let (project, name) = (grants.project_id.clone(), tool.clone());
+                    grant_row(
+                        SharedString::from(format!("revoke-{}-{tool}", grants.project_id)),
+                        tool,
+                        Box::new(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            this.revoke_grant(project.clone(), name.clone(), window, cx)
+                        })),
+                    )
+                })
+                .collect();
+            page = page
+                .child(surfaces::settings_heading(grants.project_name.clone(), cx))
+                .child(surfaces::record_group(rows, cx));
         }
         page
     }

@@ -189,13 +189,7 @@ impl Workspace {
         let session = subagent.session.clone();
         card_box(key, cx)
             .child(card_head("bot", label, None, Some((word.into(), tone)), cx))
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .truncate()
-                    .child(subagent.title.clone()),
-            )
+            .child(div().text_sm().truncate().child(subagent.title.clone()))
             .child(
                 div()
                     .text_sm()
@@ -255,13 +249,7 @@ impl Workspace {
                 .gap_2()
                 .min_h(px(28.))
                 .child(div().w(px(72.)).flex_shrink_0().child(chip(word, tone, cx)))
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_xs()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(task.id.clone()),
-                )
+                .child(div().flex_shrink_0().text_xs().child(task.id.clone()))
                 .child(
                     div()
                         .flex_1()
@@ -344,13 +332,7 @@ fn card_head(
         .h_flex()
         .gap_2()
         .child(icon(name).text_color(muted))
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .child(label),
-        )
+        .child(div().flex_shrink_0().text_sm().child(label))
         .children(note.map(|note| div().text_xs().text_color(muted).child(note)))
         .child(div().flex_1())
         .children(status.map(|(word, tone)| chip(word, tone, cx)))

@@ -282,7 +282,7 @@ impl Workspace {
                 div()
                     .h_flex()
                     .gap_2()
-                    .child(chip(phase, tone, cx))
+                    .child(surfaces::status(phase, tone, cx))
                     .child(surfaces::panel_label(progress.title.clone())),
             )
             .child(
@@ -294,14 +294,18 @@ impl Workspace {
         for task in progress.tasks.iter().take(50) {
             let (status, tone) = agents::swarm_task(task.status);
             card = card.child(
-                div().h_flex().gap_2().child(chip(status, tone, cx)).child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_xs()
-                        .child(task.title.clone()),
-                ),
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(surfaces::status(status, tone, cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .child(task.title.clone()),
+                    ),
             );
         }
         if !progress.summary.is_empty() {
@@ -317,7 +321,7 @@ impl Workspace {
         let mut head = div()
             .h_flex()
             .gap_2()
-            .child(chip(status, tone, cx))
+            .child(surfaces::status(status, tone, cx))
             .children(batch.nested.then(|| chip(tr("Nested"), Tone::Neutral, cx)))
             .child(
                 div()
@@ -372,23 +376,17 @@ impl Workspace {
                     })),
             );
         }
-        let mut card = surfaces::panel_entry(cx).gap_2().child(head).child(
-            div()
-                .font_weight(FontWeight::MEDIUM)
-                .child(batch.goal.clone()),
-        );
+        let mut card = surfaces::panel_entry(cx)
+            .gap_2()
+            .child(head)
+            .child(div().child(batch.goal.clone()));
         for (number, task) in batch.tasks.iter().enumerate() {
             let (status, tone) = agents::task_status(&task.status);
             let mut line = div()
                 .h_flex()
                 .gap_2()
-                .child(
-                    div()
-                        .text_xs()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(task.id.clone()),
-                )
-                .child(chip(status, tone, cx))
+                .child(div().text_xs().child(task.id.clone()))
+                .child(surfaces::status(status, tone, cx))
                 .children(
                     task.expert
                         .clone()
@@ -508,7 +506,7 @@ impl Workspace {
                     .child(format!("#{}", helper.number)),
             );
             if let Some((status, tone)) = &helper.status {
-                head = head.child(chip(status.clone(), *tone, cx));
+                head = head.child(surfaces::status(status.clone(), *tone, cx));
             }
             head = head.child(div().flex_1()).child(
                 icon_button(
@@ -522,14 +520,12 @@ impl Workspace {
                     cx.notify();
                 })),
             );
-            let mut card = surfaces::panel_entry(cx).child(head).child(
-                div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(match helper.question.as_str() {
-                        "" => tr("A question that could not be read").to_owned(),
-                        question => question.to_owned(),
-                    }),
-            );
+            let mut card = surfaces::panel_entry(cx).child(head).child(div().child(
+                match helper.question.as_str() {
+                    "" => tr("A question that could not be read").to_owned(),
+                    question => question.to_owned(),
+                },
+            ));
             if !helper.focus.is_empty() {
                 card = card.child(
                     div()

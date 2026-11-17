@@ -5,11 +5,10 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_dto::NetworkSettings;
 
-use super::{Workspace, settings_sections::setting};
+use super::{Workspace, settings_sections::explained_setting, shell::glyph, surfaces};
 use crate::{backend::receive, settings};
 
 /// The fields in the order of `settings::network_form`: what each is called
@@ -125,18 +124,14 @@ impl Workspace {
         };
         let typed = self.typed_network(cx);
         let values = settings::network_values(&typed);
+        // A heading's explanation is its help icon's tooltip.
         let heading = |title: &'static str, note: &'static str| {
-            div()
-                .v_flex()
-                .gap_1()
-                .pt_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(title),
-                )
-                .child(div().w(px(640.)).text_xs().text_color(muted).child(note))
+            surfaces::settings_heading_help(
+                title,
+                SharedString::from(format!("network-help-{title}")),
+                note,
+                cx,
+            )
         };
         let mut page = page.child(heading(
             tr("Routes"),
@@ -148,16 +143,16 @@ impl Workspace {
         ));
         for (index, ((title, note), field)) in FIELDS.iter().zip(&self.network_fields).enumerate() {
             if index == settings::NETWORK_ROUTES {
-                page = page.child(div().pt_4().child(heading(
+                page = page.child(heading(
                     tr("Packages"),
                     tr("Advice the model is given with every turn, not a rule the app enforces."),
-                )));
+                ));
             }
             let mut control = div()
                 .v_flex()
                 .gap_1()
-                .w(px(240.))
-                .child(Input::new(field).small());
+                .w(px(260.))
+                .child(surfaces::input(field, cx).small());
             if index < settings::NETWORK_ROUTES {
                 control = control.child(
                     div()
@@ -168,17 +163,22 @@ impl Workspace {
                 );
             }
             // `setting` words the title; the note is worded here.
-            page = page.child(setting(title, tr(note), control, cx));
+            page = page.child(explained_setting(title, "", tr(note), control, cx));
         }
-        let mut actions = div().h_flex().gap_3().pt_4().child(
+        let mut actions = div().h_flex().items_center().gap_3().pt_4().child(
             Button::new("network-save")
+                .icon(glyph("save"))
                 .label(tr("Save"))
                 .small()
                 .primary()
                 .on_click(cx.listener(|this, _, window, cx| this.save_network(window, cx))),
         );
         if self.network_saved && &typed == saved {
-            actions = actions.child(div().text_xs().text_color(muted).child(tr("Saved")));
+            actions = actions.child(surfaces::stamp(
+                surfaces::StampKind::Success,
+                tr("Saved"),
+                cx,
+            ));
         }
         page.child(actions)
     }

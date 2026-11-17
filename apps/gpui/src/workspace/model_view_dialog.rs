@@ -167,7 +167,6 @@ impl Workspace {
                                         .w(px(150.))
                                         .flex_shrink_0()
                                         .truncate()
-                                        .font_weight(FontWeight::MEDIUM)
                                         .child(tool.name.clone()),
                                 )
                                 .child(
@@ -284,7 +283,6 @@ impl Workspace {
                                 .truncate()
                                 .text_xs()
                                 .pt_0p5()
-                                .font_weight(FontWeight::MEDIUM)
                                 .child(model_view::label(row)),
                         )
                         .child(

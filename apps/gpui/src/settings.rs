@@ -104,16 +104,16 @@ impl Section {
 
     pub fn icon(self) -> &'static str {
         match self {
-            Section::General => "controls",
+            Section::General => "adjustments",
             Section::Network => "share",
             Section::Models => "bot",
-            Section::AcpAgents => "terminal",
+            Section::AcpAgents => "swarm",
             Section::Conversation => "chat",
             Section::Experts => "user",
-            Section::QuickActions => "bolt",
+            Section::QuickActions => "file-play",
             Section::Workflows => "split",
             Section::Pet => "sparkles",
-            Section::Remote => "monitor",
+            Section::Remote => "sync",
             Section::Channels => "bubble",
             Section::DecisionModel => "check-square",
             Section::Skills => "skill",
@@ -123,7 +123,7 @@ impl Section {
             Section::Credentials => "lock",
             Section::Environments => "server",
             Section::Permissions => "shield",
-            Section::Hooks => "code",
+            Section::Hooks => "fork",
             Section::Usage => "gauge",
             Section::Storage => "database",
         }
@@ -231,8 +231,7 @@ pub enum Update {
 pub fn update_note(update: Option<&Update>, at_start: bool) -> (String, bool) {
     match update {
         None if at_start => (
-            tr("Wisp looks for a newer version when it starts and when you ask; nothing is downloaded.")
-                .to_owned(),
+            tr("Wisp looks for a newer version at start and when you ask.").to_owned(),
             false,
         ),
         None => (
@@ -769,6 +768,14 @@ pub fn runs_on_label(choice: &str, default: Option<&str>) -> String {
     }
 }
 
+/// The icon of where runs start: this computer, or a remote host.
+pub fn runs_on_icon(choice: &str, default: Option<&str>) -> &'static str {
+    match (choice, default) {
+        ("", None) | (RUNS_LOCALLY, _) => "computer",
+        _ => "server",
+    }
+}
+
 /// Why work cannot run on a host yet, if it cannot: a host has to pass a
 /// check first.
 pub fn host_caution(check: Option<&EnvironmentCheck>) -> Option<&'static str> {
@@ -1288,7 +1295,7 @@ mod tests {
                 false
             )
         );
-        assert!(update_note(None, true).0.contains("when it starts"));
+        assert!(update_note(None, true).0.contains("at start"));
         assert_eq!(
             update_note(Some(&Update::Checking), true),
             ("Checking…".into(), false)
