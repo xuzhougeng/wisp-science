@@ -7,34 +7,14 @@ use crate::publication_reproduction::{
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use tauri::State;
+use wisp_store::publication_lineage::{lineage_summary, PublicationLineageSummary};
 use wisp_store::{
-    canonical_json_sha256, ArtifactCaptureTiming, CapsuleBuild, EvidenceBinding,
-    EvidenceBindingDraft, EvidenceReview, EvidenceSelectionState, EvidenceSourceKind,
-    EvidenceSupersession, EvidenceVisibility, LineageBasis, LineageConfidence, Publication,
+    CapsuleBuild, EvidenceBinding, EvidenceBindingDraft, EvidenceReview, EvidenceSelectionState,
+    EvidenceSourceKind, EvidenceSupersession, EvidenceVisibility, Publication,
     PublicationEvidenceDrift, PublicationItem, PublicationItemKind, PublicationItemLink,
     PublicationReadiness, PublicationReadinessFinding, PublicationRevision, PublicationWaiver,
     ReproductionResult, ReproductionRun, Store,
 };
-
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct PublicationLineageSummary {
-    pub binding_id: String,
-    pub source_label: String,
-    pub quality: LineageConfidence,
-    pub bases: Vec<LineageBasis>,
-    pub exact_version_id: Option<String>,
-    pub version_number: Option<i64>,
-    pub checksum: Option<String>,
-    pub capture_timing: Option<ArtifactCaptureTiming>,
-    pub producing_run_id: Option<String>,
-    pub producing_run_title: Option<String>,
-    pub input_labels: Vec<String>,
-    pub code_labels: Vec<String>,
-    pub run_input_count: usize,
-    pub run_output_count: usize,
-    pub code_snapshot_count: usize,
-    pub environment_captured: bool,
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct PublicationWorkspace {
@@ -188,170 +168,6 @@ fn readiness_from_report(
         manifest_json: report.manifest_json,
         manifest_sha256: report.manifest_sha256,
         can_freeze,
-    })
-}
-
-fn environment_captured(snapshot: &str) -> bool {
-    match serde_json::from_str::<serde_json::Value>(snapshot) {
-        Ok(serde_json::Value::Object(values)) => !values.is_empty(),
-        Ok(serde_json::Value::Array(values)) => !values.is_empty(),
-        Ok(value) => !value.is_null(),
-        Err(_) => !snapshot.trim().is_empty(),
-    }
-}
-
-async fn lineage_summary(
-    store: &Store,
-    binding: &EvidenceBinding,
-) -> anyhow::Result<PublicationLineageSummary> {
-    let mut source_label = binding.source_id.clone();
-    let mut exact_version_id = None;
-    let mut version_number = None;
-    let mut checksum = None;
-    let mut capture_timing = None;
-    let mut producing_run_id = binding.run_id.clone();
-    let mut producing_run_title = None;
-    let mut input_labels = Vec::new();
-    let mut code_labels = Vec::new();
-    let mut environment = false;
-    let mut anchored = false;
-
-    if let Some(version_id) = binding.artifact_version_id.as_deref() {
-        if let Some(context) = store.get_artifact_version_context(version_id).await? {
-            source_label = context.filename;
-            exact_version_id = Some(context.version.id);
-            version_number = Some(context.version.version_number);
-            checksum = context.version.checksum;
-            capture_timing = Some(context.version.capture_timing);
-            producing_run_id = context.version.producing_run_id;
-            environment = context.version.env_snapshot_hash.is_some();
-        }
-    } else if matches!(
-        binding.source_kind,
-        EvidenceSourceKind::ExecutionLog
-            | EvidenceSourceKind::MessageSpan
-            | EvidenceSourceKind::ToolCall
-            | EvidenceSourceKind::CodeCell
-            | EvidenceSourceKind::ExternalResource
-    ) {
-        if let Ok(snapshot) =
-            serde_json::from_str::<serde_json::Value>(&binding.source_snapshot_json)
-        {
-            anchored = snapshot.get("anchor").is_some_and(|anchor| {
-                snapshot
-                    .get("anchor_sha256")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|hash| hash == canonical_json_sha256(anchor).1)
-            });
-            source_label = match binding.source_kind {
-                EvidenceSourceKind::MessageSpan => snapshot
-                    .pointer("/anchor/text_snapshot")
-                    .and_then(serde_json::Value::as_str)
-                    .map(|text| text.chars().take(80).collect())
-                    .unwrap_or(source_label),
-                EvidenceSourceKind::ToolCall => snapshot
-                    .pointer("/anchor/name")
-                    .and_then(serde_json::Value::as_str)
-                    .map(|name| format!("Tool result: {name}"))
-                    .unwrap_or(source_label),
-                EvidenceSourceKind::ExecutionLog | EvidenceSourceKind::CodeCell => {
-                    let language = snapshot
-                        .pointer("/anchor/language")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("Execution");
-                    let cell = snapshot
-                        .pointer("/anchor/cell_index")
-                        .and_then(serde_json::Value::as_i64)
-                        .unwrap_or_default();
-                    format!("{language} cell {cell}")
-                }
-                EvidenceSourceKind::ExternalResource => snapshot
-                    .pointer("/anchor/uri")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string)
-                    .unwrap_or(source_label),
-                _ => source_label,
-            };
-        }
-    }
-
-    let mut bases = Vec::new();
-    let mut run_input_count = 0;
-    let mut run_output_count = 0;
-    let mut code_snapshot_count = 0;
-    let mut quality = if anchored {
-        LineageConfidence::Exact
-    } else {
-        LineageConfidence::Uncertain
-    };
-    if let Some(run_id) = producing_run_id.as_deref() {
-        if let Some(run) = store.get_run(run_id).await? {
-            producing_run_title = Some(run.title.clone());
-            source_label = if binding.source_kind == EvidenceSourceKind::Run {
-                run.title.clone()
-            } else {
-                source_label
-            };
-            environment |= environment_captured(&run.env_snapshot_json);
-            let inputs = store.list_run_inputs(run_id).await?;
-            let outputs = store.list_run_outputs(run_id).await?;
-            let code = store.list_run_code_snapshots(run_id).await?;
-            input_labels = inputs
-                .iter()
-                .map(|input| input.source_ref.clone())
-                .collect();
-            code_labels = code
-                .iter()
-                .map(|code| {
-                    code.source_path
-                        .clone()
-                        .unwrap_or_else(|| code.source_kind.clone())
-                })
-                .collect();
-            run_input_count = inputs.len();
-            run_output_count = outputs.len();
-            code_snapshot_count = code.len();
-            for input in &inputs {
-                if !bases.contains(&input.basis) {
-                    bases.push(input.basis);
-                }
-            }
-            quality = if inputs
-                .iter()
-                .any(|input| input.confidence == LineageConfidence::Uncertain)
-            {
-                LineageConfidence::Uncertain
-            } else if !inputs.is_empty()
-                && inputs
-                    .iter()
-                    .all(|input| input.confidence == LineageConfidence::Exact)
-                && !code.is_empty()
-                && environment
-            {
-                LineageConfidence::Exact
-            } else {
-                LineageConfidence::Likely
-            };
-        }
-    }
-
-    Ok(PublicationLineageSummary {
-        binding_id: binding.id.clone(),
-        source_label,
-        quality,
-        bases,
-        exact_version_id,
-        version_number,
-        checksum,
-        capture_timing,
-        producing_run_id,
-        producing_run_title,
-        input_labels,
-        code_labels,
-        run_input_count,
-        run_output_count,
-        code_snapshot_count,
-        environment_captured: environment,
     })
 }
 
@@ -831,7 +647,9 @@ pub(super) async fn verify_publication_revision(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wisp_store::{ArtifactMaterialization, ArtifactVersionDraft, RunRecord, RunStatus};
+    use wisp_store::{
+        ArtifactCaptureTiming, ArtifactMaterialization, ArtifactVersionDraft, RunRecord, RunStatus,
+    };
 
     async fn fixture(name: &str) -> (std::path::PathBuf, Store) {
         let root = std::env::temp_dir().join(format!(

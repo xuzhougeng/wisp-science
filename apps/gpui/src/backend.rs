@@ -204,6 +204,27 @@ impl Backend {
         self.local(move |host| async move { host.skill_options(&project, &query, limit).await })
     }
 
+    /// Artifacts of the other projects whose file name holds `query`, for
+    /// a message in `session` to carry.
+    pub fn artifacts_elsewhere(
+        &self,
+        project: String,
+        session: String,
+        query: String,
+        limit: usize,
+    ) -> Reply<Vec<wisp_server::desktop::OtherArtifact>> {
+        self.local(move |host| async move {
+            host.artifacts_elsewhere(&project, &session, &query, limit)
+                .await
+        })
+    }
+
+    /// The Python and R a message can name, on this computer and the saved
+    /// SSH hosts whose interpreter is known.
+    pub fn runtime_references(&self) -> Reply<Vec<ReferenceOption>> {
+        self.local(|host| async move { host.runtime_references().await })
+    }
+
     /// Copies files picked outside the project into it and returns the
     /// project-relative path of each.
     pub fn import_attachments(&self, project: String, files: Vec<PathBuf>) -> Reply<Vec<String>> {
@@ -923,6 +944,26 @@ impl Backend {
         self.local(
             move |host| async move { host.set_host_storage(&project, &alias, storage).await },
         )
+    }
+
+    /// The Python and Rscript paths kept on a saved SSH host, and what its
+    /// last check found.
+    pub fn host_interpreters(
+        &self,
+        alias: String,
+    ) -> Reply<wisp_server::desktop::HostInterpreters> {
+        self.local(move |host| async move { host.host_interpreters(&alias).await })
+    }
+
+    pub fn set_host_interpreters(
+        &self,
+        alias: String,
+        python: String,
+        rscript: String,
+    ) -> Reply<wisp_server::desktop::HostInterpreters> {
+        self.local(move |host| async move {
+            host.set_host_interpreters(&alias, &python, &rscript).await
+        })
     }
 
     /// The SSH hosts a conversation's work may run on, by alias.
@@ -2014,6 +2055,7 @@ impl Backend {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn bind_paper_source(
         &self,
         project: String,
@@ -2022,9 +2064,29 @@ impl Backend {
         kind: wisp_server::desktop::PaperSourceKind,
         source: String,
         purpose: String,
+        selection: wisp_server::desktop::PaperSelection,
+        audience: wisp_server::desktop::PaperAudience,
     ) -> Reply<()> {
         self.local(move |host| async move {
-            host.bind_paper_source(&project, &version, &item, kind, &source, &purpose)
+            host.bind_paper_source(
+                &project, &version, &item, kind, &source, &purpose, selection, audience,
+            )
+            .await
+        })
+    }
+
+    /// Whether evidence of a draft version is meant for the paper, and who
+    /// may see it.
+    pub fn mark_paper_source(
+        &self,
+        project: String,
+        version: String,
+        binding: String,
+        selection: wisp_server::desktop::PaperSelection,
+        audience: wisp_server::desktop::PaperAudience,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.mark_paper_source(&project, &version, &binding, selection, audience)
                 .await
         })
     }
@@ -2477,6 +2539,20 @@ impl Backend {
         self.local(
             move |host| async move { host.start_runtime(&project, &session, language).await },
         )
+    }
+
+    /// Starts the conversation's Python or R on a saved SSH host.
+    pub fn start_host_runtime(
+        &self,
+        project: String,
+        session: String,
+        alias: String,
+        language: wisp_server::desktop::RuntimeLanguage,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.start_host_runtime(&project, &session, &alias, language)
+                .await
+        })
     }
 
     pub fn runtime_objects(

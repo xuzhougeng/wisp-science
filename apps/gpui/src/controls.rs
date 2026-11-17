@@ -28,6 +28,20 @@ pub fn runtime_label(row: &RuntimeRow) -> String {
     }
 }
 
+/// The SSH host an interpreter runs on, by alias; `None` is this computer.
+pub fn runtime_host(row: &RuntimeRow) -> Option<&str> {
+    row.context.strip_prefix("ssh:")
+}
+
+/// An interpreter's chip above the composer: what [`runtime_label`] says,
+/// and the host it runs on when that is not this computer.
+pub fn runtime_chip_label(row: &RuntimeRow) -> String {
+    match runtime_host(row) {
+        Some(host) => crate::i18n::fill(tr("{} · on {}"), &[&runtime_label(row), &host]),
+        None => runtime_label(row),
+    }
+}
+
 /// What the chip says when pointed at: where the interpreter is, how much
 /// it holds, and why it stopped.
 pub fn runtime_detail(row: &RuntimeRow, now: i64) -> String {
@@ -404,6 +418,7 @@ mod tests {
         let mut row = RuntimeRow {
             id: "r1".into(),
             language: RuntimeLanguage::Python,
+            context: "local".into(),
             state: RuntimeState::Ready,
             interpreter: Some("/opt/py/bin/python3".into()),
             version: Some(" 3.12.4 ".into()),
@@ -416,6 +431,13 @@ mod tests {
         };
         let now = 1_700_000_600;
         assert_eq!(runtime_label(&row), "Python 3.12.4 · ready");
+        // On this computer the chip says no more; on a host it names it.
+        assert_eq!(runtime_host(&row), None);
+        assert_eq!(runtime_chip_label(&row), "Python 3.12.4 · ready");
+        row.context = "ssh:gpu".into();
+        assert_eq!(runtime_host(&row), Some("gpu"));
+        assert_eq!(runtime_chip_label(&row), "Python 3.12.4 · ready · on gpu");
+        row.context = "local".into();
         // Started and not run since: no second time.
         assert_eq!(
             runtime_detail(&row, now),
@@ -443,6 +465,7 @@ mod tests {
         let starting = RuntimeRow {
             id: "r2".into(),
             language: RuntimeLanguage::R,
+            context: "local".into(),
             state: RuntimeState::Starting,
             interpreter: None,
             version: None,

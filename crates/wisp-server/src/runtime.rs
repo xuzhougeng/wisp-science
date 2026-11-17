@@ -605,26 +605,113 @@ pub async fn build(
         runs.clone(),
         scope.clone(),
     )));
+    let runner = runs.runner();
     agent.add_tool(Box::new(HarvestRunTool::new_in_scope(
         store.clone(),
         runs,
         scope,
     )));
     let (worker, r_worker) = workers();
-    let runtime = session_runtimes(config, session, service_keys.to_vec());
+    let runtime = session_runtimes(config, store, runner, session, service_keys.to_vec());
+    // A call that names no `context_id` goes to the conversation's
+    // environment, and one on a host it has not attached is refused, as in
+    // the WebView (`SessionExecutionContextTool`).
+    let in_conversation = |tool: Box<dyn wisp_tools::Tool>| -> Box<dyn wisp_tools::Tool> {
+        Box::new(
+            wisp_runs::session_context_tool::SessionExecutionContextTool::new(
+                tool,
+                store.clone(),
+                frame,
+            ),
+        )
+    };
+    // Saving a context's interpreter path, the WebView's tool, offered to a
+    // conversation's own agent as there.
+    let scope_key = match store.frame_state_scope(frame).await? {
+        Some(scope) => scope.scope_key().to_owned(),
+        None => wisp_store::MAINLINE_SCOPE_KEY.to_owned(),
+    };
+    agent.add_tool(in_conversation(Box::new(interpreter_tool(
+        store,
+        runtime.clone(),
+        &root,
+        scope_key,
+    ))));
     if worker.is_file() {
-        agent.add_tool(Box::new(wisp_runtime::ReplTool::new(
+        agent.add_tool(in_conversation(Box::new(wisp_runtime::ReplTool::new(
             runtime.clone(),
             root.to_string_lossy(),
-        )));
+        ))));
     }
     if r_worker.is_file() {
-        agent.add_tool(Box::new(wisp_runtime::RTool::new(
+        agent.add_tool(in_conversation(Box::new(wisp_runtime::RTool::new(
             runtime,
             root.to_string_lossy(),
-        )));
+        ))));
     }
     Ok(agent)
+}
+
+/// Why `set_runtime_interpreter` refuses `local` here: this computer's
+/// interpreters start from the managed environment and `PATH`
+/// (`wisp_runtime`'s own launcher), which never reads a path kept on the
+/// `local` context as the WebView's launcher does.
+pub(crate) const LOCAL_INTERPRETER_REFUSED: &str = "this app starts Python and R on this computer from its managed environment and PATH and does not read a path saved for 'local'; to use another interpreter here, run it through the shell or a run. A path can be saved for an SSH host (ssh:<alias>).";
+
+/// A conversation's interpreters, as the shared `set_runtime_interpreter`
+/// restarts them: keyed as its `python` and `r` key theirs.
+struct ConversationRuntimes(wisp_runtime::RuntimeManager);
+
+fn runtime_key(key: &wisp_runs::runtime_config_tool::InterpreterKey) -> wisp_runtime::RuntimeKey {
+    use wisp_runs::runtime_launch::InterpreterLanguage;
+    wisp_runtime::RuntimeKey {
+        project_id: key.project_id.clone(),
+        scope_key: key.scope_key.clone(),
+        session_id: key.session_id.clone(),
+        context_id: key.context_id.clone(),
+        language: match key.language {
+            InterpreterLanguage::Python => wisp_runtime::RuntimeLanguage::Python,
+            InterpreterLanguage::R => wisp_runtime::RuntimeLanguage::R,
+        },
+    }
+}
+
+#[async_trait::async_trait]
+impl wisp_runs::runtime_config_tool::InterpreterRuntimes for ConversationRuntimes {
+    fn has_runtime(&self, key: &wisp_runs::runtime_config_tool::InterpreterKey) -> bool {
+        let key = runtime_key(key);
+        self.0.list().iter().any(|runtime| runtime.key == key)
+    }
+
+    async fn restart(
+        &self,
+        key: &wisp_runs::runtime_config_tool::InterpreterKey,
+        project_root: PathBuf,
+    ) -> Result<()> {
+        self.0
+            .restart(runtime_key(key), project_root)
+            .await
+            .map(drop)
+    }
+}
+
+/// The WebView's `set_runtime_interpreter` for a conversation whose
+/// interpreters are `runtime`, keyed by the project folder `root` as its
+/// `python` and `r` tools key them; `local` is refused.
+pub(crate) fn interpreter_tool(
+    store: &Store,
+    runtime: wisp_runtime::RuntimeManager,
+    root: &std::path::Path,
+    scope_key: String,
+) -> wisp_runs::runtime_config_tool::SetRuntimeInterpreterTool {
+    wisp_runs::runtime_config_tool::SetRuntimeInterpreterTool::new_in_session(
+        store.clone(),
+        Box::new(ConversationRuntimes(runtime)),
+        root.to_string_lossy(),
+        scope_key,
+        "",
+    )
+    .refusing(wisp_runtime::LOCAL_CONTEXT_ID, LOCAL_INTERPRETER_REFUSED)
 }
 
 /// The Python and R workers interpreters are started with; a path that
@@ -646,8 +733,14 @@ pub(crate) fn workers() -> (PathBuf, PathBuf) {
 /// `envs` are the service keys and credentials the interpreters are
 /// started with, as the WebView starts its kernels; an interpreter already
 /// running keeps the ones it started with.
+///
+/// They start on this computer, or on a saved SSH host named by the call
+/// (or by the conversation's environment); `runner` copies the worker to a
+/// host, as the conversation's runs reach it.
 pub(crate) fn session_runtimes(
     config: &Config,
+    store: &Store,
+    runner: Arc<dyn wisp_runs::RunCommandRunner>,
     session: &Session,
     envs: Vec<(String, String)>,
 ) -> wisp_runtime::RuntimeManager {
@@ -661,15 +754,24 @@ pub(crate) fn session_runtimes(
             // is looked for first, as in the WebView desktop; and the R it
             // installed, looked for each time R starts.
             let data = config.data.clone();
-            wisp_runtime::RuntimeManager::local_with_rscript(
+            let local = wisp_runtime::RuntimeManager::local_launcher(
                 config.data.clone(),
-                worker,
-                Some(r_worker),
+                worker.clone(),
+                Some(r_worker.clone()),
                 envs,
                 Some(Arc::new(move || {
                     crate::toolchain::Layout::new(&data).rscript()
                 })),
-            )
+            );
+            wisp_runtime::RuntimeManager::new(Arc::new(
+                crate::context_runtime::ContextRuntimeLauncher::new(
+                    local,
+                    store.clone(),
+                    worker,
+                    r_worker,
+                    runner,
+                ),
+            ))
         })
         .clone()
 }
@@ -865,7 +967,7 @@ async fn artifact_line(store: &Store, id: &str, frame: &str, root: &Path) -> Res
 /// What each kind tells the model is the WebView's; an environment or a
 /// runtime named here is also attached to the conversation, so its work may
 /// run there, as the WebView does.
-async fn reference_context(
+pub(crate) async fn reference_context(
     store: &Store,
     skills: &SkillIndex,
     references: &[wisp_dto::ComposerReferenceArg],
@@ -941,11 +1043,14 @@ async fn reference_context(
                         "Unknown runtime language '{language}'."
                     );
                     let context = environment(context_id).await?;
-                    // This host keeps its interpreters on this computer.
+                    // This host starts interpreters here and on SSH hosts.
                     anyhow::ensure!(
-                        context.kind == ExecutionContextKind::Local,
+                        matches!(
+                            context.kind,
+                            ExecutionContextKind::Local | ExecutionContextKind::Ssh
+                        ),
                         "The {language} runtime on '{}' cannot be used here: Python and R run on \
-                         this computer.",
+                         this computer or a saved SSH host.",
                         label(&context)
                     );
                     runtime_lines.push(format!(
@@ -953,6 +1058,8 @@ async fn reference_context(
                          `{language}` tool with this context_id.",
                         label(&context)
                     ));
+                    // As the WebView's `enable_referenced_contexts`.
+                    attach.push(context);
                 }
             }
             Reference::Workflow { id } => {

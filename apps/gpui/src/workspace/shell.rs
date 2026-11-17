@@ -2279,7 +2279,7 @@ impl Workspace {
                     .child(
                         div()
                             .id(SharedString::from(format!("runtime-label-{}", row.id)))
-                            .child(controls::runtime_label(row))
+                            .child(controls::runtime_chip_label(row))
                             .tooltip({
                                 let detail = controls::runtime_detail(row, unix_now());
                                 move |window, cx| {

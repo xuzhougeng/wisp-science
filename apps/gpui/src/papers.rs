@@ -1,9 +1,10 @@
 //! Paper evidence: how a paper's versions, items and their sources read,
-//! how a passage chosen in a message is pinned, and how clean reruns and
-//! capsules of a finalized version read.
+//! how a passage chosen in a message is pinned, where a source came from,
+//! and how clean reruns and capsules of a finalized version read.
 use wisp_server::desktop::{
-    Paper, PaperAudience, PaperCapsule, PaperCapsuleStatus, PaperCheck, PaperItemKind, PaperLevel,
-    PaperRerun, PaperRerunOutput, PaperRerunStatus, PaperSource, PaperSourceChoice,
+    Paper, PaperAudience, PaperCapsule, PaperCapsuleStatus, PaperCapture, PaperCheck, PaperDrift,
+    PaperItem, PaperItemKind, PaperLevel, PaperLineage, PaperLineageQuality, PaperRerun,
+    PaperRerunOutput, PaperRerunStatus, PaperSelection, PaperSource, PaperSourceChoice,
     PaperSourceKind, PaperVersion, PaperVersionState,
 };
 
@@ -44,8 +45,149 @@ pub fn source_kind_label(kind: PaperSourceKind) -> &'static str {
         PaperSourceKind::Result => tr("Result"),
         PaperSourceKind::Run => tr("Run"),
         PaperSourceKind::Passage => tr("Passage"),
-        PaperSourceKind::Other => tr("Other source"),
+        PaperSourceKind::ToolCall => tr("Tool result"),
+        PaperSourceKind::ExecutionLog => tr("Execution log"),
+        PaperSourceKind::CodeCell => tr("Code cell"),
+        PaperSourceKind::Resource => tr("External resource"),
     }
+}
+
+pub fn selection_label(selection: PaperSelection) -> &'static str {
+    match selection {
+        PaperSelection::Candidate => tr("Candidate"),
+        PaperSelection::Selected => tr("Selected"),
+        PaperSelection::Rejected => tr("Rejected"),
+    }
+}
+
+/// The kinds of exact anchor the advanced dialog takes, as the WebView
+/// names them.
+pub const ANCHOR_KINDS: [&str; 5] = [
+    "message_span",
+    "tool_call",
+    "execution_log",
+    "code_cell",
+    "external_resource",
+];
+
+pub fn anchor_kind_label(kind: &str) -> &'static str {
+    match kind {
+        "message_span" => tr("Message span"),
+        "tool_call" => tr("Tool result"),
+        "execution_log" => tr("Execution log"),
+        "code_cell" => tr("Code cell"),
+        _ => tr("External resource"),
+    }
+}
+
+/// The items `editing` may be put under: every other item of the shown
+/// version except those inside it, which would put it inside itself. A new
+/// item (`editing` empty) may go under any.
+pub fn parent_choices<'a>(paper: &'a Paper, editing: &str) -> Vec<&'a PaperItem> {
+    let mut inside = std::collections::HashSet::new();
+    if !editing.is_empty() {
+        inside.insert(editing);
+        // Items come in outline order, so a child follows its parent.
+        for item in &paper.items {
+            if item
+                .parent
+                .as_deref()
+                .is_some_and(|parent| inside.contains(parent))
+            {
+                inside.insert(item.id.as_str());
+            }
+        }
+    }
+    paper
+        .items
+        .iter()
+        .filter(|item| !inside.contains(item.id.as_str()))
+        .collect()
+}
+
+pub fn quality_label(quality: PaperLineageQuality) -> &'static str {
+    match quality {
+        PaperLineageQuality::Exact => tr("Exact"),
+        PaperLineageQuality::Likely => tr("Likely"),
+        PaperLineageQuality::Uncertain => tr("Uncertain"),
+    }
+}
+
+/// The analysis chain under a source, under the WebView card's headings:
+/// the files the run read, the run with its code, and the source itself.
+pub fn lineage_chain(source: &PaperSource) -> [(&'static str, String); 3] {
+    let lineage = &source.lineage;
+    let unrecorded = || tr("Source not recorded").to_owned();
+    let mut run = lineage.run_title.clone().unwrap_or_else(unrecorded);
+    if !lineage.code.is_empty() {
+        run.push_str(" · ");
+        run.push_str(&lineage.code.join(", "));
+    }
+    [
+        (
+            tr("Project results"),
+            if lineage.inputs.is_empty() {
+                unrecorded()
+            } else {
+                lineage.inputs.join(", ")
+            },
+        ),
+        (tr("Analysis runs"), run),
+        (tr("Selected result"), source.name.clone()),
+    ]
+}
+
+/// The source and environment details, one fact a line, as the WebView's
+/// collapsed details list them.
+pub fn lineage_details(lineage: &PaperLineage) -> Vec<String> {
+    let mut lines = vec![fill(tr("Lineage: {}"), &[&quality_label(lineage.quality)])];
+    if let Some(version) = lineage.version {
+        lines.push(format!("v{version}"));
+    }
+    if let Some(checksum) = &lineage.checksum {
+        lines.push(fingerprint(checksum));
+    }
+    if let Some(capture) = lineage.capture {
+        lines.push(
+            match capture {
+                PaperCapture::AtCreation => tr("Captured at creation"),
+                PaperCapture::Late => tr("Late capture"),
+                PaperCapture::Unknown => tr("Capture time unknown"),
+            }
+            .to_owned(),
+        );
+    }
+    lines.push(fill(
+        tr("{} inputs · {} outputs · {} code snapshots"),
+        &[
+            &lineage.input_count,
+            &lineage.output_count,
+            &lineage.code_count,
+        ],
+    ));
+    lines.push(
+        if lineage.environment {
+            tr("Environment captured")
+        } else {
+            tr("Environment missing")
+        }
+        .to_owned(),
+    );
+    if !lineage.bases.is_empty() {
+        lines.push(lineage.bases.join(", "));
+    }
+    if let Some(run) = &lineage.run_id {
+        lines.push(format!("run:{run}"));
+    }
+    lines
+}
+
+/// The note on a result the project has a newer version of.
+pub fn drift_line(drift: PaperDrift) -> String {
+    fill(
+        tr("A newer result exists: bound {}; latest {}"),
+        &[&format!("v{}", drift.bound), &format!("v{}", drift.latest)],
+    )
 }
 
 /// Who wrote a message offered as evidence.
@@ -267,7 +409,25 @@ pub fn verdict(check: &PaperCheck) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wisp_server::desktop::{PaperFinding, PaperItem};
+    use wisp_server::desktop::PaperFinding;
+
+    fn lineage() -> PaperLineage {
+        PaperLineage {
+            inputs: vec![],
+            run_title: None,
+            run_id: None,
+            code: vec![],
+            quality: PaperLineageQuality::Uncertain,
+            version: None,
+            checksum: None,
+            capture: None,
+            input_count: 0,
+            output_count: 0,
+            code_count: 0,
+            environment: false,
+            bases: vec![],
+        }
+    }
 
     fn source(name: &str, purpose: &str) -> PaperSource {
         PaperSource {
@@ -276,6 +436,10 @@ mod tests {
             name: name.into(),
             purpose: purpose.into(),
             run: Some(name.into()),
+            selection: PaperSelection::Selected,
+            audience: PaperAudience::Private,
+            lineage: lineage(),
+            drift: None,
         }
     }
 
@@ -285,7 +449,112 @@ mod tests {
             kind: PaperItemKind::Figure,
             title: title.into(),
             note: String::new(),
+            parent: None,
+            depth: 0,
             sources,
+        }
+    }
+
+    #[test]
+    fn an_item_is_not_offered_a_place_inside_itself() {
+        let mut paper = Paper {
+            id: "p".into(),
+            title: "Paper".into(),
+            description: String::new(),
+            versions: vec![],
+            shown: "v".into(),
+            editable: true,
+            items: vec![
+                item("Results", vec![]),
+                item("Figure 1", vec![]),
+                item("Panel A", vec![]),
+                item("Methods", vec![]),
+            ],
+            loose: vec![],
+            level: None,
+            reruns: vec![],
+            capsules: vec![],
+        };
+        paper.items[1].parent = Some("Results".into());
+        paper.items[2].parent = Some("Figure 1".into());
+        let offered = |editing: &str| -> Vec<String> {
+            parent_choices(&paper, editing)
+                .into_iter()
+                .map(|item| item.id.clone())
+                .collect()
+        };
+        assert_eq!(offered("Results"), ["Methods"]);
+        assert_eq!(offered("Figure 1"), ["Results", "Methods"]);
+        assert_eq!(offered("").len(), 4);
+    }
+
+    #[test]
+    fn a_source_says_where_it_came_from_and_what_is_newer() {
+        let mut found = source("figure1.png", "");
+        assert_eq!(
+            lineage_chain(&found).map(|(_, value)| value),
+            [
+                "Source not recorded".to_owned(),
+                "Source not recorded".to_owned(),
+                "figure1.png".to_owned()
+            ]
+        );
+        found.lineage = PaperLineage {
+            inputs: vec!["data/a.csv".into(), "data/b.csv".into()],
+            run_title: Some("fit".into()),
+            run_id: Some("run-1".into()),
+            code: vec!["fit.py".into()],
+            quality: PaperLineageQuality::Exact,
+            version: Some(2),
+            checksum: Some("ab".repeat(32)),
+            capture: Some(PaperCapture::Late),
+            input_count: 2,
+            output_count: 1,
+            code_count: 1,
+            environment: true,
+            bases: vec!["declared".into()],
+        };
+        assert_eq!(
+            lineage_chain(&found).map(|(_, value)| value),
+            [
+                "data/a.csv, data/b.csv".to_owned(),
+                "fit · fit.py".to_owned(),
+                "figure1.png".to_owned()
+            ]
+        );
+        assert_eq!(
+            lineage_details(&found.lineage),
+            [
+                "Lineage: Exact",
+                "v2",
+                "sha256:abababababab",
+                "Late capture",
+                "2 inputs · 1 outputs · 1 code snapshots",
+                "Environment captured",
+                "declared",
+                "run:run-1",
+            ]
+        );
+        assert_eq!(
+            lineage_details(&lineage()),
+            [
+                "Lineage: Uncertain",
+                "0 inputs · 0 outputs · 0 code snapshots",
+                "Environment missing",
+            ]
+        );
+        assert_eq!(
+            drift_line(PaperDrift {
+                bound: 1,
+                latest: 3
+            }),
+            "A newer result exists: bound v1; latest v3"
+        );
+        assert_eq!(selection_label(PaperSelection::Candidate), "Candidate");
+        assert_eq!(source_kind_label(PaperSourceKind::ToolCall), "Tool result");
+        for kind in ANCHOR_KINDS {
+            assert!(PaperSourceKind::of_anchor(kind).is_some(), "{kind}");
+            assert!(!anchor_kind_label(kind).is_empty());
         }
     }
 

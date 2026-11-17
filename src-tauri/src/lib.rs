@@ -6000,15 +6000,13 @@ async fn wire_runtimes_and_mcp(
     if runtime_allow.is_none() {
         registry.add(Box::new(
             session_context_tool::SessionExecutionContextTool::new(
-                Box::new(
-                    runtime_config_tool::SetRuntimeInterpreterTool::new_in_session(
-                        store.clone(),
-                        runtime_manager.clone(),
-                        project_id,
-                        scope_key,
-                        frame_id,
-                    ),
-                ),
+                Box::new(runtime_config_tool::new_in_session(
+                    store.clone(),
+                    runtime_manager.clone(),
+                    project_id,
+                    scope_key,
+                    frame_id,
+                )),
                 store.clone(),
                 frame_id,
             ),

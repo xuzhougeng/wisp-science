@@ -6822,9 +6822,9 @@ async fn a_message_can_carry_artifacts_environments_runtimes_and_workflows() {
         Reference::Context {
             id: "ssh:absent".into(),
         },
-        // Interpreters are kept on this computer only.
+        // An interpreter on a host that is not saved.
         Reference::Runtime {
-            context_id: "ssh:gpu".into(),
+            context_id: "ssh:absent".into(),
             language: "python".into(),
         },
         Reference::Runtime {
@@ -6867,6 +6867,10 @@ async fn a_message_can_carry_artifacts_environments_runtimes_and_workflows() {
         Reference::Runtime {
             context_id: "local".into(),
             language: "python".into(),
+        },
+        Reference::Runtime {
+            context_id: "ssh:gpu".into(),
+            language: "r".into(),
         },
         Reference::Workflow {
             id: workflow.id.clone(),
@@ -6915,6 +6919,11 @@ async fn a_message_can_carry_artifacts_environments_runtimes_and_workflows() {
         .unwrap());
     assert!(
         turn.contains("- python runtime on Local (context_id: local): call the `python` tool"),
+        "{turn}"
+    );
+    // An interpreter on a saved host is told the same way.
+    assert!(
+        turn.contains("- r runtime on gpu (context_id: ssh:gpu): call the `r` tool"),
         "{turn}"
     );
     assert!(
@@ -10989,6 +10998,7 @@ async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
         kind,
         title: title.into(),
         note: String::new(),
+        parent: None,
     };
     server
         .save_paper_item(PROJECT, &version, item(PaperItemKind::Figure, "Figure 1"))
@@ -11019,6 +11029,7 @@ async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
                 kind: PaperItemKind::Figure,
                 title: "Figure 1: copy number by strain".into(),
                 note: "qPCR, three replicates".into(),
+                parent: None,
             },
         )
         .await
@@ -11035,7 +11046,7 @@ async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].name, "qpcr_fit.py");
     assert!(server
-        .paper_source_choices(PROJECT, PaperSourceKind::Other, "", 0)
+        .paper_source_choices(PROJECT, PaperSourceKind::ToolCall, "", 0)
         .await
         .is_err());
     server
@@ -11046,13 +11057,24 @@ async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
             PaperSourceKind::Run,
             &runs[0].id,
             " the fit behind panel B ",
+            desktop::PaperSelection::Selected,
+            desktop::PaperAudience::Private,
         )
         .await
         .unwrap();
     // A source that is not there, or an item of no version, is refused.
     for (item, source) in [(figure.as_str(), "run-absent"), ("item-absent", "run-qpcr")] {
         assert!(server
-            .bind_paper_source(PROJECT, &version, item, PaperSourceKind::Run, source, "")
+            .bind_paper_source(
+                PROJECT,
+                &version,
+                item,
+                PaperSourceKind::Run,
+                source,
+                "",
+                desktop::PaperSelection::Selected,
+                desktop::PaperAudience::Private
+            )
             .await
             .is_err());
     }
@@ -11086,6 +11108,8 @@ async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
             PaperSourceKind::Result,
             &results[0].id,
             "",
+            desktop::PaperSelection::Selected,
+            desktop::PaperAudience::Private,
         )
         .await
         .unwrap();
@@ -11190,6 +11214,7 @@ async fn a_paper_version_is_checked_waived_finalized_and_continued() {
         kind: PaperItemKind::Figure,
         title: "Figure 1".into(),
         note: String::new(),
+        parent: None,
     };
     server
         .save_paper_item(PROJECT, &version, figure.clone())
@@ -11253,6 +11278,8 @@ async fn a_paper_version_is_checked_waived_finalized_and_continued() {
             PaperSourceKind::Run,
             "run-fit",
             "the fit",
+            desktop::PaperSelection::Selected,
+            desktop::PaperAudience::Private,
         )
         .await
         .unwrap();
@@ -11386,6 +11413,7 @@ async fn a_passage_of_a_conversation_is_evidence_with_its_text_kept() {
                 kind: PaperItemKind::Claim,
                 title: "Copy number doubles".into(),
                 note: String::new(),
+                parent: None,
             },
         )
         .await
@@ -11440,6 +11468,8 @@ async fn a_passage_of_a_conversation_is_evidence_with_its_text_kept() {
             PaperSourceKind::Passage,
             &exact,
             " the strain we kept ",
+            desktop::PaperSelection::Selected,
+            desktop::PaperAudience::Private,
         )
         .await
         .unwrap();
@@ -11457,7 +11487,9 @@ async fn a_passage_of_a_conversation_is_evidence_with_its_text_kept() {
                 &claim,
                 PaperSourceKind::Passage,
                 &refused,
-                ""
+                "",
+                desktop::PaperSelection::Selected,
+                desktop::PaperAudience::Private,
             )
             .await
             .is_err());
@@ -11500,6 +11532,7 @@ async fn a_passage_of_a_conversation_is_evidence_with_its_text_kept() {
                 kind: PaperItemKind::Claim,
                 title: "Claim".into(),
                 note: String::new(),
+                parent: None,
             },
         )
         .await
@@ -11514,10 +11547,379 @@ async fn a_passage_of_a_conversation_is_evidence_with_its_text_kept() {
             &other_item,
             PaperSourceKind::Passage,
             &exact,
-            ""
+            "",
+            desktop::PaperSelection::Selected,
+            desktop::PaperAudience::Private,
         )
         .await
         .is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn paper_items_nest_and_evidence_is_anchored_marked_and_noted_as_in_the_webview() {
+    use desktop::{
+        PaperAudience, PaperDrift, PaperInput, PaperItemInput, PaperItemKind, PaperSelection,
+        PaperSourceKind,
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let store = &server.0.store;
+    let paper = server
+        .create_paper(
+            PROJECT,
+            PaperInput {
+                title: "Copy number".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let version = paper.shown.clone();
+    let item = |id: &str, kind, title: &str, parent: Option<&str>| PaperItemInput {
+        id: id.into(),
+        kind,
+        title: title.into(),
+        note: String::new(),
+        parent: parent.map(str::to_owned),
+    };
+    let outline = |paper: &desktop::Paper| -> Vec<(String, usize)> {
+        paper
+            .items
+            .iter()
+            .map(|item| (item.title.clone(), item.depth))
+            .collect()
+    };
+
+    // A section holds its figures, listed under it as the WebView's
+    // manuscript tree lists them.
+    for (kind, title) in [
+        (PaperItemKind::Section, "Results"),
+        (PaperItemKind::Methods, "Methods"),
+    ] {
+        server
+            .save_paper_item(PROJECT, &version, item("", kind, title, None))
+            .await
+            .unwrap();
+    }
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    let results = shown.items[0].id.clone();
+    server
+        .save_paper_item(
+            PROJECT,
+            &version,
+            item("", PaperItemKind::Figure, "Figure 1", Some(&results)),
+        )
+        .await
+        .unwrap();
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    assert_eq!(
+        outline(&shown),
+        [
+            ("Results".to_owned(), 0),
+            ("Figure 1".to_owned(), 1),
+            ("Methods".to_owned(), 0)
+        ]
+    );
+    let figure = shown.items[1].id.clone();
+    assert_eq!(shown.items[1].parent.as_deref(), Some(results.as_str()));
+    // An item cannot sit inside itself or one of its own, nor under an
+    // item of no version.
+    for parent in [results.as_str(), figure.as_str(), "item-absent"] {
+        assert!(server
+            .save_paper_item(
+                PROJECT,
+                &version,
+                item(&results, PaperItemKind::Section, "Results", Some(parent)),
+            )
+            .await
+            .is_err());
+    }
+    // Moved to the top level, the figure goes after the rest.
+    server
+        .save_paper_item(
+            PROJECT,
+            &version,
+            item(&figure, PaperItemKind::Figure, "Figure 1", None),
+        )
+        .await
+        .unwrap();
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    assert_eq!(
+        outline(&shown),
+        [
+            ("Results".to_owned(), 0),
+            ("Methods".to_owned(), 0),
+            ("Figure 1".to_owned(), 0)
+        ]
+    );
+
+    // A result bound as a candidate others may see, then marked selected
+    // and kept private; a newer version of it is noted, not followed.
+    let session = create(&server).await;
+    store
+        .create_run(&wisp_store::RunRecord::new(
+            "run-fit", PROJECT, "local", "fit.py", "script",
+        ))
+        .await
+        .unwrap();
+    let result = |version: &str, checksum: char| wisp_store::ArtifactVersionDraft {
+        version_id: Some(version.into()),
+        artifact_id: "figure-artifact".into(),
+        project_id: PROJECT.into(),
+        root_frame_id: session.clone(),
+        filename: "figure1.png".into(),
+        content_type: "image/png".into(),
+        storage_path: format!("snapshots/{version}.png"),
+        logical_key: Some("figure:1".into()),
+        size_bytes: Some(8),
+        checksum: Some(checksum.to_string().repeat(64)),
+        producing_run_id: Some("run-fit".into()),
+        env_snapshot_hash: None,
+        materialization: wisp_store::ArtifactMaterialization::Snapshot,
+        capture_timing: wisp_store::ArtifactCaptureTiming::AtCreation,
+    };
+    store
+        .save_artifact_version(&result("figure-v1", 'a'))
+        .await
+        .unwrap();
+    server
+        .bind_paper_source(
+            PROJECT,
+            &version,
+            &figure,
+            PaperSourceKind::Result,
+            "figure-v1",
+            "panel A",
+            PaperSelection::Candidate,
+            PaperAudience::Public,
+        )
+        .await
+        .unwrap();
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    let bound = shown.items[2].sources[0].clone();
+    assert_eq!(bound.selection, PaperSelection::Candidate);
+    assert_eq!(bound.audience, PaperAudience::Public);
+    assert_eq!(bound.name, "figure1.png");
+    assert_eq!(bound.run.as_deref(), Some("run-fit"));
+    assert_eq!(bound.lineage.run_title.as_deref(), Some("fit.py"));
+    assert_eq!(bound.lineage.version, Some(1));
+    assert_eq!(bound.drift, None);
+    server
+        .mark_paper_source(
+            PROJECT,
+            &version,
+            &bound.id,
+            PaperSelection::Selected,
+            PaperAudience::Private,
+        )
+        .await
+        .unwrap();
+    assert!(server
+        .mark_paper_source(
+            PROJECT,
+            &version,
+            "binding-absent",
+            PaperSelection::Rejected,
+            PaperAudience::Private,
+        )
+        .await
+        .is_err());
+    store
+        .save_artifact_version(&result("figure-v2", 'b'))
+        .await
+        .unwrap();
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    let bound = &shown.items[2].sources[0];
+    assert_eq!(bound.selection, PaperSelection::Selected);
+    assert_eq!(bound.audience, PaperAudience::Private);
+    assert_eq!(bound.lineage.version, Some(1));
+    assert_eq!(
+        bound.drift,
+        Some(PaperDrift {
+            bound: 1,
+            latest: 2
+        })
+    );
+
+    // The advanced dialog's exact anchors: a tool call with its result,
+    // and the code of one execution, are kept as they were.
+    let mut seq = store.max_message_seq(&session).await.unwrap();
+    let mut asked = Message::assistant("");
+    asked.tool_calls = vec![ToolCall {
+        id: "call-fit".into(),
+        kind: "function".into(),
+        function: wisp_llm::FunctionCall {
+            name: "python".into(),
+            arguments: r#"{"code":"fit()"}"#.into(),
+        },
+    }];
+    for message in [
+        Message::user("fit it"),
+        asked,
+        Message::tool("call-fit", "python", "slope 2.0"),
+    ] {
+        seq += 1;
+        store.append_message(&session, seq, &message).await.unwrap();
+    }
+    store
+        .insert_execution_log(&wisp_store::ExecLog {
+            id: "exec-fit".into(),
+            frame_id: session.clone(),
+            cell_index: 3,
+            tool: "python".into(),
+            language: "python".into(),
+            source: "fit()".into(),
+            stdout: "slope 2.0".into(),
+            stderr: String::new(),
+            exit_status: "ok".into(),
+            wall_s: None,
+            files_written: vec![],
+            files_read: vec![],
+            env_hash: None,
+        })
+        .await
+        .unwrap();
+    let anchor = |kind, tool: &str, exact: &str| {
+        wisp_dto::publication_sources::precise_evidence_source(
+            kind,
+            &session,
+            &(seq - 1).to_string(),
+            "",
+            "",
+            tool,
+            exact,
+        )
+        .unwrap()
+    };
+    for found in [
+        anchor("tool_call", "call-fit", ""),
+        anchor("code_cell", "", "exec-fit"),
+    ] {
+        let kind = PaperSourceKind::of_anchor(found.kind).unwrap();
+        server
+            .bind_paper_source(
+                PROJECT,
+                &version,
+                &results,
+                kind,
+                &found.id,
+                "how the slope was found",
+                PaperSelection::Selected,
+                PaperAudience::Private,
+            )
+            .await
+            .unwrap();
+    }
+    // A call that is not at that message is refused.
+    let missing = anchor("tool_call", "call-absent", "");
+    assert!(server
+        .bind_paper_source(
+            PROJECT,
+            &version,
+            &results,
+            PaperSourceKind::ToolCall,
+            &missing.id,
+            "",
+            PaperSelection::Selected,
+            PaperAudience::Private,
+        )
+        .await
+        .is_err());
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    // Bound in the same second, they come in either order.
+    let mut names: Vec<_> = shown.items[0]
+        .sources
+        .iter()
+        .map(|source| (source.name.as_str(), source.kind))
+        .collect();
+    names.sort_by_key(|(name, _)| *name);
+    assert_eq!(
+        names,
+        [
+            ("Tool result: python", PaperSourceKind::ToolCall),
+            ("python cell 3", PaperSourceKind::CodeCell),
+        ]
+    );
+    assert_eq!(
+        PaperSourceKind::of_anchor("message_span"),
+        Some(PaperSourceKind::Passage)
+    );
+    assert_eq!(PaperSourceKind::of_anchor("run"), None);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_finalized_paper_shows_where_its_evidence_came_from_and_stays_as_it_is() {
+    use desktop::{
+        PaperAudience, PaperItemInput, PaperItemKind, PaperLineageQuality, PaperSelection,
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let (paper, version) =
+        finalized_paper_with_a_run(&server, &temp.path().join("workspace")).await;
+    let shown = server.paper(PROJECT, &paper, Some(&version)).await.unwrap();
+    let source = &shown.items[0].sources[0];
+    // Traced as the WebView's card traces it: the run, what it read, its
+    // code, its environment.
+    assert_eq!(source.lineage.run_title.as_deref(), Some("fit"));
+    assert_eq!(source.lineage.run_id.as_deref(), Some("run-fit"));
+    assert_eq!(source.lineage.inputs, ["data/input.txt"]);
+    assert!(source.lineage.code.iter().any(|code| code == "analysis.py"));
+    assert_eq!(source.lineage.bases, ["declared"]);
+    assert_eq!(
+        (
+            source.lineage.input_count,
+            source.lineage.output_count,
+            source.lineage.code_count
+        ),
+        (1, 1, source.lineage.code.len())
+    );
+    // Exact inputs and code: exact once the run's own environment record
+    // holds something, likely otherwise, as the WebView grades it.
+    assert_eq!(
+        source.lineage.quality,
+        if source.lineage.environment {
+            PaperLineageQuality::Exact
+        } else {
+            PaperLineageQuality::Likely
+        }
+    );
+    // Its evidence and outline cannot be changed once finalized.
+    assert!(server
+        .mark_paper_source(
+            PROJECT,
+            &version,
+            &source.id,
+            PaperSelection::Rejected,
+            PaperAudience::Public,
+        )
+        .await
+        .is_err());
+    assert!(server
+        .save_paper_item(
+            PROJECT,
+            &version,
+            PaperItemInput {
+                id: String::new(),
+                kind: PaperItemKind::Figure,
+                title: "Figure 2".into(),
+                note: String::new(),
+                parent: Some(shown.items[0].id.clone()),
+            },
+        )
+        .await
+        .is_err());
+    let again = server.paper(PROJECT, &paper, Some(&version)).await.unwrap();
+    assert_eq!(
+        again.items[0].sources[0].selection,
+        PaperSelection::Selected
+    );
+    assert_eq!(again.items.len(), 1);
     server.shutdown().await;
 }
 
@@ -11673,6 +12075,7 @@ async fn finalized_paper_with_a_run(server: &Server, workspace: &Path) -> (Strin
                 kind: PaperItemKind::Methods,
                 title: "Analysis".into(),
                 note: String::new(),
+                parent: None,
             },
         )
         .await
@@ -11688,6 +12091,8 @@ async fn finalized_paper_with_a_run(server: &Server, workspace: &Path) -> (Strin
             PaperSourceKind::Run,
             "run-fit",
             "the analysis",
+            desktop::PaperSelection::Selected,
+            desktop::PaperAudience::Private,
         )
         .await
         .unwrap();
@@ -19563,5 +19968,613 @@ async fn a_hosts_files_and_runs_are_listed_and_only_unused_files_deleted() {
         "{script}"
     );
     assert_eq!(script.matches("rm -rf \"$path\"").count(), 1);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_hosts_interpreter_paths_are_kept_and_its_conversations_python_starts_there() {
+    use desktop::{HostInterpreters, SshHostRow};
+    use wisp_tools::ToolEnv;
+
+    /// Keeps where each interpreter was asked to start; starts nothing.
+    struct Launcher(Arc<std::sync::Mutex<Vec<String>>>);
+    struct Idle;
+    #[async_trait]
+    impl wisp_runtime::RuntimeKernel for Idle {
+        async fn execute(
+            &mut self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: &[String],
+            _: &wisp_runtime::RuntimeOutput,
+        ) -> anyhow::Result<wisp_runtime::KernelResp> {
+            Ok(Default::default())
+        }
+        async fn inspect(&mut self, _: &str) -> anyhow::Result<wisp_runtime::RuntimeObjectList> {
+            Ok(Default::default())
+        }
+        async fn shutdown(&mut self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+    #[async_trait]
+    impl wisp_runtime::RuntimeLauncher for Launcher {
+        async fn launch(
+            &self,
+            key: &wisp_runtime::RuntimeKey,
+            _: &Path,
+        ) -> anyhow::Result<wisp_runtime::LaunchedRuntime> {
+            self.0.lock().unwrap().push(key.context_id.clone());
+            Ok(wisp_runtime::LaunchedRuntime::new(
+                Box::new(Idle),
+                Default::default(),
+            ))
+        }
+    }
+    struct Env(std::path::PathBuf);
+    #[async_trait]
+    impl ToolEnv for Env {
+        fn project_root(&self) -> &Path {
+            &self.0
+        }
+        async fn confirm(&self, _: &str) -> bool {
+            true
+        }
+        async fn emit(&self, _: wisp_tools::ToolEvent) {}
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let key = temp.path().join("id_lab");
+    std::fs::write(&key, b"test-key\n").unwrap();
+    let host = SshHostRow {
+        alias: "interp-gpu".into(),
+        host_name: "10.0.0.7".into(),
+        user: "lab".into(),
+        identity_file: key.to_string_lossy().into_owned(),
+        ..Default::default()
+    };
+    server.save_ssh_host(host.clone()).await.unwrap();
+    let store = &server.0.store;
+
+    // Nothing kept yet, and nothing found until a check says.
+    assert_eq!(
+        server.host_interpreters("interp-gpu").await.unwrap(),
+        HostInterpreters::default()
+    );
+    let mut context = store
+        .get_execution_context("ssh:interp-gpu")
+        .await
+        .unwrap()
+        .unwrap();
+    context.capabilities_json = json!({
+        "python_executable": "/usr/bin/python3",
+        "rscript_executable": "/usr/bin/Rscript"
+    })
+    .to_string();
+    store.upsert_execution_context(&context).await.unwrap();
+
+    // A path kept for Python; R stays with what the check found.
+    let kept = server
+        .set_host_interpreters("interp-gpu", " /opt/conda/bin/python ", "  ")
+        .await
+        .unwrap();
+    assert_eq!(
+        kept,
+        HostInterpreters {
+            python: "/opt/conda/bin/python".into(),
+            rscript: String::new(),
+            found_python: Some("/usr/bin/python3".into()),
+            found_rscript: Some("/usr/bin/Rscript".into()),
+        }
+    );
+    // Changing the host keeps it; a path over two lines and a host that
+    // is not saved are refused.
+    server.save_ssh_host(host).await.unwrap();
+    assert_eq!(server.host_interpreters("interp-gpu").await.unwrap(), kept);
+    assert!(server
+        .set_host_interpreters("interp-gpu", "/opt/python\n--version", "")
+        .await
+        .is_err());
+    assert!(server.host_interpreters("ghost").await.is_err());
+    assert_eq!(server.host_interpreters("interp-gpu").await.unwrap(), kept);
+
+    // A conversation whose work goes to the host: the model's `python`
+    // with no `context_id` starts there, and the host is attached for it.
+    let session = create(&server).await;
+    let mut options = server
+        .conversation_status(PROJECT, &session)
+        .await
+        .unwrap()
+        .options;
+    options.runs_on = "interp-gpu".into();
+    server
+        .set_conversation_options(PROJECT, &session, options.clone())
+        .await
+        .unwrap();
+    let started: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    *server.session(&session).runtime.lock().unwrap() = Some(wisp_runtime::RuntimeManager::new(
+        Arc::new(Launcher(started.clone())),
+    ));
+    let root = server.project_root(PROJECT).await.unwrap();
+    let model = server.0.model.read().unwrap().pick(&options.model).unwrap();
+    let request = wisp_dto::native_conversations::SendRequest {
+        session_id: session.clone(),
+        request_id: "turn-1".into(),
+        message: "hello".into(),
+        resume: false,
+        resume_after: None,
+        attachments: Vec::new(),
+        references: Vec::new(),
+        acp_agent_id: None,
+    };
+    let agent = server
+        .wisp_agent(
+            PROJECT,
+            &root,
+            &request,
+            &server.session(&session),
+            &options,
+            &model,
+            false,
+            Vec::new(),
+            None,
+        )
+        .await
+        .unwrap();
+    let python = agent
+        .tools
+        .get("python")
+        .expect("the python tool is offered");
+    let env = Env(root.clone().into());
+    let ran = python.run(&json!({"code": "1"}), &env).await;
+    assert!(ran.success, "{}", ran.content);
+    // Asked for this computer by name, it starts here.
+    let ran = python
+        .run(&json!({"code": "1", "context_id": "local"}), &env)
+        .await;
+    assert!(ran.success, "{}", ran.content);
+    assert_eq!(
+        *started.lock().unwrap(),
+        ["ssh:interp-gpu".to_owned(), "local".to_owned()]
+    );
+    assert!(server
+        .conversation_hosts(PROJECT, &session)
+        .await
+        .unwrap()
+        .contains(&"interp-gpu".to_owned()));
+    // The rows above the composer say where each one runs.
+    let mut places: Vec<String> = server
+        .conversation_status(PROJECT, &session)
+        .await
+        .unwrap()
+        .runtimes
+        .into_iter()
+        .map(|row| row.context)
+        .collect();
+    places.sort();
+    assert_eq!(places, ["local", "ssh:interp-gpu"]);
+
+    // Started from the host's card, R starts there too, once.
+    let id = server
+        .start_host_runtime(PROJECT, &session, "interp-gpu", desktop::RuntimeLanguage::R)
+        .await
+        .unwrap();
+    assert_eq!(
+        server
+            .start_host_runtime(PROJECT, &session, "interp-gpu", desktop::RuntimeLanguage::R)
+            .await
+            .unwrap(),
+        id
+    );
+    assert_eq!(started.lock().unwrap().len(), 3);
+    assert_eq!(started.lock().unwrap()[2], "ssh:interp-gpu");
+    assert!(server
+        .start_host_runtime(PROJECT, &session, "ghost", desktop::RuntimeLanguage::R)
+        .await
+        .is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_model_saves_a_hosts_interpreter_and_its_running_one_restarts_but_not_for_local() {
+    use desktop::SshHostRow;
+    use wisp_tools::ToolEnv;
+
+    /// Keeps where each interpreter was asked to start; starts nothing.
+    struct Launcher(Arc<std::sync::Mutex<Vec<String>>>);
+    struct Idle;
+    #[async_trait]
+    impl wisp_runtime::RuntimeKernel for Idle {
+        async fn execute(
+            &mut self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: &[String],
+            _: &wisp_runtime::RuntimeOutput,
+        ) -> anyhow::Result<wisp_runtime::KernelResp> {
+            Ok(Default::default())
+        }
+        async fn inspect(&mut self, _: &str) -> anyhow::Result<wisp_runtime::RuntimeObjectList> {
+            Ok(Default::default())
+        }
+        async fn shutdown(&mut self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+    #[async_trait]
+    impl wisp_runtime::RuntimeLauncher for Launcher {
+        async fn launch(
+            &self,
+            key: &wisp_runtime::RuntimeKey,
+            _: &Path,
+        ) -> anyhow::Result<wisp_runtime::LaunchedRuntime> {
+            self.0.lock().unwrap().push(key.context_id.clone());
+            Ok(wisp_runtime::LaunchedRuntime::new(
+                Box::new(Idle),
+                Default::default(),
+            ))
+        }
+    }
+    struct Env(std::path::PathBuf);
+    #[async_trait]
+    impl ToolEnv for Env {
+        fn project_root(&self) -> &Path {
+            &self.0
+        }
+        async fn confirm(&self, _: &str) -> bool {
+            true
+        }
+        async fn emit(&self, _: wisp_tools::ToolEvent) {}
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let key = temp.path().join("id_lab");
+    std::fs::write(&key, b"test-key\n").unwrap();
+    server
+        .save_ssh_host(SshHostRow {
+            alias: "interp-tool".into(),
+            host_name: "10.0.0.8".into(),
+            user: "lab".into(),
+            identity_file: key.to_string_lossy().into_owned(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let store = &server.0.store;
+    let session = create(&server).await;
+    let options = server
+        .conversation_status(PROJECT, &session)
+        .await
+        .unwrap()
+        .options;
+    let started: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let manager = wisp_runtime::RuntimeManager::new(Arc::new(Launcher(started.clone())));
+    *server.session(&session).runtime.lock().unwrap() = Some(manager.clone());
+    let root = server.project_root(PROJECT).await.unwrap();
+    let model = server.0.model.read().unwrap().pick(&options.model).unwrap();
+    let request = wisp_dto::native_conversations::SendRequest {
+        session_id: session.clone(),
+        request_id: "turn-1".into(),
+        message: "hello".into(),
+        resume: false,
+        resume_after: None,
+        attachments: Vec::new(),
+        references: Vec::new(),
+        acp_agent_id: None,
+    };
+    let agent = server
+        .wisp_agent(
+            PROJECT,
+            &root,
+            &request,
+            &server.session(&session),
+            &options,
+            &model,
+            false,
+            Vec::new(),
+            None,
+        )
+        .await
+        .unwrap();
+    let tool = agent
+        .tools
+        .get("set_runtime_interpreter")
+        .expect("the tool is offered, as in the WebView");
+    let env = Env(root.clone().into());
+    let save = |context: &str, language: &str, path: &str| json!({"context_id": context, "language": language, "executable": path});
+
+    // A host the conversation has not attached is refused, as in the WebView.
+    let refused = tool
+        .run(
+            &save("ssh:interp-tool", "python", "/opt/conda/bin/python"),
+            &env,
+        )
+        .await;
+    assert!(!refused.success);
+    assert!(
+        refused.content.contains("not selected for this session"),
+        "{}",
+        refused.content
+    );
+    store
+        .set_session_execution_context_enabled(&session, "ssh:interp-tool", true)
+        .await
+        .unwrap();
+
+    // Saved for the host; its Python, which this conversation's `python`
+    // started there, starts again with it.
+    manager
+        .start(
+            wisp_runtime::RuntimeKey::python(root.clone(), "ssh:interp-tool"),
+            root.clone().into(),
+        )
+        .await
+        .unwrap();
+    let saved = tool
+        .run(
+            &save("ssh:interp-tool", "python", " /opt/conda/bin/python "),
+            &env,
+        )
+        .await;
+    assert!(saved.success, "{}", saved.content);
+    assert!(
+        saved
+            .content
+            .contains("restarted this conversation's Python runtime"),
+        "{}",
+        saved.content
+    );
+    assert_eq!(
+        *started.lock().unwrap(),
+        ["ssh:interp-tool".to_owned(), "ssh:interp-tool".to_owned()]
+    );
+    assert_eq!(
+        server
+            .host_interpreters("interp-tool")
+            .await
+            .unwrap()
+            .python,
+        "/opt/conda/bin/python"
+    );
+    // R was not running: it is only saved.
+    let saved = tool
+        .run(&save("ssh:interp-tool", "r", "/usr/bin/Rscript"), &env)
+        .await;
+    assert!(saved.success, "{}", saved.content);
+    assert!(saved.content.contains("next r call"), "{}", saved.content);
+    assert_eq!(started.lock().unwrap().len(), 2);
+
+    // This computer's interpreters here never read a path kept for
+    // `local`, so none is saved for it.
+    let before = store
+        .get_execution_context("local")
+        .await
+        .unwrap()
+        .map(|context| context.config_json);
+    let refused = tool
+        .run(&save("local", "python", "/opt/venv/bin/python"), &env)
+        .await;
+    assert!(!refused.success);
+    assert_eq!(
+        refused.content,
+        format!(
+            "set_runtime_interpreter error: {}",
+            runtime::LOCAL_INTERPRETER_REFUSED
+        )
+    );
+    assert_eq!(
+        store
+            .get_execution_context("local")
+            .await
+            .unwrap()
+            .map(|context| context.config_json),
+        before
+    );
+    assert_eq!(started.lock().unwrap().len(), 2);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_message_can_carry_an_artifact_of_another_project_as_the_webview_offers_it() {
+    use wisp_dto::ComposerReferenceArg as Reference;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let folder = |name: &str| {
+        let folder = temp.path().join(name);
+        std::fs::create_dir_all(folder.join("data")).unwrap();
+        std::fs::write(folder.join("data/counts.csv"), "gene,count\n").unwrap();
+        folder
+    };
+    let lab = server.register_local_project(&folder("lab")).await.unwrap();
+    let field = server
+        .register_local_project(&folder("field"))
+        .await
+        .unwrap();
+    let conversation = |project: String| {
+        let server = &server;
+        async move {
+            call(server, "native_conversation_create", &project, json!({}))
+                .await
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_owned()
+        }
+    };
+    let here = conversation(lab.clone()).await;
+    let there = conversation(field.clone()).await;
+    let store = &server.0.store;
+    store
+        .save_artifact(
+            "art-here",
+            &lab,
+            &here,
+            "here.csv",
+            "text/csv",
+            "data/counts.csv",
+        )
+        .await
+        .unwrap();
+    store
+        .save_artifact(
+            "art-there",
+            &field,
+            &there,
+            "field-counts.csv",
+            "text/csv",
+            "data/counts.csv",
+        )
+        .await
+        .unwrap();
+
+    // Only the other project's, named by it, and narrowed by the name.
+    let found = server
+        .artifacts_elsewhere(&lab, &here, "", 40)
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].artifact.id, "art-there");
+    assert_eq!(found[0].project_id, field);
+    assert_eq!(found[0].project_name, "field");
+    assert!(server
+        .artifacts_elsewhere(&lab, &here, "nothing", 40)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        server
+            .artifacts_elsewhere(&lab, &here, "FIELD", 40)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    // A conversation is asked about only in its own project.
+    assert!(server
+        .artifacts_elsewhere(&lab, &there, "", 40)
+        .await
+        .is_err());
+
+    // Sent with a message here, it is found through the store and told
+    // by its file in its own project, as the WebView tells it.
+    let skills = wisp_skills::SkillIndex::load_scoped(&[]);
+    let told = crate::runtime::reference_context(
+        store,
+        &skills,
+        &[Reference::Artifact {
+            id: "art-there".into(),
+        }],
+        &here,
+        &temp.path().join("lab"),
+    )
+    .await
+    .unwrap();
+    let expected = std::fs::canonicalize(temp.path().join("field/data/counts.csv")).unwrap();
+    assert_eq!(told.len(), 1);
+    assert!(
+        told[0].contains(&format!("- field-counts.csv: {}", expected.display())),
+        "{}",
+        told[0]
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_runtimes_a_message_can_name_are_the_webviews_on_this_computer_and_ssh_hosts() {
+    use wisp_dto::ComposerReferenceArg as Reference;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let store = &server.0.store;
+    let save = |id: &str, config: Value, capabilities: Value| {
+        let mut context =
+            wisp_store::ExecutionContext::new(id, id.split(':').nth(1).unwrap()).unwrap();
+        context.config_json = config.to_string();
+        context.capabilities_json = capabilities.to_string();
+        context.last_probe_status = Some("ok".into());
+        context
+    };
+    // A host whose check found both, one with a Python path kept and an R
+    // without jsonlite, one never checked, and a WSL distro with both.
+    for context in [
+        save(
+            "ssh:gpu",
+            json!({}),
+            json!({"python_executable": "/usr/bin/python3",
+                   "rscript_executable": "/usr/bin/Rscript", "r_jsonlite": true}),
+        ),
+        save(
+            "ssh:kept",
+            json!({"python_executable": "/opt/conda/bin/python"}),
+            json!({"rscript_executable": "/usr/bin/Rscript", "r_jsonlite": false}),
+        ),
+        wisp_store::ExecutionContext::new("ssh:unchecked", "unchecked").unwrap(),
+        save(
+            "wsl:Ubuntu",
+            json!({}),
+            json!({"python_executable": "/usr/bin/python3",
+                   "rscript_executable": "/usr/bin/Rscript"}),
+        ),
+    ] {
+        store.upsert_execution_context(&context).await.unwrap();
+    }
+    // This computer, once checked, has R only where the check found it.
+    let mut local = store.get_execution_context("local").await.unwrap().unwrap();
+    local.capabilities_json = json!({"rscript_executable": null}).to_string();
+    local.last_probe_status = Some("ok".into());
+    store.upsert_execution_context(&local).await.unwrap();
+
+    let offered: Vec<(String, String, String)> = server
+        .runtime_references()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|option| match option.reference {
+            Reference::Runtime {
+                context_id,
+                language,
+            } => (context_id, language, option.label),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    let named = |context: &str, language: &str, label: &str| {
+        (context.to_owned(), language.to_owned(), label.to_owned())
+    };
+    assert_eq!(
+        offered,
+        [
+            named("local", "python", &local.label),
+            named("ssh:gpu", "python", "gpu"),
+            named("ssh:gpu", "r", "gpu"),
+            named("ssh:kept", "python", "kept"),
+        ]
+    );
+    // Never checked, this computer offers R as the WebView does.
+    local.capabilities_json = "{}".into();
+    local.last_probe_status = None;
+    store.upsert_execution_context(&local).await.unwrap();
+    assert!(server
+        .runtime_references()
+        .await
+        .unwrap()
+        .iter()
+        .any(|option| {
+            option.reference
+                == Reference::Runtime {
+                    context_id: "local".into(),
+                    language: "r".into(),
+                }
+        }));
     server.shutdown().await;
 }

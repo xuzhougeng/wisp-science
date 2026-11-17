@@ -1,9 +1,11 @@
 //! The terminal dock at the foot of the conversation, after the WebView's
 //! terminal panel (xterm.js over the host's PTY): the open project's
 //! terminals as tabs, on this computer or a saved SSH host, each drawn from
-//! its screen and typed into while it has focus. Hiding the dock keeps them
-//! running; closing a tab stops its terminal.
-use std::{cell::Cell, collections::HashMap, rc::Rc};
+//! its screen and typed into while it has focus, through the system's input
+//! method as xterm.js's hidden text field is. Part of the screen is
+//! selected with the mouse and copied. Hiding the dock keeps them running;
+//! closing a tab stops its terminal.
+use std::{cell::Cell, collections::HashMap, ops::Range, rc::Rc};
 
 use gpui::{prelude::*, *};
 use gpui_component::{
@@ -20,7 +22,8 @@ use crate::{
     backend::receive,
     i18n::tr,
     layers::Layer,
-    terminal_screen::{self, Screen},
+    notify::System,
+    terminal_screen::{self, Composition, Screen},
 };
 
 /// The type size and line height terminals are drawn at.
@@ -28,6 +31,9 @@ const FONT_SIZE: f32 = 13.;
 const LINE_HEIGHT: f32 = 17.;
 /// How tall the dock is, its tabs included.
 const DOCK_HEIGHT: f32 = 300.;
+/// The screen's padding: where its first cell is drawn.
+const PAD_X: f32 = 8.;
+const PAD_Y: f32 = 4.;
 
 pub(super) struct TerminalTab {
     info: TerminalInfo,
@@ -49,6 +55,12 @@ pub(super) struct TerminalDock {
     /// Keys typed and not yet written, by terminal, and whether a write is
     /// under way: one at a time, so they arrive in order.
     typed: HashMap<String, (Vec<u8>, bool)>,
+    /// Where the screen's first cell is, in the window, as last drawn.
+    origin: Rc<Cell<Point<Pixels>>>,
+    /// A selection is being dragged with the mouse.
+    selecting: Rc<Cell<bool>>,
+    /// What the system's input method is composing.
+    composition: Composition,
 }
 
 impl TerminalDock {
@@ -63,6 +75,9 @@ impl TerminalDock {
             size: Rc::new(Cell::new((16, 100))),
             polls: HashMap::new(),
             typed: HashMap::new(),
+            origin: Rc::new(Cell::new(Point::default())),
+            selecting: Rc::new(Cell::new(false)),
+            composition: Composition::default(),
         }
     }
 
@@ -255,8 +270,10 @@ impl Workspace {
         if !tab.info.running {
             return;
         }
-        // Typing brings the live screen back.
+        // Typing brings the live screen back and drops the selection, as
+        // in xterm.js.
         tab.screen.follow();
+        tab.screen.clear_selection();
         let id = tab.info.id.clone();
         self.terminal
             .typed
@@ -299,16 +316,24 @@ impl Workspace {
         .detach();
     }
 
-    /// A key pressed while a terminal has focus.
+    /// A key pressed while a terminal has focus. Text is left to the
+    /// system's input method, which hands it to the terminal through
+    /// [`TerminalInput`].
     fn terminal_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(tab) = self.terminal.tabs.get(self.terminal.active) else {
+        let active = self.terminal.active;
+        let Some(tab) = self.terminal.tabs.get(active) else {
             return;
         };
+        let (bracketed, application_cursor) = (
+            tab.screen.bracketed_paste(),
+            tab.screen.application_cursor(),
+        );
         let stroke = &event.keystroke;
         let held = stroke.modifiers;
-        let mac = cfg!(target_os = "macos");
-        // Paste and copy: Cmd on macOS, Ctrl+Shift elsewhere, as terminals
-        // there do.
+        let system = System::current();
+        let mac = system == System::Mac;
+        // Paste and copy: Cmd on macOS, as the WebView's Edit menu does
+        // there; Ctrl+Shift elsewhere, as Ctrl+C and Ctrl+V go to the shell.
         let chord = |letter: &str| {
             stroke.key == letter
                 && if mac {
@@ -319,14 +344,32 @@ impl Workspace {
         };
         if chord("v") {
             if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                let bytes = terminal_screen::paste_bytes(&text, tab.screen.bracketed_paste());
+                let bytes = terminal_screen::paste_bytes(&text, bracketed);
                 self.type_into_terminal(bytes, window, cx);
             }
             cx.stop_propagation();
             return;
         }
+        // What is selected; nothing when nothing is, as in xterm.js.
         if chord("c") {
-            cx.write_to_clipboard(ClipboardItem::new_string(tab.screen.text()));
+            let selected = self
+                .terminal
+                .tabs
+                .get_mut(active)
+                .and_then(|tab| tab.screen.selected_text(system));
+            if let Some(text) = selected {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+            cx.stop_propagation();
+            return;
+        }
+        // Cmd+A selects everything kept, as xterm.js does on macOS; Ctrl+A
+        // stays the shell's.
+        if mac && stroke.key == "a" && held.platform && !held.control && !held.alt && !held.shift {
+            if let Some(tab) = self.terminal.tabs.get_mut(active) {
+                tab.screen.select_all();
+            }
+            cx.notify();
             cx.stop_propagation();
             return;
         }
@@ -341,10 +384,118 @@ impl Workspace {
             alt: held.alt,
             shift: held.shift,
         };
-        if let Some(bytes) = terminal_screen::key_bytes(key, tab.screen.application_cursor()) {
+        if let Some(bytes) = terminal_screen::key_bytes(key, application_cursor, system) {
             self.type_into_terminal(bytes, window, cx);
             cx.stop_propagation();
         }
+    }
+
+    /// Where `position` is on the active screen: its row (above or below
+    /// it is out of range) and how many cells in from the left.
+    fn terminal_pointer(&self, position: Point<Pixels>) -> (i64, f32) {
+        let origin = self.terminal.origin.get();
+        let x = f32::from(position.x - origin.x) / self.terminal.cell.get();
+        let y = f32::from(position.y - origin.y) / LINE_HEIGHT;
+        (y.floor() as i64, x)
+    }
+
+    /// A press on the screen: a selection begins there, or, with Shift,
+    /// the one there is reaches there.
+    fn terminal_press(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        let (row, x) = self.terminal_pointer(event.position);
+        let active = self.terminal.active;
+        let Some(tab) = self.terminal.tabs.get_mut(active) else {
+            return;
+        };
+        if event.modifiers.shift {
+            tab.screen.select_to(row, x);
+        } else {
+            tab.screen.select_from(row, x, event.click_count);
+        }
+        self.terminal.selecting.set(true);
+        cx.notify();
+    }
+
+    /// The pointer moved while a selection is dragged, wherever it is.
+    fn terminal_drag(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if event.pressed_button != Some(MouseButton::Left) {
+            self.terminal.selecting.set(false);
+            return;
+        }
+        let (row, x) = self.terminal_pointer(event.position);
+        let active = self.terminal.active;
+        if let Some(tab) = self.terminal.tabs.get_mut(active) {
+            tab.screen.select_to(row, x);
+            cx.notify();
+        }
+    }
+
+    /// The input method typed `text`: it goes to the terminal, and what
+    /// was being composed is done.
+    fn terminal_commit(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = self.terminal.composition.commit(text) {
+            self.type_into_terminal(text.into_bytes(), window, cx);
+        }
+        cx.notify();
+    }
+
+    /// The input method is composing `text`, shown at the cursor.
+    fn terminal_compose(
+        &mut self,
+        text: &str,
+        caret: Option<Range<usize>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.terminal.composition.mark(text, caret);
+        let active = self.terminal.active;
+        if let Some(tab) = self.terminal.tabs.get_mut(active) {
+            tab.screen.follow();
+        }
+        cx.notify();
+    }
+
+    /// The input method let go of what it was composing.
+    fn terminal_unmark(&mut self, cx: &mut Context<Self>) {
+        self.terminal.composition.unmark();
+        cx.notify();
+    }
+
+    /// Where the composition's text from `range` is drawn, for the input
+    /// method's list of candidates.
+    fn terminal_ime_bounds(
+        &self,
+        range: Range<usize>,
+        window: &mut Window,
+        cx: &App,
+    ) -> Option<Bounds<Pixels>> {
+        let tab = self.terminal.tabs.get(self.terminal.active)?;
+        let (row, col) = tab.screen.typing_at();
+        let width = self.terminal.cell.get();
+        let origin = self.terminal.origin.get();
+        let prefix = self.terminal.composition.prefix(range.start);
+        let shift = if prefix.is_empty() {
+            px(0.)
+        } else {
+            let run = TextRun {
+                len: prefix.len(),
+                font: font(cx.theme().mono_font_family.clone()),
+                color: cx.theme().foreground,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            window
+                .text_system()
+                .shape_line(prefix.into(), px(FONT_SIZE), &[run], None)
+                .width
+        };
+        Some(Bounds::new(
+            point(
+                origin.x + px(f32::from(col) * width) + shift,
+                origin.y + px(f32::from(row) * LINE_HEIGHT),
+            ),
+            size(px(width), px(LINE_HEIGHT)),
+        ))
     }
 
     /// Gives every terminal of the dock `rows` by `cols`.
@@ -445,11 +596,12 @@ impl Workspace {
             return None;
         }
         let theme = cx.theme();
-        let (muted, border, foreground, background) = (
+        let (muted, border, foreground, background, selection) = (
             theme.muted_foreground,
             theme.border,
             theme.foreground,
             theme.background,
+            theme.selection,
         );
         let mono = theme.mono_font_family.clone();
         let showing = self.terminal.project == self.state.project;
@@ -478,6 +630,7 @@ impl Workspace {
                                 .selected(index == self.terminal.active)
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.terminal.active = index;
+                                    this.terminal.composition = Composition::default();
                                     this.terminal.focus.focus(window);
                                     cx.notify();
                                 })),
@@ -575,9 +728,9 @@ impl Workspace {
             .cursor_text()
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
                     this.terminal.focus.focus(window);
-                    cx.notify();
+                    this.terminal_press(event, cx);
                 }),
             )
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
@@ -593,20 +746,31 @@ impl Workspace {
                 }
             }));
         // Measures the font's cell and the room there is, and asks for the
-        // size that fits.
+        // size that fits; then takes the input method's text and follows a
+        // selection dragged anywhere in the window.
         let (cell, size) = (self.terminal.cell.clone(), self.terminal.size.clone());
-        let weak = cx.entity().downgrade();
+        let (origin, selecting) = (
+            self.terminal.origin.clone(),
+            self.terminal.selecting.clone(),
+        );
+        let focus = self.terminal.focus.clone();
+        let entity = cx.entity();
+        let weak = entity.downgrade();
+        let dragged = weak.clone();
         let measure_font = font(mono);
         body = body.child(
             canvas(
                 move |bounds, window, cx| {
+                    origin.set(bounds.origin + point(px(PAD_X), px(PAD_Y)));
                     let system = window.text_system();
                     let id = system.resolve_font(&measure_font);
                     if let Ok(advance) = system.advance(id, px(FONT_SIZE), 'M') {
                         cell.set(f32::from(advance.width).max(1.));
                     }
-                    let cols = (f32::from(bounds.size.width) / cell.get()).floor() as u16;
-                    let rows = (f32::from(bounds.size.height) / LINE_HEIGHT).floor() as u16;
+                    let cols =
+                        (f32::from(bounds.size.width - px(2. * PAD_X)) / cell.get()).floor() as u16;
+                    let rows = (f32::from(bounds.size.height - px(2. * PAD_Y)) / LINE_HEIGHT)
+                        .floor() as u16;
                     let wanted = (rows.clamp(2, 500), cols.clamp(2, 1000));
                     if wanted != size.get() {
                         size.set(wanted);
@@ -617,7 +781,28 @@ impl Workspace {
                         });
                     }
                 },
-                |_, _, _, _| {},
+                move |_, _, window, cx| {
+                    window.handle_input(
+                        &focus,
+                        TerminalInput {
+                            workspace: entity.clone(),
+                        },
+                        cx,
+                    );
+                    let moving = selecting.clone();
+                    let weak = dragged.clone();
+                    window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                        if phase == DispatchPhase::Bubble && moving.get() {
+                            let _ = weak.update(cx, |this, cx| this.terminal_drag(event, cx));
+                        }
+                    });
+                    let released = selecting.clone();
+                    window.on_mouse_event(move |event: &MouseUpEvent, phase, _, _| {
+                        if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+                            released.set(false);
+                        }
+                    });
+                },
             )
             .absolute()
             .top_0()
@@ -636,6 +821,22 @@ impl Workspace {
             Some(tab) => {
                 let default_fg = rgb_of(foreground);
                 let default_bg = rgb_of(background);
+                let width = self.terminal.cell.get();
+                // What is selected, under the text, as xterm.js draws it.
+                let (rows, _) = tab.screen.size();
+                for row in 0..rows {
+                    if let Some((from, to)) = tab.screen.selected_cols(row) {
+                        body = body.child(
+                            div()
+                                .absolute()
+                                .left(px(PAD_X + f32::from(from) * width))
+                                .top(px(PAD_Y + f32::from(row) * LINE_HEIGHT))
+                                .w(px(f32::from(to - from) * width))
+                                .h(px(LINE_HEIGHT))
+                                .bg(selection),
+                        );
+                    }
+                }
                 for (number, runs) in tab.screen.rows().into_iter().enumerate() {
                     let mut text = String::new();
                     let mut highlights = Vec::new();
@@ -677,16 +878,32 @@ impl Workspace {
                     );
                 }
                 if let Some((row, col)) = tab.screen.cursor_at() {
-                    let width = self.terminal.cell.get();
                     body = body.child(
                         div()
                             .absolute()
-                            // The body's padding: 8 across, 4 down.
-                            .left(px(8. + f32::from(col) * width))
-                            .top(px(4. + f32::from(row) * LINE_HEIGHT))
+                            .left(px(PAD_X + f32::from(col) * width))
+                            .top(px(PAD_Y + f32::from(row) * LINE_HEIGHT))
                             .w(px(width))
                             .h(px(LINE_HEIGHT))
                             .bg(foreground.opacity(0.45)),
+                    );
+                }
+                // What the input method is composing, over the cursor and
+                // underlined until it is typed, as xterm.js shows it.
+                if let Some(text) = self.terminal.composition.marked() {
+                    let (row, col) = tab.screen.typing_at();
+                    body = body.child(
+                        div()
+                            .absolute()
+                            .left(px(PAD_X + f32::from(col) * width))
+                            .top(px(PAD_Y + f32::from(row) * LINE_HEIGHT))
+                            .h(px(LINE_HEIGHT))
+                            .whitespace_nowrap()
+                            .bg(background)
+                            .text_color(foreground)
+                            .border_b_1()
+                            .border_color(foreground)
+                            .child(text.to_owned()),
                     );
                 }
                 // Scrolled back: say so, with the way back to what is live.
@@ -741,6 +958,109 @@ impl Workspace {
                 .child(header)
                 .child(body),
         )
+    }
+}
+
+/// The system's input method, typing into the terminal that has focus:
+/// what it composes is shown at the cursor and only what it commits is
+/// sent, as through xterm.js's hidden text field. The terminal holds no
+/// text the input method could edit; its document is the composition.
+struct TerminalInput {
+    workspace: Entity<Workspace>,
+}
+
+impl InputHandler for TerminalInput {
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _: &mut Window,
+        cx: &mut App,
+    ) -> Option<UTF16Selection> {
+        Some(UTF16Selection {
+            range: self
+                .workspace
+                .read(cx)
+                .terminal
+                .composition
+                .selected_range(),
+            reversed: false,
+        })
+    }
+
+    fn marked_text_range(&mut self, _: &mut Window, cx: &mut App) -> Option<Range<usize>> {
+        self.workspace.read(cx).terminal.composition.marked_range()
+    }
+
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
+        _: &mut Window,
+        cx: &mut App,
+    ) -> Option<String> {
+        let (text, range) = self
+            .workspace
+            .read(cx)
+            .terminal
+            .composition
+            .text_for_range(range_utf16);
+        *adjusted_range = Some(range);
+        Some(text)
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        _replacement_range: Option<Range<usize>>,
+        text: &str,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.workspace
+            .update(cx, |this, cx| this.terminal_commit(text, window, cx));
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range: Option<Range<usize>>,
+        _: &mut Window,
+        cx: &mut App,
+    ) {
+        self.workspace.update(cx, |this, cx| {
+            this.terminal_compose(new_text, new_selected_range, cx)
+        });
+    }
+
+    fn unmark_text(&mut self, _: &mut Window, cx: &mut App) {
+        self.workspace
+            .update(cx, |this, cx| this.terminal_unmark(cx));
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Bounds<Pixels>> {
+        self.workspace
+            .read(cx)
+            .terminal_ime_bounds(range_utf16, window, cx)
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        _: Point<Pixels>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<usize> {
+        None
+    }
+
+    /// A held key repeats, as in a terminal, rather than offering accents:
+    /// the terminal has no typed text an accent could replace.
+    fn apple_press_and_hold_enabled(&mut self) -> bool {
+        false
     }
 }
 

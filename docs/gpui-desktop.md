@@ -188,7 +188,7 @@ desktop can hold them as they are.
 | Notebook | A tab of the side panel: the conversation's code as cells, with what each run returned; copy, save to favorites, or show it in the conversation |
 | Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
 | Scheduled tasks | A page across projects (the clock on the home page, or the command palette): a prompt is sent into a new conversation of its project every few hours, daily or weekly at a time, while the app is open; each task can be run now, switched off or deleted, and its latest firing opens the conversation it made |
-| Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, figures, tables and claims with the project results, runs and conversation passages they rest on and why each was chosen. Research conversations lists what you and the assistant said in the project's own conversations; a message opens read-only, a passage is selected in it (or the whole preview, up to 16 KiB, is used) and its text is kept with the evidence. Finalize… checks a draft for whom the evidence is for (private, restricted or public, with the reviews public needs) and lists what stands in the way, warnings and what the record leaves out; a finding that may stand is kept with a reason; when nothing is left in the way the version is locked under a SHA-256 fingerprint. A finalized version shows its evidence level; evidence a run made offers Verify in a clean folder, which reruns that run with only its frozen inputs and code and lists each output as matching or not (Reproduction reports); Build capsule… saves the version's evidence capsule as a `.zip` where you choose (Capsule builds). New version starts a draft from any version with its items and evidence |
+| Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, sections, claims, figures, tables, methods and supplements, each at the top level or under a parent item, with the project results, runs, conversation passages and exact anchors they rest on and why each was chosen. Each piece of evidence says whether it is a candidate, selected or rejected and who may see it (changed on a draft), notes when the project has a newer version of its result, and opens to where it came from (the run's inputs, the run and its code, and the source and environment details). Advanced: locate by source ID binds a message range, tool result, execution log, code cell or external resource by its ids. Research conversations lists what you and the assistant said in the project's own conversations; a message opens read-only, a passage is selected in it (or the whole preview, up to 16 KiB, is used) and its text is kept with the evidence. Finalize… checks a draft for whom the evidence is for (private, restricted or public, with the reviews public needs) and lists what stands in the way, warnings and what the record leaves out; a finding that may stand is kept with a reason; when nothing is left in the way the version is locked under a SHA-256 fingerprint. A finalized version shows its evidence level; evidence a run made offers Verify in a clean folder, which reruns that run with only its frozen inputs and code and lists each output as matching or not (Reproduction reports); Build capsule… saves the version's evidence capsule as a `.zip` where you choose (Capsule builds). New version starts a draft from any version with its items and evidence |
 | Research mandates | A page of standing goals (the gauge on the home page, or the command palette): each project's agent works on its mandate in rounds on a cadence in one conversation, asks you through the research assistant when it needs something only you can give, and writes reports; answer, run now, pause, report, edit, close or delete from its card |
 | Research assistant | One conversation of its own (the robot on the home page, or the command palette) that reads what was recorded across projects and each project's progress, keeps your dated plan, and hands work to a project conversation, whose outcome it reports back; a bar over it shows today's plan to tick off or drop |
 | Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own. A file's source details (the run that made it, what that run read, the run's record) show beside the days, and Relationships shows the project's research graph as a list or drawn. Each day can have a recap the model drafts from its records, with what was done, found, went wrong and comes next, which you change, confirm or dismiss; Scheduled tasks drafts the last days' recaps each morning |
@@ -203,7 +203,7 @@ desktop can hold them as they are.
 | Agent cards | A call that hands work to other agents is a card in its place: `explore` with its question, status and folded findings; `dispatch_subagent` with the subagent conversation's title, status and task, and a button that opens it; `delegate_tasks` with the batch's goal, status, task counts and a line per task (status, instruction, its conversation), Show in Agents and Stop while it runs. `subagent_status`, `stop_subagent`, `get_delegated_result` and a background batch's result coming back are one folded line naming the subagent or batch. Until the batches or the conversation list are read the call stays a tool row |
 | Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and one already stopping whose stop never came back can be force-cancelled (marked cancelled, as the WebView's Force cancel), and is followed until it ends. One that has ended and kept a workspace where it ran can have it deleted after a question (its logs are saved into the project first, and outputs never brought back are not lost without a second question); a cleaned run, or one whose cleanup failed, says so. A run that moves files between machines shows its phase, file, bytes, rate and time left on its card, and while it moves (and a few seconds after) in a Transfers tray above the composer that folds to one line. A finished run on an SSH host has a folder button: a dialog lists what it left there a folder at a time, with a name filter and More… for long folders, and the files and folders chosen (across folders) are brought into the project as the conversation's results, a folder as one archive, or deleted there after a question; the whole workspace can be deleted from it too. In the transcript each run has one card, under the call that waits on it while it goes on (a `run_in_context` still waiting on its run included) and under the call that submitted it once it has ended, so an explicit `monitor_run` leaves no second card: its state as an icon and a word, where and how long it ran, a transfer's meter, and, with the call opened, its remote folder, command and output tails; Ask, Move to background (a turn waiting on the run stops waiting with `wait_backgrounded` and finishes its reply while the run goes on; the conversation gets one message when the run ends, even after a restart), Cancel (Force cancel once it is stopping), the review dialog for a finished run on an SSH host, and Show in Runs for its whole output, log and clean-up. A run of the conversation that no loaded call names, going or ended within the last minute, has a card of its own placed as the WebView places its standalone cards (above the first message of yours sent after the run was made, else below the last row) that shows its folder, command and output and, once ended, can be dismissed while the window is open |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them, and lists each one's versions, any of which can be saved as a copy from its snapshot (checked against its checksum, up to 512 MB); By folder puts them under their folders, and each one's trail button says which tool call wrote it, with the code and Open the conversation |
-| Side panel | Tabs: Files, Runs, Environments (this computer and the saved SSH hosts: attach one to the conversation so its runs may go there, take it away, check it, open a terminal or its folders, see the Python and R its last check found, list the project's runs there, list the files the project placed there and delete one no run needs after a question, and set where the project keeps things there: uploaded data, run folders and the results folder), Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside, each named in words, the open one in ink with a short teal line under it. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
+| Side panel | Tabs: Files, Runs, Environments (this computer and the saved SSH hosts: attach one to the conversation so its runs may go there, take it away, check it, open a terminal or its folders, see the Python and R its last check found, see, start, stop and open the console of the conversation's Python and R there, keep the Python and Rscript paths its interpreters start with, list the project's runs there, list the files the project placed there and delete one no run needs after a question, and set where the project keeps things there: uploaded data, run folders and the results folder), Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside, each named in words, the open one in ink with a short teal line under it. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
 | Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found; the transcript draws those calls, and the subagents and batches the agent started, as cards |
 | Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation. As in the WebView's side chat, the model first says what kind of question it is (about the conversation as a whole, a comparison of earlier and later, or a lookup of something said in it) and which phrases to look for; the answer is then told that scope. The latest turns are quoted whole; passages from before them that hold those phrases (or, for a lookup or comparison the model gave none for, the question's words) go along labelled [E1]… and are listed under the answer, with who said them and the words they matched. Ask aside under a message opens it with that message quoted in the question; with text selected in a file's text in the preview (plain text, a script, a table shown as text), the preview's Ask aside about the selected text quotes that passage under the file's name into the next question, as a chip with its × until it is asked |
 | Quoting | Quote under a message puts it in the message box as a quotation after what you were writing, ready to answer; a selected passage is copied with Cmd/Ctrl+C |
@@ -609,8 +609,8 @@ Limits of this slice:
   GPUs, scheduler and the Python and R it found, which is also what the
   model is told about the host; a check that fails records why, and the
   model is told not to try the host. The check is the WebView's probe
-  (`wisp_runs::context_probe`). WSL, interpreter paths set by hand, and
-  scratch and storage locations are not ported. Removing a host keeps the
+  (`wisp_runs::context_probe`). WSL is not ported; a host's interpreter
+  paths and its storage locations are in the side panel's Environments tab. Removing a host keeps the
   records of runs made on it and puts new work back on this computer if it
   was the default.
 - The first-run guide follows the WebView's: it is shown while the
@@ -643,10 +643,22 @@ Limits of this slice:
   carried into a branch and a copy, and is dropped when the host is removed.
   It decides which host the prompt names as the one work goes to, and so
   where the model starts runs; it is not a restriction, and the model may
-  still name another saved host. The Python and R sessions and the shell
-  stay on this computer whatever is chosen, because this host has no remote
-  interpreter. Attaching hosts to one conversation only, the terminal, and
-  the right panel's Environments tab are not ported.
+  still name another saved host. The model's `python` and `r` start there
+  too when a call names no `context_id`, as in the WebView: the choice is
+  attached to the conversation on its first use, and a call naming a host
+  the conversation has not attached is refused. On a host the interpreter
+  starts only after a passed check, with the path kept on the host (its
+  interpreter form in the side panel's Environments tab) or the one the
+  check found; its worker is copied once per checksum to
+  `~/.wisp-science/runtime/` there and run over `ssh` with the host's own
+  settings, in its working folder. The shell and the file tools stay on
+  this computer, as in the WebView. WSL distros are not offered. The model
+  can keep a host's Python or Rscript path with the WebView's
+  `set_runtime_interpreter` (`wisp_runs::runtime_config_tool`), which
+  restarts the conversation's interpreter there if one is kept; for
+  `local` it is refused with the reason, since this computer's
+  interpreters here start from the managed environment and `PATH` and
+  never read a path kept on `local`.
 - Conversation settings apply to every turn this host runs from the next one
   on, a paired phone's included. Steps per turn replaces the `WISP_MAX_ITER`
   the host was started with once it is saved; at the limit the model is asked
@@ -707,15 +719,31 @@ Limits of this slice:
   lines to scroll back with the wheel) at the size that fits the dock,
   and types into it while it has focus: Return, Backspace, Tab, arrows
   (application mode included), Home, End, Page Up and Down, Delete, F1–F4,
-  Ctrl chords and Alt as Escape; Cmd+V (Ctrl+Shift+V elsewhere) pastes,
-  bracketed when the program asks, and Cmd+C (Ctrl+Shift+C) copies the
-  screen's text. While a terminal has focus it keeps Escape, and off
-  macOS every Ctrl chord, for its shell rather than the window. The host
-  keeps the last 4 MB each wrote, so a terminal shown again is redrawn;
-  closing a tab stops its terminal, and all stop when the app quits. What
-  is typed there is yours: the model does not see it. Not ported: input
-  through the system's input method (Chinese, Japanese) and selecting
-  part of the screen.
+  Ctrl chords, and Alt as Escape off macOS. Text goes through the system's
+  input method, as through xterm.js's hidden text field: the terminal
+  registers itself as the input method's client (a GPUI `InputHandler`),
+  leaves keys that type text to it, shows what it is composing underlined
+  at the cursor, and sends only what it commits; what it lets go of is
+  dropped. Option composes characters on macOS and AltGr on Windows, as in
+  xterm.js. On macOS a held key repeats instead of offering accents. The
+  mouse selects as xterm.js does: drag between cell edges, double-click a
+  word (its separators are xterm.js's), triple-click a line over the rows
+  it wraps onto, Shift+click to extend, and Cmd+A everything kept on
+  macOS. The selection is kept by line so it stays on its text while
+  output scrolls it, and goes when the user types, the screen is resized,
+  the program switches screens or its lines leave the scrollback. Cmd+C
+  (Ctrl+Shift+C elsewhere, where Ctrl+C stays the shell's) copies it as
+  xterm.js does (cells never written at a line's end left out, wrapped
+  rows joined, `\r\n` between lines on Windows), and nothing when nothing
+  is selected; Cmd+V (Ctrl+Shift+V) pastes, bracketed when the program
+  asks. While a terminal has focus it keeps Escape, and off macOS every
+  Ctrl chord, for its shell rather than the window. The host keeps the
+  last 4 MB each wrote, so a terminal shown again is redrawn; closing a tab
+  stops its terminal, and all stop when the app quits. What is typed there
+  is yours: the model does not see it. Not ported: the right-click menu,
+  column selection, Alt+click to move the cursor, scrolling while a drag
+  leaves the screen, mouse reporting to programs, and middle-click paste on
+  Linux.
 - Whole log reads `stdout.log` and `stderr.log` from the run's own
   folder (`~/.wisp-science/runs/<id>`), the last 512 KB of each, when it
   is asked for; it does not follow a run that is still writing, so press
@@ -1177,13 +1205,20 @@ Limits of this slice:
   offers its tasks only those two models and one native executor, and
   runs every task's turn natively on one of the two, so the editor does
   not offer them and Bring over still leaves such WebView templates
-  behind; tool-call and cost budgets, dragging tasks about on the map,
+  behind; tool-call and cost budgets,
   skills that bring scripts of their own as conversion sources, and literature and web research
   capabilities.
   A task can only need tasks listed before it; besides the numbered
   After task buttons, the form shows the workflow as a map, each task in
-  the column of its stage with an edge to each task that needs it, where
-  clicking a task and then another makes the later one need the earlier
+  the column of its stage with an edge to each task that needs it. As on
+  the WebView's graph editor, dragging a task onto another makes that one
+  need it, with a line from the task to the pointer while it is dragged;
+  when the task dropped on is listed first, it moves after the dragged
+  one with whatever needs it, the others keeping their order, and a drop
+  that would make the tasks need each other in a circle joins nothing and
+  says so. The map is laid out from the dependencies, as the WebView's is,
+  so nothing else is kept: the template holds only which tasks each needs.
+  Clicking a task and then another makes the later one need the earlier
   one (or no longer need it). A workflow can also carry a context
   (scope, conventions, how results are reported) that every task is
   told. From skills follows the WebView's `plan_skill_portfolio`: the
@@ -1623,11 +1658,22 @@ Limits of this slice:
   its UTF-8 bytes and the message's SHA-256, a message changed since it
   was shown is refused, and the text is kept with the evidence; the
   offsets and locator are `wisp_dto::publication_sources`, which the
-  WebView picker uses too). Tool calls, code cells and outside resources
-  bound through the WebView's advanced anchors are listed by kind but
-  cannot be added here. Evidence is not reviewed or marked from here, and
-  items are flat: they are shown in the order they were added and cannot
-  be nested or reordered.
+  WebView picker uses too), or an exact anchor typed by its ids as in the
+  WebView's advanced dialog (`precise_evidence_source`, shared): a tool
+  call of a message with its result, one execution or its code, or an
+  external resource of the project; the store checks it is the project's
+  and keeps a copy with the evidence. Whether evidence is selected for the
+  paper and who may see it are the binding's own columns, changed only on
+  a draft (only selected evidence is locked when finalizing). Where a
+  source came from is the WebView host's lineage summary, now
+  `wisp_store::publication_lineage`, and a newer version of a bound result
+  is the store's drift list. Items nest as in the WebView's outline (an
+  item cannot go inside itself or one of its own; one moved under another
+  parent goes last among its new siblings; removing an item removes the
+  items under it); like the WebView, items cannot be reordered. Reviews,
+  supersession notes and item links are not shown: nothing in either
+  desktop writes them. Evidence of the version as a whole and the
+  supported claim are not chosen here.
 - A finalized version's clean rerun and capsule are the WebView host's
   own code, moved into `wisp_runs::publication_reproduction` and
   `wisp_runs::publication_capsule` and called by both hosts. Verify in a
@@ -1837,10 +1883,16 @@ Limits of this slice:
   passed as its most recent exchange (about 12,000 bytes), and a skill as its
   instructions. The add-context box also lists, each under its own heading
   and filtered by what is typed, the project's artifacts (this
-  conversation's first, then the newest), where work can run (this computer
-  and the saved SSH hosts; found by "server" too), the runtimes (Python on
-  this computer, and R once the conversation has one; found by "runtime"),
-  the workflow library and the memos. These are told to the model the way
+  conversation's first, then the newest, then a few of other projects'
+  whose file name holds what is typed, each saying its project, as the
+  WebView's `@` searches every project), where work can run (this computer
+  and the saved SSH hosts; found by "server" too), the runtimes (found by
+  "runtime"; by the WebView's rule, Python and R on this computer and on
+  each saved SSH host whose interpreter is known, either a path kept on it
+  or one its check found, Python always on this computer and R there until
+  a check finds none, plus any the conversation already has; a WSL
+  distro's are not offered, as this host starts Python and R only on this
+  computer and SSH hosts), the workflow library and the memos. These are told to the model the way
   the WebView tells them: an artifact as its name and where its file is
   now, an environment as its context id and kind (a saved host is also
   attached to the conversation, so its runs may go there), a runtime as the
@@ -1851,17 +1903,23 @@ Limits of this slice:
   reads a memo only when it is sent that way. All of it is for that turn
   only: none is saved with the message, so the chips a message shows for
   them last while the window that sent it is open, as in the WebView. A
-  runtime on an SSH host is refused, because the embedded host keeps Python
-  and R on this computer; a conversation is not read by the WebView's
+  runtime named on a saved SSH host is told the same way and attaches that
+  host. Another project's artifact is found through the store when the
+  message is sent, as in the WebView; with project databases kept in the
+  project folders (decentralized storage) both refuse it as unavailable,
+  since the store looks for it in the open project's database. Inside an
+  exploration no other project's artifacts are offered, where the WebView
+  refuses the search. A conversation is not read by the WebView's
   reader agent, and `#project` is not offered. Paste,
   drag and drop work, and typing `@` or `#` where a word starts opens the
   add-context picker (the character is taken back out). A slash command
   runs when it is the whole message. Typing `/` where a word starts opens
   the composer's `/` menu, as the WebView's `/` opens its skill picker:
-  the commands and the project's skills that begin with what follows the
-  `/`, narrowing as you type. A command picked there runs, or is written
-  out when it needs words after it (`/btw`, `/timer`); a skill is attached
-  to the message; either way the typed word goes. A word with another `/`
+  the commands that begin with what follows the `/`, the workflows of the
+  library whose name or goal holds it, and the project's skills that match
+  it, narrowing as you type. A command picked there runs, or is written
+  out when it needs words after it (`/btw`, `/timer`); a workflow or a
+  skill is attached to the message; either way the typed word goes. A word with another `/`
   in it is a path and opens nothing. Escape shuts the menu until that word
   is gone. The `/` button opens the same menu.
 - Runs can be cancelled, moved to the background from their card in the
@@ -2020,7 +2078,14 @@ files with no text. Type `@`, then `server`: this computer and the saved hosts
 are listed under Environments; pick one with the arrows and Return, add an
 artifact, the Python runtime and a workflow with the pointer, send, and
 confirm each shows as a chip on the message and What the model is sent lists
-them for that turn. Pick a memo: its text is put into the message box and no
+them for that turn. With a second project that has an artifact, type `@`
+and part of its file name: it is listed under Artifacts after this
+project's, with that project's name; add it and send: What the model is
+sent gives its path in the other project. With a saved SSH host whose check
+found Python (or with a Python path kept on it), type `@runtime`: Python on
+that host is listed; add it and send: the host is attached to the
+conversation. Type `/` and part of a workflow's name: it is listed under
+Workflows; pick it: a workflow chip is added and the typed word goes. Pick a memo: its text is put into the message box and no
 chip is added. Press Escape with the box open: only the box closes.
 Type a word that occurs only in a message, and one that matches nothing. Press
 Escape with the palette over Settings and over the Files panel: only the
@@ -2134,6 +2199,25 @@ during `sleep 10`: it stops. Open a second one with +: two tabs. Hide the
 dock with Terminals in the top bar and show it again: both are still
 there with what they wrote. Close one with its ×. With the project's
 folder moved away, confirm a message says it is not there.
+In a terminal, switch the system's input source to Pinyin (or Japanese)
+and type `nihao`: the letters show underlined at the cursor and nothing
+reaches the shell; choose 你好 from the candidates, which open under the
+cursor: 你好 is typed once. Type `nihao` again and press Escape: the
+composition goes and nothing is typed. With a dead key (Option+E then E on
+a U.S. layout on macOS) é is typed; on macOS Option+B types ∫, and on
+Linux or Windows Alt+B moves back a word in the shell. Open the emoji
+picker (Ctrl+Cmd+Space on macOS, Win+. on Windows) and choose one: it is
+typed. Hold a letter on macOS: it repeats.
+Run `seq 1 100` there and drag across two lines: they are highlighted;
+press Cmd+C (Ctrl+Shift+C) and paste into the composer: those lines, one
+per line. Double-click a word in `echo (foo.bar) baz`: foo.bar is
+selected; triple-click a line longer than the terminal is wide: all its
+rows are. Shift+click further down: the selection reaches there. Scroll
+back with the wheel: the selection stays on its text; type a letter: it
+goes. Press Cmd+C with nothing selected: the clipboard is unchanged. On
+Linux or Windows press Ctrl+C over a selection during `sleep 10`: it
+stops. On macOS press Cmd+A: everything, scrolled away or not, is
+selected.
 In a conversation open the command palette and choose Python console:
 the console opens over the composer with an interpreter chip. Run
 `x = 41 + 1` and then `x`: it prints 42 and the variables list shows `x`.
@@ -2179,6 +2263,27 @@ Escape and only the form closes. Open it again, type `../x` as the results
 folder and Save: it is refused and the form stays. Type `/scratch/lab` as
 the data folder and Save: the form says it is saved; open another project
 and the same host shows the defaults again.
+Press the host's pencil button (The Python and Rscript used there): the
+form shows the paths kept on it, empty at first with what its check found
+as the hint; type a Python path that exists there and Save, and the notice
+says they are saved; change the host in Settings and open the form again:
+the path is still there. Press Escape: only the form closes. With the host
+chosen in Runs on, ask the model to run `import platform;
+print(platform.node())` with the `python` tool without naming a host: it
+prints the host's name, the chip above the composer reads `Python … · on`
+the host, and the host's runtimes button (This conversation's Python and R
+there) lists it with its path, version and PID; Console opens its
+variables, and Stop stops it. Press Start on R there: it starts with the
+Rscript the check found (or says why it cannot, such as no Rscript known or
+`jsonlite` missing). Choose This computer in Runs on and run Python again:
+it runs here, and the host's interpreter is untouched.
+Choose the host in Runs on again, run Python there, and ask the model to
+use `/opt/conda/bin/python` there (a path that exists on the host): it
+calls `set_runtime_interpreter`, says it saved the path and restarted the
+conversation's Python, the host's interpreter form shows the path, and the
+runtimes button lists the Python with it. Ask it to set a Python for this
+computer the same way: it says this app does not read a path saved for
+`local`, and nothing is saved.
 Ask the model to download a large file from that host into the project:
 while it moves, a Transfers tray above the composer shows the file, bytes,
 share done, rate and time left; fold it to one line and unfold it. When it
@@ -2407,6 +2512,23 @@ Press New version:
 "v2 · Version 2" opens as a draft with the same figure and evidence.
 With the reason field open press Escape: only the field closes; press it
 again: the panel closes and the page stays.
+In a draft add a Section "Results", then a figure whose Parent item is
+"Results": the figure is listed indented under it. Change the section:
+the figure is not offered as its parent. Change the figure to Top level:
+it moves to the end of the list, unindented. Press Add evidence on the
+figure, choose Candidate and Public, then a project result: its line
+reads Candidate and Public. Open it with the arrow: Analysis source lists
+the run's inputs, the run with its code and the result, and below them
+the lineage, version, checksum, counts and environment; press Selected
+and Private there: the line changes. Once that result has a newer
+version in the project (a turn writes the same file again), the line
+says a newer result exists, bound v1, latest v2.
+Press Add evidence, then Advanced: locate by source ID: the dialog opens
+on Message span; press Escape at once: only the dialog closes and the
+source list stays. Open it again, choose Code cell, type an unknown id
+and press Bind exact evidence: the error says the code cell must belong
+to the project. On a finalized version open a source: its details show,
+without the selection and visibility buttons.
 Send `/timer 1m say the time`: a note confirms it, a strip above the
 composer shows the prompt with "Every 1 min · Next: <time>", the
 Scheduled tasks page lists it as a conversation's timer, and within a
@@ -2507,7 +2629,14 @@ has them.
 In Settings, Workflows, two are listed with their tasks and stages. Press
 New workflow, give a name and a goal, add a second and a third task and
 mark the third as after tasks 1 and 2: saved, it reads "3 tasks · 2
-stages · up to 2 independent". Change it and remove the first task:
+stages · up to 2 independent". Change it, add a fourth task, and on the
+map drag the fourth onto the first: while dragging a line follows the
+pointer and the first is highlighted under it; dropped, the first moves
+after the fourth (the numbers change) and needs it. Drag the last task
+onto one of the tasks it needs: it is refused as a circle and nothing
+changes. Press a task
+without moving: it is picked as before; click another to join them.
+Cancel. Change it and remove the first task:
 the remaining dependency follows the task it pointed at. Leave a title
 empty: it is refused and the form stays. Press Escape with the form
 open: only the form closes. With a project open press Run: Settings

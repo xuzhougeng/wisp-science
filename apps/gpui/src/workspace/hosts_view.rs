@@ -1,6 +1,7 @@
 //! The Environments tab of the side panel: this computer and the saved SSH
 //! hosts, which of them the conversation's work may run on, and for each a
 //! check, a terminal, its folders, the interpreters its last check found,
+//! the conversation's Python and R there, the interpreter paths kept on it,
 //! the project's runs there and the files the project placed there. A run
 //! on a host that is not attached is refused, so attaching one is what
 //! lets the model use it.
@@ -26,13 +27,16 @@ use crate::{
     present::Tone,
     settings::{self, Section},
 };
-use wisp_server::desktop::{HostRun, StagedFile, StagedState};
+use wisp_server::desktop::{
+    HostInterpreters, HostRun, RuntimeLanguage, RuntimeRow, RuntimeState, StagedFile, StagedState,
+};
 
 /// How many of a host's runs its card lists.
 const HOST_RUNS_SHOWN: usize = 20;
 
-/// What one host's card shows under its actions, as the WebView's Runs and
-/// Remote files views of a server: nothing until it is read.
+/// What one host's card shows under its actions, as the WebView's Runs,
+/// Remote files and Runtimes views of a server and its interpreter form:
+/// nothing until it is read.
 pub(super) enum HostDetail {
     Runs {
         alias: String,
@@ -44,29 +48,77 @@ pub(super) enum HostDetail {
         /// A file is being deleted.
         busy: bool,
     },
+    /// The conversation's Python and R there.
+    Runtimes {
+        alias: String,
+        /// The language being started there.
+        starting: Option<RuntimeLanguage>,
+    },
+    /// The Python and Rscript paths kept on the host, in the form's fields.
+    Interpreters {
+        alias: String,
+        kept: Option<Result<HostInterpreters, String>>,
+        /// They are being saved.
+        busy: bool,
+    },
+}
+
+/// Which of those a host's button opens.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DetailKind {
+    Runs,
+    Placed,
+    Runtimes,
+    Interpreters,
 }
 
 impl HostDetail {
     fn alias(&self) -> &str {
         match self {
-            Self::Runs { alias, .. } | Self::Placed { alias, .. } => alias,
+            Self::Runs { alias, .. }
+            | Self::Placed { alias, .. }
+            | Self::Runtimes { alias, .. }
+            | Self::Interpreters { alias, .. } => alias,
+        }
+    }
+
+    fn kind(&self) -> DetailKind {
+        match self {
+            Self::Runs { .. } => DetailKind::Runs,
+            Self::Placed { .. } => DetailKind::Placed,
+            Self::Runtimes { .. } => DetailKind::Runtimes,
+            Self::Interpreters { .. } => DetailKind::Interpreters,
         }
     }
 }
 
+/// The conversation's interpreter of `language` on `context`, the latest
+/// one when a stopped one is still listed.
+fn runtime_on<'a>(
+    rows: &'a [RuntimeRow],
+    context: &str,
+    language: RuntimeLanguage,
+) -> Option<&'a RuntimeRow> {
+    rows.iter()
+        .rev()
+        .find(|row| row.context == context && row.language == language)
+}
+
 impl Workspace {
-    /// Shows a host's runs, or the files the project placed there, under
+    /// Shows a host's runs, the files the project placed there, the
+    /// conversation's interpreters there or the paths kept for them, under
     /// its card; the same again closes it.
     fn toggle_host_detail(
         &mut self,
         alias: String,
-        runs: bool,
+        kind: DetailKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let open = self.host_detail.as_ref().is_some_and(|detail| {
-            detail.alias() == alias && matches!(detail, HostDetail::Runs { .. }) == runs
-        });
+        let open = self
+            .host_detail
+            .as_ref()
+            .is_some_and(|detail| detail.alias() == alias && detail.kind() == kind);
         self.host_detail = None;
         self.staged_removing = None;
         self.layers.close(Layer::HostDetail);
@@ -80,20 +132,44 @@ impl Workspace {
         // One thing under a card at a time.
         self.storage_host = None;
         self.layers.close(Layer::HostStorageForm);
-        self.host_detail = Some(if runs {
-            HostDetail::Runs {
+        self.host_detail = Some(match kind {
+            DetailKind::Runs => HostDetail::Runs {
                 alias: alias.clone(),
                 runs: None,
-            }
-        } else {
-            HostDetail::Placed {
+            },
+            DetailKind::Placed => HostDetail::Placed {
                 alias: alias.clone(),
                 files: None,
                 busy: false,
-            }
+            },
+            DetailKind::Runtimes => HostDetail::Runtimes {
+                alias: alias.clone(),
+                starting: None,
+            },
+            DetailKind::Interpreters => HostDetail::Interpreters {
+                alias: alias.clone(),
+                kept: None,
+                busy: false,
+            },
         });
         self.layers.open(Layer::HostDetail);
-        if runs {
+        if kind == DetailKind::Interpreters {
+            for field in &self.interpreter_fields {
+                field.update(cx, |input, cx| input.set_value("", window, cx));
+            }
+            let reply = self.backend.host_interpreters(alias.clone());
+            cx.spawn_in(window, async move |this, cx| {
+                let result = receive(reply).await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.show_interpreters(&alias, result, window, cx);
+                    cx.notify();
+                });
+            })
+            .detach();
+        } else if kind == DetailKind::Runtimes {
+            // What it shows is the conversation's own status.
+            self.load_status(window, cx);
+        } else if kind == DetailKind::Runs {
             let reply = self.backend.host_runs(project, alias.clone());
             cx.spawn_in(window, async move |this, cx| {
                 let result = receive(reply).await;
@@ -134,6 +210,132 @@ impl Workspace {
             *files = Some(result);
             *busy = false;
         }
+    }
+
+    /// Puts the paths kept on `alias` in the form, with what its check
+    /// found as the hint of a field left empty, when that host's form is
+    /// still the one open.
+    fn show_interpreters(
+        &mut self,
+        alias: &str,
+        result: Result<HostInterpreters, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(HostDetail::Interpreters {
+            alias: shown,
+            kept,
+            busy,
+        }) = &mut self.host_detail
+        else {
+            return;
+        };
+        if shown != alias {
+            return;
+        }
+        *busy = false;
+        if let Ok(paths) = &result {
+            for (field, (value, found)) in self.interpreter_fields.iter().zip([
+                (&paths.python, &paths.found_python),
+                (&paths.rscript, &paths.found_rscript),
+            ]) {
+                let hint = found
+                    .clone()
+                    .unwrap_or_else(|| tr("What its check finds").to_owned());
+                field.update(cx, |input, cx| {
+                    input.set_value(value.clone(), window, cx);
+                    input.set_placeholder(hint, window, cx);
+                });
+            }
+        }
+        *kept = Some(result);
+    }
+
+    /// Keeps the paths in the form on the host, as the WebView's
+    /// interpreter form saves them.
+    fn save_interpreters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(HostDetail::Interpreters { alias, busy, .. }) = &mut self.host_detail else {
+            return;
+        };
+        if *busy {
+            return;
+        }
+        *busy = true;
+        let alias = alias.clone();
+        let [python, rscript] =
+            [0, 1].map(|at| self.interpreter_fields[at].read(cx).value().to_string());
+        self.error = None;
+        let reply = self
+            .backend
+            .set_host_interpreters(alias.clone(), python, rscript);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(paths) => {
+                        this.show_interpreters(&alias, Ok(paths), window, cx);
+                        this.notice = Some(crate::i18n::fill(
+                            tr("The interpreters for {} are saved. One already running keeps its own until it is restarted."),
+                            &[&alias],
+                        ));
+                    }
+                    // The form stays open with what was typed.
+                    Err(error) => {
+                        if let Some(HostDetail::Interpreters { busy, .. }) = &mut this.host_detail {
+                            *busy = false;
+                        }
+                        this.error = Some(error);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Starts the conversation's Python or R on the host whose interpreters
+    /// are shown, as the WebView's Start on a server's runtime card.
+    fn start_on_host(
+        &mut self,
+        language: RuntimeLanguage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selection = self.state.selection();
+        let (Some(project), Some(session)) = (selection.project.clone(), selection.session.clone())
+        else {
+            return;
+        };
+        let Some(HostDetail::Runtimes { alias, starting }) = &mut self.host_detail else {
+            return;
+        };
+        if starting.is_some() {
+            return;
+        }
+        *starting = Some(language);
+        let reply = self
+            .backend
+            .start_host_runtime(project, session, alias.clone(), language);
+        self.error = None;
+        cx.spawn_in(window, async move |this, cx| {
+            let result = receive(reply).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if let Some(HostDetail::Runtimes { starting, .. }) = &mut this.host_detail {
+                    *starting = None;
+                }
+                if !this.state.current(&selection) {
+                    return;
+                }
+                if let Err(error) = result {
+                    this.error = Some(error);
+                }
+                this.load_status(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     /// Asks before a file the project placed on a host is deleted.
@@ -273,6 +475,7 @@ impl Workspace {
             .host_detail
             .as_ref()
             .filter(|detail| detail.alias() == alias && self.layers.contains(Layer::HostDetail))?;
+        let danger = cx.theme().danger;
         let muted = cx.theme().muted_foreground;
         let line = |text: String| div().text_xs().text_color(muted).child(text);
         let mut card = surfaces::panel_card("host-detail", cx);
@@ -382,6 +585,155 @@ impl Workspace {
                             }
                             card = card.child(row);
                         }
+                    }
+                }
+            }
+            HostDetail::Runtimes { starting, .. } => {
+                card = card.child(line(
+                    tr("This conversation's Python and R on this host, the ones the model's tools use there.")
+                        .into(),
+                ));
+                let context = format!("ssh:{alias}");
+                let rows = self
+                    .status
+                    .as_ref()
+                    .map(|status| status.runtimes.as_slice())
+                    .unwrap_or_default();
+                for (index, language) in [RuntimeLanguage::Python, RuntimeLanguage::R]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let row = runtime_on(rows, &context, language);
+                    let mut about = div().v_flex().flex_1().min_w_0();
+                    let mut actions = div().h_flex().gap_1();
+                    match row {
+                        Some(row) => {
+                            about = about
+                                .child(
+                                    surfaces::panel_label(crate::controls::runtime_label(row))
+                                        .text_sm(),
+                                )
+                                .child(line(crate::controls::runtime_detail(row, now)));
+                        }
+                        None => {
+                            about = about
+                                .child(
+                                    surfaces::panel_label(match language {
+                                        RuntimeLanguage::Python => "Python",
+                                        RuntimeLanguage::R => "R",
+                                    })
+                                    .text_sm(),
+                                )
+                                .child(line(tr("Not started").into()));
+                        }
+                    }
+                    // One not there, or stopped, can be started; one that
+                    // runs has its console, and can be stopped.
+                    if row.is_none_or(|row| row.state == RuntimeState::Stopped) {
+                        actions = actions.child(
+                            Button::new(("host-runtime-start", index))
+                                .label(if *starting == Some(language) {
+                                    tr("Starting…")
+                                } else {
+                                    tr("Start")
+                                })
+                                .xsmall()
+                                .disabled(starting.is_some())
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.start_on_host(language, window, cx)
+                                })),
+                        );
+                    }
+                    if let Some(row) = row {
+                        if row.state != RuntimeState::Stopped {
+                            let id = row.id.clone();
+                            actions = actions.child(
+                                Button::new(("host-runtime-console", index))
+                                    .label(tr("Console"))
+                                    .xsmall()
+                                    .ghost()
+                                    .tooltip(tr("Its variables, and code of your own to run in it"))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_console(id.clone(), window, cx)
+                                    })),
+                            );
+                        }
+                        if let Some((label, hint)) = crate::controls::runtime_action(row) {
+                            let id = row.id.clone();
+                            actions = actions.child(
+                                Button::new(("host-runtime-stop", index))
+                                    .label(label)
+                                    .xsmall()
+                                    .ghost()
+                                    .tooltip(hint)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.stop_runtime(id.clone(), window, cx)
+                                    })),
+                            );
+                        }
+                    }
+                    card = card.child(
+                        div()
+                            .h_flex()
+                            .items_start()
+                            .gap_2()
+                            .child(about)
+                            .child(actions),
+                    );
+                }
+            }
+            HostDetail::Interpreters { kept, busy, .. } => {
+                card = card.child(line(
+                    tr("The Python and Rscript this conversation's interpreters on this host start with, as paths there. Left empty, what its last check found is used.")
+                        .into(),
+                ));
+                match kept {
+                    None => card = card.child(line(tr("Loading…").into())),
+                    Some(Err(error)) => {
+                        card = card.child(
+                            div()
+                                .text_xs()
+                                .text_color(danger)
+                                .child(crate::i18n::host(error)),
+                        )
+                    }
+                    Some(Ok(_)) => {
+                        card = card
+                            .child(line(tr("Python executable").into()))
+                            .child(Input::new(&self.interpreter_fields[0]).small())
+                            .child(line(tr("Rscript executable").into()))
+                            .child(Input::new(&self.interpreter_fields[1]).small())
+                            .child(line(
+                                tr("One already running keeps its interpreter until it is restarted.")
+                                    .into(),
+                            ))
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .gap_1()
+                                    .pt_1()
+                                    .child(
+                                        Button::new("host-interpreters-save")
+                                            .label(tr("Save"))
+                                            .xsmall()
+                                            .primary()
+                                            .disabled(*busy)
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.save_interpreters(window, cx)
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("host-interpreters-cancel")
+                                            .label(tr("Cancel"))
+                                            .xsmall()
+                                            .ghost()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.host_detail = None;
+                                                this.layers.close(Layer::HostDetail);
+                                                cx.notify();
+                                            })),
+                                    ),
+                            );
                     }
                 }
             }
@@ -612,12 +964,11 @@ impl Workspace {
         match alias {
             None => {
                 heading = heading.child(chip(tr("Always"), Tone::Success, cx));
-                card = card.child(heading).child(
-                    div()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(tr("Python, R and the shell run here.")),
-                );
+                card = card
+                    .child(heading)
+                    .child(div().text_xs().text_color(muted).child(tr(
+                        "The shell runs here, and Python and R unless they are sent to a host.",
+                    )));
                 actions = actions
                     .child(
                         Button::new("host-local-terminal")
@@ -702,6 +1053,7 @@ impl Workspace {
                     alias.to_owned(),
                     alias.to_owned(),
                 );
+                let (interpreted, configured) = (alias.to_owned(), alias.to_owned());
                 let mut attach = Button::new(("host-attach", index))
                     .label(if attached {
                         tr("Take away")
@@ -760,10 +1112,46 @@ impl Workspace {
                             })),
                     )
                     .child(
+                        icon_button(
+                            ("host-runtimes", index),
+                            "runtime-panel",
+                            "This conversation's Python and R there",
+                        )
+                        .xsmall()
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.toggle_host_detail(
+                                    interpreted.clone(),
+                                    DetailKind::Runtimes,
+                                    window,
+                                    cx,
+                                )
+                            },
+                        )),
+                    )
+                    .child(
+                        icon_button(
+                            ("host-interpreters", index),
+                            "edit",
+                            "The Python and Rscript used there",
+                        )
+                        .xsmall()
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.toggle_host_detail(
+                                    configured.clone(),
+                                    DetailKind::Interpreters,
+                                    window,
+                                    cx,
+                                )
+                            },
+                        )),
+                    )
+                    .child(
                         icon_button(("host-runs", index), "list", "The project's runs there")
                             .xsmall()
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                this.toggle_host_detail(ran.clone(), true, window, cx)
+                                this.toggle_host_detail(ran.clone(), DetailKind::Runs, window, cx)
                             })),
                     )
                     .child(
@@ -775,7 +1163,12 @@ impl Workspace {
                         .xsmall()
                         .on_click(cx.listener(
                             move |this, _, window, cx| {
-                                this.toggle_host_detail(placed.clone(), false, window, cx)
+                                this.toggle_host_detail(
+                                    placed.clone(),
+                                    DetailKind::Placed,
+                                    window,
+                                    cx,
+                                )
                             },
                         )),
                     );
@@ -855,5 +1248,44 @@ impl Workspace {
             list = list.child(self.host_card(index + 1, Some(alias), now, cx));
         }
         list.into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RuntimeLanguage, RuntimeRow, RuntimeState, runtime_on};
+
+    fn row(id: &str, context: &str, language: RuntimeLanguage) -> RuntimeRow {
+        RuntimeRow {
+            id: id.into(),
+            language,
+            context: context.into(),
+            state: RuntimeState::Ready,
+            interpreter: None,
+            version: None,
+            memory_bytes: None,
+            last_error: None,
+            process_id: None,
+            generation: 1,
+            started_at_ms: 0,
+            last_activity_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn a_hosts_card_shows_the_conversations_latest_interpreter_there_of_each_language() {
+        let rows = [
+            row("old", "ssh:gpu", RuntimeLanguage::Python),
+            row("here", "local", RuntimeLanguage::Python),
+            row("new", "ssh:gpu", RuntimeLanguage::Python),
+            row("other", "ssh:cpu", RuntimeLanguage::R),
+        ];
+        let id =
+            |context, language| runtime_on(&rows, context, language).map(|row| row.id.as_str());
+        assert_eq!(id("ssh:gpu", RuntimeLanguage::Python), Some("new"));
+        // R runs on another host only, and this computer's is its own.
+        assert_eq!(id("ssh:gpu", RuntimeLanguage::R), None);
+        assert_eq!(id("ssh:cpu", RuntimeLanguage::R), Some("other"));
+        assert_eq!(id("local", RuntimeLanguage::Python), Some("here"));
     }
 }

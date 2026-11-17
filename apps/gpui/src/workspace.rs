@@ -324,6 +324,8 @@ pub struct Workspace {
     /// Title, note.
     paper_item_fields: [Entity<InputState>; 2],
     paper_item_kind: wisp_server::desktop::PaperItemKind,
+    /// The item the one in the form sits under; `None` at the top level.
+    paper_item_parent: Option<String>,
     /// The item in the form; empty is a new one.
     paper_item_editing: Option<String>,
     /// The item evidence is being chosen for.
@@ -331,6 +333,16 @@ pub struct Workspace {
     paper_source_kind: wisp_server::desktop::PaperSourceKind,
     /// Search, why it was chosen.
     paper_source_fields: [Entity<InputState>; 2],
+    /// Whether what is chosen is meant for the paper, and who may see it.
+    paper_source_selection: wisp_server::desktop::PaperSelection,
+    paper_source_audience: wisp_server::desktop::PaperAudience,
+    /// The exact anchor being typed in the advanced dialog: its kind as
+    /// the WebView names it, then the session, message, byte range, tool
+    /// call and exact id.
+    paper_anchor_kind: &'static str,
+    paper_anchor_fields: [Entity<InputState>; 6],
+    /// The evidence whose source and environment details are open.
+    paper_sources_open: std::collections::HashSet<String>,
     paper_choices: Vec<wisp_server::desktop::PaperSourceChoice>,
     paper_choices_more: bool,
     /// The conversation message a passage is being chosen from, and its
@@ -663,6 +675,9 @@ pub struct Workspace {
     /// The task picked on the workflow's map, to join to the next one
     /// clicked.
     workflow_pick: Option<usize>,
+    /// While a task is dragged on the workflow's map: that task, and where
+    /// the pointer is on the map, for the line drawn to it.
+    workflow_drag: Option<(usize, Point<Pixels>)>,
     /// Remote web access as the host has it; `None` until it answered.
     remote_access: Option<wisp_server::desktop::RemoteAccess>,
     /// The web access link is shown as a QR code.
@@ -996,6 +1011,8 @@ pub struct Workspace {
     storage_host: Option<(String, bool)>,
     /// Data folder, run folders, results folder.
     storage_fields: [Entity<InputState>; 3],
+    /// The Python and Rscript paths kept on a host, in its interpreter form.
+    interpreter_fields: [Entity<InputState>; 2],
     /// One host's runs, or the files the project placed there, under its
     /// card in the Environments tab.
     host_detail: Option<hosts_view::HostDetail>,
@@ -1214,6 +1231,14 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
         ];
+        let paper_anchor_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+        ];
         let paper_passage_field = cx.new(|cx| InputState::new(window, cx).multi_line(true));
         let paper_waiver_field = cx.new(|cx| {
             InputState::new(window, cx)
@@ -1351,6 +1376,10 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).placeholder("~/wisp/project/data")),
             cx.new(|cx| InputState::new(window, cx).placeholder(".wisp-science/runs")),
             cx.new(|cx| InputState::new(window, cx).placeholder("remote/host")),
+        ];
+        let interpreter_fields = [
+            cx.new(|cx| InputState::new(window, cx).placeholder("/opt/conda/bin/python")),
+            cx.new(|cx| InputState::new(window, cx).placeholder("/usr/bin/Rscript")),
         ];
         let font_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Wisp's own"))),
@@ -1797,10 +1826,16 @@ impl Workspace {
             paper_fields,
             paper_item_fields,
             paper_item_kind: wisp_server::desktop::PaperItemKind::Figure,
+            paper_item_parent: None,
             paper_item_editing: None,
             paper_source_item: None,
             paper_source_kind: wisp_server::desktop::PaperSourceKind::Result,
             paper_source_fields,
+            paper_source_selection: Default::default(),
+            paper_source_audience: Default::default(),
+            paper_anchor_kind: "message_span",
+            paper_anchor_fields,
+            paper_sources_open: Default::default(),
             paper_choices: Vec::new(),
             paper_choices_more: false,
             paper_passage: None,
@@ -1962,6 +1997,7 @@ impl Workspace {
             workflow_tasks: Vec::new(),
             workflow_approval: Default::default(),
             workflow_pick: None,
+            workflow_drag: None,
             remote_access: None,
             remote_qr_shown: false,
             remote_fields,
@@ -2136,6 +2172,7 @@ impl Workspace {
             host_detail: None,
             staged_removing: None,
             storage_fields,
+            interpreter_fields,
             artifacts: vec![],
             artifacts_all: false,
             artifacts_by_folder: false,
@@ -2404,6 +2441,7 @@ impl Workspace {
                 Layer::PaperForm
                 | Layer::PaperItemForm
                 | Layer::PaperSources
+                | Layer::PaperAnchor
                 | Layer::ConfirmRemovePaper,
             ) => {}
             Some(Layer::PaperFinalize) => {
