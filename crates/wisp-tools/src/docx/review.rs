@@ -1,4 +1,4 @@
-//! Review only flat inline revisions. Group adjacent delete/insert pairs from
+//! Review only flat inline revisions in body and table-cell paragraphs. Group adjacent delete/insert pairs from
 //! the same author and timestamp so a rewrite is never half-accepted in a batch.
 use super::*;
 use wisp_dto::{
@@ -14,10 +14,10 @@ pub fn read_document(path: &Path) -> Result<Vec<u8>> {
     read_source(path)
 }
 
+// Cell insertions/deletions/merges count as revisions so they are reported as
+// unsupported rather than silently ignored.
 fn revision(n: Node<'_, '_>) -> bool {
-    n.tag_name().namespace() == Some(W)
-        && (matches!(n.tag_name().name(), "ins" | "del" | "moveFrom" | "moveTo")
-            || n.tag_name().name().ends_with("Change"))
+    tracked(n)
 }
 
 fn supported(n: Node<'_, '_>, protected: &[Range<usize>]) -> bool {
@@ -27,7 +27,7 @@ fn supported(n: Node<'_, '_>, protected: &[Range<usize>]) -> bool {
     let Some(p) = n.parent().filter(|p| is_word(*p, "p")) else {
         return false;
     };
-    if !p.parent().is_some_and(|p| is_word(p, "body"))
+    if container(p).is_err()
         || protected
             .iter()
             .any(|r| r.start < p.range().end && p.range().start < r.end)
