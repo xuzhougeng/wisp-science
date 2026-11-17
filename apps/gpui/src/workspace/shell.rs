@@ -5,7 +5,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    text::TextView,
 };
 use serde_json::json;
 use wisp_server::desktop::{RUNS_LOCALLY, Remember};
@@ -738,7 +737,7 @@ impl Workspace {
                         tr("Wisp asked")
                     })),
             )
-            .child(TextView::markdown(id, question.question, window, cx).selectable(true));
+            .child(surfaces::markdown(id, question.question, window, cx).selectable(true));
         if waiting {
             for (n, (label, description)) in question.options.into_iter().enumerate() {
                 let answer = label.clone();
@@ -1149,7 +1148,7 @@ impl Workspace {
                     message = message.child(
                         surfaces::question(present::title_question(&text), long && !open, cx)
                             .w_full()
-                            .child(TextView::markdown(id, text, window, cx).selectable(true)),
+                            .child(surfaces::markdown(id, text, window, cx).selectable(true)),
                     );
                     if long {
                         message = message.child(
@@ -1268,7 +1267,7 @@ impl Workspace {
                 }
                 // The call's input and output while it is open.
                 let below = open.then(|| {
-                    TextView::markdown(id, present::body(item), window, cx)
+                    surfaces::markdown(id, present::body(item), window, cx)
                         .selectable(true)
                         .into_any_element()
                 });
@@ -1287,7 +1286,7 @@ impl Workspace {
                     div()
                         .text_color(cx.theme().muted_foreground)
                         .child(
-                            TextView::markdown(id, item.text.clone(), window, cx).selectable(true),
+                            surfaces::markdown(id, item.text.clone(), window, cx).selectable(true),
                         )
                         .into_any_element()
                 });
@@ -1340,7 +1339,7 @@ impl Workspace {
                 let title = item.tool_name.clone().unwrap_or_default();
                 let below = open.then(|| {
                     let mut below = div().v_flex().gap_2().child(
-                        TextView::markdown(id, item.text.clone(), window, cx).selectable(true),
+                        surfaces::markdown(id, item.text.clone(), window, cx).selectable(true),
                     );
                     if let (Some(project), Some(branch)) =
                         (self.state.project.clone(), item.input.clone())
@@ -1409,7 +1408,7 @@ impl Workspace {
                     .px_6()
                     .pt_2()
                     .child(div().font(surfaces::body_face(cx)).child(
-                        TextView::markdown(id, item.text.clone(), window, cx).selectable(true),
+                        surfaces::markdown(id, item.text.clone(), window, cx).selectable(true),
                     ))
                     .children(self.inline_pictures(&item.text, cx))
                     .children(self.written_pictures(index, cx))

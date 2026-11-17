@@ -316,6 +316,15 @@ names and never a colour of their own.
   host, its output) is what the row opens to. Thoughts (`brain`), a review kept
   with the conversation (`review`, its outcome as a stamp; a click shows the
   report) and a branch brought back (`branch`) are record rows too.
+- Markdown (answers, the side chat, a `.md` preview, favourites, reports)
+  goes through `surfaces::markdown`: blocks stand about 0.6 em apart
+  (`PARAGRAPH_GAP`), before and after lists, code and tables too. The
+  component library drew no gap at all; the vendored copy fixes it
+  (`vendor/gpui-component/WISP-PATCH.md`). Closing CJK punctuation can
+  still start a line: GPUI 0.2.2's wrapper has no line-breaking rules.
+- Whether a model is there is one answer (`settings::has_model`: a usable
+  saved or `WISP_*` model, or Magpie), for the start-up jump to Settings,
+  the home page's bar, the composer's line and the guide's model step.
 - Wisp's answers are body text on the paper, in the UI face at Regular
   with its Chinese face named outright (`surfaces::body_face`; left to the
   system the Chinese came out a step heavier). The answer a turn delivers
@@ -451,8 +460,14 @@ names and never a colour of their own.
     conversation's header, on the paper, as the preview the Files tab draws
     (`preview_parts`): the same header row (its name in ink, a faded
     note, its actions as icon buttons, a hairline under it), the same bars
-    and the same inset. The header's last button splits the centre. The
-    centre draws no preview of its own.
+    and the same inset. The centre draws no preview of its own.
+  - **A file's header** has at most four icon buttons: Back first, at the
+    left of the name (in the side panel; the centre has none); after the
+    name where to show it (Open in centre from the side panel, the split
+    in the centre), Attach to the message, and More (`Layer::FilePreviewMenu`):
+    copy the path, keep as an artifact, ask aside about the selection,
+    where it came from, show in the file manager, open with the system's
+    application, each an icon and a word.
   - **Split**: the document on the left; a divider, a hairline in a 5 px
     grip that goes teal under the pointer and drags; the conversation on the
     right in a column of its own, 38% of the centre until dragged and never

@@ -37,6 +37,12 @@ wisp-dto = { path = "../../crates/wisp-dto" }
 wisp-server = { path = "../../crates/wisp-server" }
 wisp-sync = { path = "../../crates/wisp-sync" }
 
+# Published gpui-component 0.5.1 gives no gap between a text view's
+# paragraphs. Provenance and removal criteria:
+# vendor/gpui-component/WISP-PATCH.md.
+[patch.crates-io]
+gpui-component = { path = "../../vendor/gpui-component" }
+
 [profile.dev]
 debug = 1
 

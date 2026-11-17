@@ -401,7 +401,7 @@ impl Workspace {
             .min_w_0()
             .min_h_0()
             .h_full()
-            .children(self.preview_parts(split.into_any_element(), window, cx))
+            .children(self.preview_parts(None, Some(split.into_any_element()), window, cx))
     }
 
     /// The centre under the conversation's tabs and header (`page`): the

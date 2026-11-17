@@ -9,7 +9,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    text::TextView,
 };
 
 use super::{
@@ -99,7 +98,7 @@ impl Workspace {
                 if open {
                     line = line.child(
                         div().px_3().pb_2().child(
-                            TextView::markdown(
+                            surfaces::markdown(
                                 SharedString::from(format!("agent-mention-body-{key}")),
                                 present::body(item),
                                 window,
@@ -157,7 +156,7 @@ impl Workspace {
             )));
             if open {
                 card = card.child(
-                    TextView::markdown(
+                    surfaces::markdown(
                         SharedString::from(format!("agent-findings-text-{key}")),
                         helper.findings.clone(),
                         window,

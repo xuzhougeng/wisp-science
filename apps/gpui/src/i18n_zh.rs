@@ -565,6 +565,11 @@ pub const ZH: &[(&str, &str)] = &[
     ("Looking…", "正在查看…"),
     ("Tools on this computer", "这台电脑上的工具"),
     ("Open its settings", "打开它的设置"),
+    ("More for this file", "这个文件的更多操作"),
+    (
+        "Magpie is connected and chooses the model; nothing to do here.",
+        "Magpie 已连接并选好了模型，这一步无需操作。",
+    ),
     (
         "Magpie is connected: conversations run on {}. These models apply again after you \
          disconnect it and restart Wisp.",

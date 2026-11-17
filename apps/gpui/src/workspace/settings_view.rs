@@ -11,7 +11,7 @@ use gpui_component::{
 };
 use wisp_server::{
     config::default_api_url,
-    desktop::{ModelFields, ModelInput, ModelProfile, ModelSettings, ModelSource},
+    desktop::{ModelFields, ModelInput, ModelProfile, ModelSettings},
 };
 
 use super::{
@@ -84,9 +84,7 @@ impl SettingsForm {
 
     /// Whether new turns have a model to run on.
     pub(super) fn configured(&self) -> bool {
-        self.current
-            .as_ref()
-            .is_none_or(|current| current.source != ModelSource::None || current.magpie.is_some())
+        self.current.as_ref().is_none_or(settings::has_model)
     }
 
     pub(super) fn current(&self) -> Option<&ModelSettings> {
@@ -124,7 +122,7 @@ impl Workspace {
             let _ = this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(current) => {
-                        let unconfigured = current.source == ModelSource::None;
+                        let unconfigured = !settings::has_model(&current);
                         this.apply_model_settings(current, None, window, cx);
                         if open_if_unconfigured && unconfigured {
                             this.open_settings(window, cx);
@@ -486,6 +484,8 @@ impl Workspace {
                         ),
                 );
             }
+            // Nothing while Magpie's line says what runs.
+            Some(current) if settings::summary(current).is_empty() => {}
             Some(current) => {
                 list = list.child(
                     div()

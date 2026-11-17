@@ -2220,7 +2220,9 @@ impl Workspace {
                 self.ensure_files(window, cx);
             }
             Some(Layer::FilesPanel) => self.restore_focus(window, cx),
-            Some(Layer::PanelTabMenu | Layer::StartMenu | Layer::FilesMenu) => {}
+            Some(
+                Layer::PanelTabMenu | Layer::StartMenu | Layer::FilesMenu | Layer::FilePreviewMenu,
+            ) => {}
             Some(Layer::MessageMenu) => self.message_menu = None,
             Some(Layer::Inbox) => {}
             Some(Layer::ConfirmCleanRun) => self.run_cleaning = None,

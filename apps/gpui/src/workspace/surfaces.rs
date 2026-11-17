@@ -1098,6 +1098,28 @@ fn room_in(height: f32, cap: Option<f32>, half: bool) -> f32 {
     cap.map_or(room, |cap| room.min(cap))
 }
 
+/// How far apart the blocks of a Markdown text are: paragraphs, lists,
+/// code and tables, about 0.6 em of body text (14 px), so an answer's
+/// paragraphs read as paragraphs.
+pub(super) const PARAGRAPH_GAP: f32 = 0.55;
+
+/// The style of Markdown text: the component library's, with the paragraph
+/// gap (`PARAGRAPH_GAP`, in rems).
+pub(super) fn text_style() -> gpui_component::text::TextViewStyle {
+    gpui_component::text::TextViewStyle::default().paragraph_gap(rems(PARAGRAPH_GAP))
+}
+
+/// Markdown text, as answers, documents, reports and previews show it,
+/// with its paragraphs apart (`text_style`).
+pub(super) fn markdown(
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    window: &mut Window,
+    cx: &mut App,
+) -> gpui_component::text::TextView {
+    gpui_component::text::TextView::markdown(id, text, window, cx).style(text_style())
+}
+
 /// A whole window: its bar (`window_bar`) over the page, which takes the
 /// rest.
 pub(super) fn window_frame(bar: Option<AnyElement>, page: impl IntoElement) -> Div {
@@ -2023,6 +2045,17 @@ pub(super) fn panel_header(
     detail: Option<SharedString>,
     cx: &App,
 ) -> Div {
+    panel_header_led(None, title, detail, cx)
+}
+
+/// A panel header with a button before its title: Back, in a file's
+/// preview.
+pub(super) fn panel_header_led(
+    lead: Option<AnyElement>,
+    title: impl Into<SharedString>,
+    detail: Option<SharedString>,
+    cx: &App,
+) -> Div {
     div()
         .h_flex()
         .items_center()
@@ -2033,6 +2066,7 @@ pub(super) fn panel_header(
         .flex_shrink_0()
         .border_b_1()
         .border_color(cx.theme().border)
+        .children(lead)
         .child(
             div()
                 .h_flex()
@@ -2492,6 +2526,7 @@ mod tests {
             ("workspace/home_view.rs", "start_menu"),
             ("workspace/shell.rs", "message_menu"),
             ("workspace/files_panel.rs", "files_menu"),
+            ("workspace/files_panel.rs", "file_preview_menu"),
             ("workspace/tabs_view.rs", "waiting_list"),
         ];
         let mut found = Vec::new();
@@ -2806,7 +2841,7 @@ mod tests {
         // header, the editor's and the picture's bars and the preview.
         let parts = method(panel, "preview_parts").unwrap();
         for part in [
-            "surfaces::panel_header(",
+            "surfaces::panel_header_led(",
             "self.render_file_editor_bar(cx)",
             "self.render_picture_bar(cx)",
             "self.render_preview(window, cx)",
@@ -3001,6 +3036,70 @@ mod tests {
                 .unwrap()
                 .contains("\"chevron-down\"")
         );
+    }
+
+    #[test]
+    fn a_previews_header_has_back_first_and_three_actions_after_the_name() {
+        let panel = include_str!("files_panel.rs");
+        let body = |name: &str| {
+            panel
+                .split(&format!("fn {name}("))
+                .nth(1)
+                .and_then(|rest| rest.split("\n    }\n").next())
+                .unwrap_or_else(|| panic!("no {name}"))
+        };
+        // Back leads, before the name, in every preview kind.
+        assert!(body("preview_parts").contains("surfaces::panel_header_led(back, name"));
+        // After the name: where to show it, attach, More; nothing else.
+        let actions = body("file_actions");
+        assert_eq!(actions.matches("surfaces::icon_action(").count(), 2);
+        assert!(actions.contains("\"file-attach\"") && actions.contains("\"file-preview-more\""));
+        assert!(actions.contains(".children(place)"));
+        assert!(!actions.contains("icon_button("));
+        // The rest is under More, each an icon and a word.
+        let menu = body("file_preview_menu");
+        for id in [
+            "file-copy-path",
+            "file-keep-artifact",
+            "file-quote-aside",
+            "file-preview-origin",
+            "file-reveal",
+            "file-open-system",
+        ] {
+            assert!(menu.contains(&format!("\"{id}\"")), "{id}");
+        }
+        // The side panel's place is Open in centre, the centre's the split.
+        assert!(body("render_files").contains("\"file-preview-centre\""));
+        assert!(
+            include_str!("centre_view.rs")
+                .contains("self.preview_parts(None, Some(split.into_any_element())")
+        );
+    }
+
+    #[test]
+    fn markdown_keeps_its_paragraphs_apart_everywhere() {
+        // About 0.6 em of 14 px body text, in rems.
+        assert!((super::PARAGRAPH_GAP * 16. / 14. - 0.6).abs() < 0.05);
+        assert_eq!(
+            super::text_style().paragraph_gap,
+            gpui::rems(super::PARAGRAPH_GAP)
+        );
+        // Every text view goes through `surfaces::markdown`, so answers, the
+        // side chat, previews, favourites and reports share the gap.
+        let mut direct = Vec::new();
+        for (path, text) in sources() {
+            if path.ends_with("workspace/surfaces.rs") {
+                continue;
+            }
+            if text.contains("TextView::markdown(") {
+                direct.push(path.display().to_string());
+            }
+        }
+        assert!(direct.is_empty(), "{direct:#?}");
+        // The vendored library gives each block of the root its own
+        // "last", so the gap is drawn (vendor/gpui-component/WISP-PATCH.md).
+        let node = include_str!("../../../../vendor/gpui-component/src/text/node.rs");
+        assert!(node.contains("options.is_last(ix == last)"));
     }
 
     #[test]

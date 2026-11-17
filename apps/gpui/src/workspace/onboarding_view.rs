@@ -47,9 +47,17 @@ impl Workspace {
     /// Whether the model step can save a key: not while models come from
     /// the environment.
     fn onboarding_model_settable(&self) -> bool {
+        self.settings.current().is_none_or(|current| {
+            current.source != ModelSource::Environment && current.magpie.is_none()
+        })
+    }
+
+    /// Whether Magpie supplies the model, so the guide's model step has
+    /// nothing to ask.
+    fn onboarding_magpie(&self) -> bool {
         self.settings
             .current()
-            .is_none_or(|current| current.source != ModelSource::Environment)
+            .is_some_and(|current| current.magpie.is_some())
     }
 
     /// Closes the guide and remembers it was seen.
@@ -130,6 +138,9 @@ impl Workspace {
                      journey keeps what happened day by day.",
                 )),
             ]),
+            onboarding::MODEL if self.onboarding_magpie() => div().v_flex().gap_2().child(text(
+                tr("Magpie is connected and chooses the model; nothing to do here."),
+            )),
             onboarding::MODEL if !self.onboarding_model_settable() => {
                 div().v_flex().gap_2().child(text(tr(
                     "A model is set by the WISP_* variables this app was started with; nothing \

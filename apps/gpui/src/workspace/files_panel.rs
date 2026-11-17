@@ -60,10 +60,8 @@ impl Workspace {
 
     /// Opens a file found outside the panel: shows the panel on the file's
     /// folder with the preview over it.
-    /// What can be done with the previewed file outside the preview: its
-    /// path copied, the file attached to the message, shown in the file
-    /// manager or opened with the system's own application.
-    fn file_actions(&self, cx: &mut Context<Self>) -> Option<Div> {
+    /// The previewed file on disk, when it is a file of the open project.
+    fn preview_on_disk(&self) -> Option<std::path::PathBuf> {
         let relative = self.files.preview_path.clone()?;
         let root = self
             .state
@@ -71,57 +69,160 @@ impl Workspace {
             .as_ref()
             .and_then(|id| self.projects.iter().find(|project| &project.id == id))
             .map(|project| std::path::PathBuf::from(&project.workspace_dir))?;
-        let path = files::on_disk(&root, &relative)?;
-        let (copied, shown, opened) = (path.clone(), path.clone(), path);
-        let mut actions = div().h_flex().flex_shrink_0().child(
-            icon_button("file-copy-path", "copy", "Copy the file's path").on_click(cx.listener(
-                move |this, _, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(
-                        copied.to_string_lossy().into_owned(),
-                    ));
-                    this.file_notice = Some(tr("Path copied.").to_owned());
+        files::on_disk(&root, &relative)
+    }
+
+    /// The preview header's More: what else can be done with the file, each
+    /// an icon and a word: copy its path, keep it as an artifact, ask aside
+    /// about the selected text, where it came from, show it in the file
+    /// manager, open it with the system's application.
+    fn file_preview_menu(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        type Run = Box<dyn Fn(&mut Workspace, &mut Window, &mut Context<Workspace>)>;
+        let item = |id: &'static str,
+                    icon_name: &str,
+                    label: &'static str,
+                    run: Run,
+                    cx: &mut Context<Self>| {
+            Self::menu_item(id, icon_name, tr(label), cx).on_click(cx.listener(
+                move |this, _, window, cx| {
+                    this.layers.close(Layer::FilePreviewMenu);
+                    run(this, window, cx);
                     cx.notify();
                 },
-            )),
-        );
-        // Attaching and keeping need a conversation to belong to.
+            ))
+        };
+        let mut menu = div()
+            .id("file-preview-menu")
+            .absolute()
+            .top(px(surfaces::ICON_BUTTON + 4.))
+            .right_0()
+            .w(px(280.))
+            .max_h(surfaces::menu_room(None, false))
+            .overflow_y_scroll()
+            .v_flex()
+            .p_1()
+            .occlude()
+            .rounded(cx.theme().radius_lg)
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().popover)
+            .shadow_md();
+        if let Some(path) = self.preview_on_disk() {
+            let copied = path.to_string_lossy().into_owned();
+            menu = menu.child(item(
+                "file-copy-path",
+                "copy",
+                "Copy the file's path",
+                Box::new(move |this, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()));
+                    this.file_notice = Some(tr("Path copied.").to_owned());
+                }),
+                cx,
+            ));
+        }
         if self.state.session.is_some() {
-            let kept = relative.clone();
-            actions = actions
-                .child(
-                    icon_button("file-attach", "attach", "Attach to the message").on_click(
-                        cx.listener(move |this, _, _, cx| {
-                            this.attach(crate::compose::Chip::File(relative.clone()), cx);
-                            this.file_notice = Some(tr("Attached to the message.").to_owned());
-                        }),
-                    ),
-                )
-                .child(
-                    icon_button(
-                        "file-keep-artifact",
-                        "layers",
-                        "Keep as an artifact of this conversation",
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
+            if let Some(kept) = self.files.preview_path.clone() {
+                menu = menu.child(item(
+                    "file-keep-artifact",
+                    "layers",
+                    "Keep as an artifact of this conversation",
+                    Box::new(move |this, window, cx| {
                         this.keep_as_artifact(kept.clone(), window, cx)
+                    }),
+                    cx,
+                ));
+            }
+            // A passage selected in the text can be asked about aside, as
+            // the WebView quotes a selection into its side chat.
+            if self.preview_text_selectable() {
+                menu = menu.child(item(
+                    "file-quote-aside",
+                    "bubble",
+                    "Ask aside about the selected text",
+                    Box::new(|this, window, cx| this.quote_selection_aside(window, cx)),
+                    cx,
+                ));
+            }
+        }
+        menu = menu.child(item(
+            "file-preview-origin",
+            "research-trail",
+            "Which tool call wrote this file, and in which conversation",
+            Box::new(|this, window, cx| this.load_file_origin(window, cx)),
+            cx,
+        ));
+        if let Some(path) = self.preview_on_disk() {
+            let (shown, opened) = (path.clone(), path);
+            menu = menu
+                .child(item(
+                    "file-reveal",
+                    "folder",
+                    "Show in the file manager",
+                    Box::new(move |_, _, cx| cx.reveal_path(&shown)),
+                    cx,
+                ))
+                .child(item(
+                    "file-open-system",
+                    "monitor",
+                    "Open with the system's application",
+                    Box::new(move |_, _, cx| cx.open_with_system(&opened)),
+                    cx,
+                ));
+        }
+        menu
+    }
+
+    /// The preview header's actions after the file's name, at most four
+    /// with Back (spec §9.4): where to show it (`place`: open in the centre
+    /// from the side panel, chat beside it in the centre), attach it to the
+    /// message, and More for the rest (`file_preview_menu`).
+    fn file_actions(&self, place: Option<AnyElement>, cx: &mut Context<Self>) -> Div {
+        let mut actions = div()
+            .h_flex()
+            .items_center()
+            .flex_shrink_0()
+            .children(place);
+        if self.state.session.is_some() {
+            if let Some(relative) = self.files.preview_path.clone() {
+                actions = actions.child(
+                    surfaces::icon_action(
+                        "file-attach",
+                        "attach",
+                        tr("Attach to the message"),
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.attach(crate::compose::Chip::File(relative.clone()), cx);
+                        this.file_notice = Some(tr("Attached to the message.").to_owned());
                     })),
                 );
+            }
         }
-        Some(
-            actions
-                .child(
-                    icon_button("file-reveal", "folder", "Show in the file manager")
-                        .on_click(cx.listener(move |_, _, _, cx| cx.reveal_path(&shown))),
-                )
-                .child(
-                    icon_button(
-                        "file-open-system",
-                        "external-link",
-                        "Open with the system's application",
-                    )
-                    .on_click(cx.listener(move |_, _, _, cx| cx.open_with_system(&opened))),
-                ),
-        )
+        let open = self.layers.contains(Layer::FilePreviewMenu);
+        let mut more = div().relative().flex_none().child(
+            surfaces::icon_action(
+                "file-preview-more",
+                "more",
+                tr("More for this file"),
+                if open {
+                    surfaces::IconTone::Ink
+                } else {
+                    surfaces::IconTone::Faded
+                },
+                cx,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                if !this.layers.close(Layer::FilePreviewMenu) {
+                    this.layers.open(Layer::FilePreviewMenu);
+                }
+                cx.notify();
+            })),
+        );
+        if open {
+            more = more.child(deferred(self.file_preview_menu(cx)));
+        }
+        actions.child(more)
     }
 
     /// Keeps the previewed file as an artifact of the open conversation.
@@ -940,7 +1041,7 @@ impl Workspace {
                         )
                         .child(
                             div().flex_1().min_h_0().p_3().child(
-                                TextView::markdown(
+                                surfaces::markdown(
                                     SharedString::from(format!("document-{path}")),
                                     text.clone(),
                                     window,
@@ -959,7 +1060,7 @@ impl Workspace {
                 .min_h_0()
                 .p_3()
                 .child(
-                    TextView::markdown(
+                    surfaces::markdown(
                         SharedString::from(format!("file-preview-{}", content.path)),
                         content.text.clone().unwrap_or_default(),
                         window,
@@ -1570,7 +1671,7 @@ impl Workspace {
                 .min_h_0()
                 .p_3()
                 .child(
-                    TextView::markdown(
+                    surfaces::markdown(
                         SharedString::from(format!("notebook-{path}")),
                         book,
                         window,
@@ -1752,13 +1853,8 @@ impl Workspace {
                     if !detail.is_empty() {
                         block = block.child(
                             div().max_h(px(220.)).overflow_hidden().child(
-                                gpui_component::text::TextView::markdown(
-                                    "file-origin-detail",
-                                    detail,
-                                    window,
-                                    cx,
-                                )
-                                .selectable(true),
+                                surfaces::markdown("file-origin-detail", detail, window, cx)
+                                    .selectable(true),
                             ),
                         );
                     }
@@ -1794,7 +1890,8 @@ impl Workspace {
     /// the preview itself.
     pub(super) fn preview_parts(
         &self,
-        last: AnyElement,
+        back: Option<AnyElement>,
+        place: Option<AnyElement>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
@@ -1816,28 +1913,10 @@ impl Workspace {
             note.push_str(tr("Not saved"));
         }
         let note = (!note.is_empty()).then(|| note.into());
-        // A passage selected in the text can be asked about aside, as the
-        // WebView quotes a selection into its side chat.
-        let quote = (self.state.session.is_some() && self.preview_text_selectable()).then(|| {
-            icon_button(
-                "file-quote-aside",
-                "circle-help",
-                "Ask aside about the selected text",
-            )
-            .on_click(cx.listener(|this, _, window, cx| this.quote_selection_aside(window, cx)))
-        });
-        let header = surfaces::panel_header(name, note, cx)
-            .children(self.file_actions(cx))
-            .children(quote)
-            .child(
-                icon_button(
-                    "file-preview-origin",
-                    "research-trail",
-                    "Which tool call wrote this file, and in which conversation",
-                )
-                .on_click(cx.listener(|this, _, window, cx| this.load_file_origin(window, cx))),
-            )
-            .child(last);
+        // Back first, at the left of the name, in every kind of preview;
+        // then where to show it, attach, and More.
+        let header =
+            surfaces::panel_header_led(back, name, note, cx).child(self.file_actions(place, cx));
         let mut parts = vec![header.into_any_element()];
         parts.extend(
             self.render_file_origin(window, cx)
@@ -1930,10 +2009,36 @@ impl Workspace {
             .min_w(px(240.));
 
         if previewing {
-            let back = icon_button("file-preview-back", "arrow-left", "Back to files")
-                .on_click(cx.listener(|this, _, window, cx| this.close_preview(window, cx)));
+            let back = surfaces::icon_action(
+                "file-preview-back",
+                "arrow-left",
+                tr("Back to files"),
+                surfaces::IconTone::Faded,
+                cx,
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.close_preview(window, cx)));
+            // From the side panel the file can open in the centre.
+            let centre = self
+                .state
+                .session
+                .is_some()
+                .then(|| self.files.preview_path.clone())
+                .flatten()
+                .map(|path| {
+                    surfaces::icon_action(
+                        "file-preview-centre",
+                        "external-link",
+                        tr("Open in centre"),
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_in_centre(path.clone(), window, cx)
+                    }))
+                    .into_any_element()
+                });
             return panel
-                .children(self.preview_parts(back.into_any_element(), window, cx))
+                .children(self.preview_parts(Some(back.into_any_element()), centre, window, cx))
                 .into_any_element();
         }
 

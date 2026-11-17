@@ -7,7 +7,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    text::TextView,
 };
 
 use super::{
@@ -608,7 +607,7 @@ impl Workspace {
                     .map(|output| output.source_path.as_str())
                     .unwrap_or_default();
                 card = card.child(match text {
-                    Ok(text) => TextView::markdown(
+                    Ok(text) => surfaces::markdown(
                         SharedString::from(format!("search-output-text-{version}")),
                         method_search::output_markdown(path, text),
                         window,
@@ -958,7 +957,7 @@ impl Workspace {
                     _ => present::run_output(run),
                 };
                 below = below.child(
-                    TextView::markdown(
+                    surfaces::markdown(
                         SharedString::from(format!("run-output-{}", run.id)),
                         shown,
                         window,
@@ -1114,7 +1113,7 @@ impl Workspace {
                     if !detail.is_empty() {
                         block = block.child(
                             div().max_h(px(200.)).overflow_hidden().child(
-                                TextView::markdown("artifact-origin-detail", detail, window, cx)
+                                surfaces::markdown("artifact-origin-detail", detail, window, cx)
                                     .selectable(true),
                             ),
                         );

@@ -1182,8 +1182,20 @@ pub fn magpie_line(settings: &ModelSettings) -> Option<String> {
     ))
 }
 
-/// One line saying which model new conversations use and where it comes from.
+/// Whether new turns have a model to run on: a usable saved or `WISP_*`
+/// model, or a Magpie connection. The one answer the home page's bar, the
+/// composer's line, the start-up jump to Settings, the guide's model step
+/// and Settings itself give.
+pub fn has_model(settings: &ModelSettings) -> bool {
+    settings.source != ModelSource::None || settings.magpie.is_some()
+}
+
+/// One line saying which model new conversations use and where it comes
+/// from. Empty while Magpie is connected: its own line says what runs.
 pub fn summary(settings: &ModelSettings) -> String {
+    if settings.magpie.is_some() {
+        return String::new();
+    }
     match (settings.source, default_profile(settings)) {
         (ModelSource::Environment, Some(profile)) => crate::i18n::fill(
             tr("Using {} from WISP_* environment variables. Unset them to edit models here."),
@@ -1889,8 +1901,15 @@ mod tests {
         assert!(line.contains("gpt-x") && line.contains("restart"));
         // Magpie alone is a usable model.
         let mut none = settings(ModelSource::None, vec![]);
+        assert!(!has_model(&none));
         none.magpie = Some("gpt-x".into());
         assert_eq!(model_label(Some(&none), ""), "Magpie · gpt-x");
+        assert!(has_model(&none));
+        // No "no model is configured" under the Magpie line, nor a default
+        // that does not run.
+        assert_eq!(summary(&none), "");
+        assert_eq!(summary(&two), "");
+        assert!(has_model(&settings(ModelSource::Saved, vec![])));
     }
 
     #[test]

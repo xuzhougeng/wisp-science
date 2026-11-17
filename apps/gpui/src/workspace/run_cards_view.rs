@@ -12,7 +12,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    text::TextView,
 };
 
 use super::{Workspace, chip, shell::icon_button, surfaces, tone_color};
@@ -386,7 +385,7 @@ impl Workspace {
                 );
             }
             card = card.child(
-                TextView::markdown(
+                surfaces::markdown(
                     SharedString::from(format!("run-card-output-{key}")),
                     present::run_output(run),
                     window,

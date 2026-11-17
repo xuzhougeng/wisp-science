@@ -12,7 +12,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    text::TextView,
 };
 use wisp_server::desktop::{Favorite, LibraryItem};
 
@@ -613,7 +612,7 @@ impl Workspace {
                     ),
             )
             .child(
-                TextView::markdown(
+                surfaces::markdown(
                     SharedString::from(format!("favorite-version-{}", version.id)),
                     favorites::as_markdown("code", version.language.as_deref(), &version.code),
                     window,
@@ -763,7 +762,7 @@ impl Workspace {
             return detail.child(self.favorite_code_panel(window, cx));
         }
         detail.child(
-            TextView::markdown(
+            surfaces::markdown(
                 SharedString::from(format!("favorite-{}", item.id)),
                 favorites::as_markdown(&item.kind, item.language.as_deref(), &item.code),
                 window,
