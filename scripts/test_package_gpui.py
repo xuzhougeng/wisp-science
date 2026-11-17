@@ -21,6 +21,7 @@ from package_gpui import RESOURCES, archive, archive_name, stage, workspace_vers
 def checkout(root, version="9.8.7"):
     """A checkout with only what packaging reads."""
     root = Path(root)
+    root.mkdir(parents=True)
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = []\n\n[workspace.dependencies]\nversion = "0.0.1"\n\n'
         f'[workspace.package]\nversion = "{version}"\nedition = "2021"\n', encoding="utf-8")
