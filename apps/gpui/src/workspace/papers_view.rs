@@ -1,8 +1,10 @@
 //! Paper evidence: a page listing the papers the open project is writing.
-//! A paper has versions; a draft version holds figures, tables and claims,
-//! each with the results, runs and conversation passages it rests on. A
-//! finalized version's runs can be rerun in a clean folder, and its
-//! evidence saved as a capsule.
+//! A paper has versions; a draft version holds sections, figures, tables
+//! and claims, nested as in the WebView's outline, each with the results,
+//! runs, conversation passages and exact anchors it rests on, whether each
+//! is meant for the paper, who may see it, where it came from and whether a
+//! newer result exists. A finalized version's runs can be rerun in a clean
+//! folder, and its evidence saved as a capsule.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
@@ -12,7 +14,7 @@ use gpui_component::{
 };
 use wisp_server::desktop::{
     Paper, PaperAudience, PaperCheck, PaperFinding, PaperInput, PaperItem, PaperItemInput,
-    PaperItemKind, PaperPolicy, PaperSource, PaperSourceChoice, PaperSourceKind,
+    PaperItemKind, PaperPolicy, PaperSelection, PaperSource, PaperSourceChoice, PaperSourceKind,
 };
 
 use super::{
@@ -28,10 +30,11 @@ use crate::{
 };
 
 /// The forms of the page; one is open at a time.
-const FORMS: [Layer; 5] = [
+const FORMS: [Layer; 6] = [
     Layer::PaperForm,
     Layer::PaperItemForm,
     Layer::PaperSources,
+    Layer::PaperAnchor,
     Layer::ConfirmRemovePaper,
     Layer::PaperFinalize,
 ];
@@ -262,6 +265,7 @@ impl Workspace {
         self.close_paper_forms();
         self.paper_item_editing = Some(item.map(|item| item.id.clone()).unwrap_or_default());
         self.paper_item_kind = item.map_or(PaperItemKind::Figure, |item| item.kind);
+        self.paper_item_parent = item.and_then(|item| item.parent.clone());
         let values = item
             .map(|item| [item.title.clone(), item.note.clone()])
             .unwrap_or_default();
@@ -294,6 +298,7 @@ impl Workspace {
                 kind: self.paper_item_kind,
                 title,
                 note,
+                parent: self.paper_item_parent.clone(),
             },
         );
         self.change_paper(reply, window, cx);
@@ -303,6 +308,9 @@ impl Workspace {
     fn open_paper_sources(&mut self, item: String, window: &mut Window, cx: &mut Context<Self>) {
         self.close_paper_forms();
         self.paper_source_item = Some(item);
+        // As the WebView's binding step starts: selected, private.
+        self.paper_source_selection = PaperSelection::default();
+        self.paper_source_audience = PaperAudience::default();
         self.layers.open(Layer::PaperSources);
         self.error = None;
         for field in &self.paper_source_fields {
@@ -370,6 +378,85 @@ impl Workspace {
             choice.kind,
             choice.id.clone(),
             purpose,
+            self.paper_source_selection,
+            self.paper_source_audience,
+        );
+        self.change_paper(reply, window, cx);
+    }
+
+    /// Opens the advanced dialog that locates evidence by its exact source
+    /// id, empty, on a message range as the WebView's does.
+    fn open_paper_anchor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.paper_anchor_kind = papers::ANCHOR_KINDS[0];
+        for field in &self.paper_anchor_fields {
+            field.update(cx, |input, cx| input.set_value("", window, cx));
+        }
+        self.paper_passage = None;
+        self.layers.open(Layer::PaperAnchor);
+        self.error = None;
+        self.paper_anchor_fields[0].update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+
+    /// Binds the exact anchor typed in the advanced dialog, with the reason
+    /// and choices of the source list; the store refuses one that is not
+    /// of this project or not found where it says.
+    fn bind_paper_anchor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let [frame, message, start, end, call, exact] = self
+            .paper_anchor_fields
+            .each_ref()
+            .map(|field| field.read(cx).value().to_string());
+        let found = wisp_dto::publication_sources::precise_evidence_source(
+            self.paper_anchor_kind,
+            &frame,
+            &message,
+            &start,
+            &end,
+            &call,
+            &exact,
+        );
+        let choice = found.and_then(|found| {
+            let kind = PaperSourceKind::of_anchor(found.kind)
+                .ok_or_else(|| "Unsupported precise evidence kind.".to_owned())?;
+            Ok(PaperSourceChoice {
+                kind,
+                id: found.id,
+                name: found.label,
+                detail: String::new(),
+                message: None,
+            })
+        });
+        match choice {
+            Ok(choice) => self.bind_paper_source(&choice, window, cx),
+            Err(refused) => {
+                self.error = Some(crate::i18n::host(&refused));
+                cx.notify();
+            }
+        }
+    }
+
+    /// Whether evidence of the shown draft is meant for the paper, and who
+    /// may see it, changed from its card.
+    fn mark_paper_source(
+        &mut self,
+        source: &PaperSource,
+        selection: PaperSelection,
+        audience: PaperAudience,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(project), Some(paper)) = (self.state.project.clone(), &self.paper) else {
+            return;
+        };
+        if (selection, audience) == (source.selection, source.audience) {
+            return;
+        }
+        let reply = self.backend.mark_paper_source(
+            project,
+            paper.shown.clone(),
+            source.id.clone(),
+            selection,
+            audience,
         );
         self.change_paper(reply, window, cx);
     }
@@ -701,7 +788,7 @@ impl Workspace {
     fn paper_item_form(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let label = |text: &'static str| div().text_xs().text_color(muted).child(text);
-        let mut kinds = div().h_flex().gap_1();
+        let mut kinds = div().h_flex().flex_wrap().gap_1();
         for kind in PaperItemKind::OFFERED {
             kinds = kinds.child(
                 Button::new(SharedString::from(format!("paper-item-kind-{kind:?}")))
@@ -713,6 +800,36 @@ impl Workspace {
                         cx.notify();
                     })),
             );
+        }
+        // Where it sits in the outline, as the WebView's "Parent item".
+        let mut parents = div().h_flex().flex_wrap().gap_1().child(
+            Button::new("paper-item-parent-none")
+                .label(tr("Top level"))
+                .small()
+                .selected(self.paper_item_parent.is_none())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.paper_item_parent = None;
+                    cx.notify();
+                })),
+        );
+        if let Some(paper) = &self.paper {
+            let editing = self.paper_item_editing.as_deref().unwrap_or_default();
+            for (index, parent) in papers::parent_choices(paper, editing)
+                .into_iter()
+                .enumerate()
+            {
+                let id = parent.id.clone();
+                parents = parents.child(
+                    Button::new(("paper-item-parent", index))
+                        .label(parent.title.clone())
+                        .small()
+                        .selected(self.paper_item_parent.as_deref() == Some(parent.id.as_str()))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.paper_item_parent = Some(id.clone());
+                            cx.notify();
+                        })),
+                );
+            }
         }
         let adding = self.paper_item_editing.as_deref() == Some("");
         let save = Button::new("paper-item-save")
@@ -731,6 +848,8 @@ impl Workspace {
         .child(kinds)
         .child(label(tr("What it is called in the paper")))
         .child(Input::new(&self.paper_item_fields[0]).small())
+        .child(label(tr("Parent item")))
+        .child(parents)
         .child(label(tr("What it shows, if you want to note it")))
         .child(
             div()
@@ -738,6 +857,156 @@ impl Workspace {
                 .child(Input::new(&self.paper_item_fields[1]).h_full()),
         )
         .child(self.form_actions(save, cx))
+    }
+
+    /// The two choices the WebView's binding step and card offer: whether
+    /// the evidence is meant for the paper (only selected evidence is
+    /// locked when finalizing), and who may see it. `apply` gets the pair
+    /// with one of them changed.
+    fn paper_standing_choices(
+        &self,
+        prefix: &str,
+        selection: PaperSelection,
+        audience: PaperAudience,
+        apply: impl Fn(&mut Self, PaperSelection, PaperAudience, &mut Window, &mut Context<Self>)
+        + Clone
+        + 'static,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let mut row = div()
+            .h_flex()
+            .flex_wrap()
+            .items_center()
+            .gap_1()
+            .child(div().text_xs().text_color(muted).child(tr("Selection")));
+        for choice in PaperSelection::ALL {
+            let apply = apply.clone();
+            row = row.child(
+                Button::new(SharedString::from(format!("{prefix}-selection-{choice:?}")))
+                    .label(papers::selection_label(choice))
+                    .xsmall()
+                    .selected(selection == choice)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        apply(this, choice, audience, window, cx)
+                    })),
+            );
+        }
+        row = row.child(
+            div()
+                .pl_2()
+                .text_xs()
+                .text_color(muted)
+                .child(tr("Visibility")),
+        );
+        for choice in [
+            PaperAudience::Public,
+            PaperAudience::Restricted,
+            PaperAudience::Private,
+        ] {
+            let apply = apply.clone();
+            row = row.child(
+                Button::new(SharedString::from(format!("{prefix}-audience-{choice:?}")))
+                    .label(papers::audience_label(choice))
+                    .xsmall()
+                    .selected(audience == choice)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        apply(this, selection, choice, window, cx)
+                    })),
+            );
+        }
+        row
+    }
+
+    /// The advanced dialog inside the source list: an exact anchor typed by
+    /// its ids, as the WebView's "Add precise evidence" takes it.
+    fn paper_anchor_form(&self, cx: &mut Context<Self>) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let label = |text: &'static str| div().text_xs().text_color(muted).child(text);
+        let mut kinds = div().h_flex().flex_wrap().gap_1();
+        for kind in papers::ANCHOR_KINDS {
+            kinds = kinds.child(
+                Button::new(SharedString::from(format!("paper-anchor-kind-{kind}")))
+                    .label(papers::anchor_kind_label(kind))
+                    .small()
+                    .selected(self.paper_anchor_kind == kind)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.paper_anchor_kind = kind;
+                        this.error = None;
+                        cx.notify();
+                    })),
+            );
+        }
+        let field = |index: usize, text: &'static str| {
+            div()
+                .v_flex()
+                .flex_1()
+                .min_w(px(120.))
+                .gap_0p5()
+                .child(label(text))
+                .child(Input::new(&self.paper_anchor_fields[index]).small())
+        };
+        let fields = match self.paper_anchor_kind {
+            "message_span" => div()
+                .h_flex()
+                .flex_wrap()
+                .gap_2()
+                .child(field(0, tr("Session / frame ID")))
+                .child(field(1, tr("Message sequence")))
+                .child(field(2, tr("UTF-8 byte start")))
+                .child(field(3, tr("UTF-8 byte end"))),
+            "tool_call" => div()
+                .h_flex()
+                .flex_wrap()
+                .gap_2()
+                .child(field(0, tr("Session / frame ID")))
+                .child(field(1, tr("Message sequence")))
+                .child(field(4, tr("Tool call ID"))),
+            _ => div().h_flex().child(field(5, tr("Exact source ID"))),
+        };
+        div()
+            .v_flex()
+            .gap_2()
+            .p_2()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(tr("Add precise evidence")),
+            )
+            .child(label(tr(
+                "Anchor an exact message range, tool result, execution, code cell, or external \
+                 resource.",
+            )))
+            .child(label(tr("Evidence anchor")))
+            .child(kinds)
+            .child(fields)
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("paper-anchor-continue")
+                            .label(tr("Bind exact evidence"))
+                            .small()
+                            .primary()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.bind_paper_anchor(window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("paper-anchor-cancel")
+                            .label(tr("Cancel"))
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.layers.close(Layer::PaperAnchor);
+                                cx.notify();
+                            })),
+                    ),
+            )
     }
 
     fn paper_sources_form(&self, cx: &mut Context<Self>) -> Div {
@@ -817,6 +1086,17 @@ impl Workspace {
                  alter it.",
             )))
             .child(Input::new(&self.paper_source_fields[1]).small())
+            .child(self.paper_standing_choices(
+                "paper-source",
+                self.paper_source_selection,
+                self.paper_source_audience,
+                |this, selection, audience, _, cx| {
+                    this.paper_source_selection = selection;
+                    this.paper_source_audience = audience;
+                    cx.notify();
+                },
+                cx,
+            ))
             .child(
                 div()
                     .h_flex()
@@ -895,17 +1175,30 @@ impl Workspace {
                     ),
             );
         }
-        form.child(
-            div().h_flex().pt_1().child(
-                Button::new("paper-source-cancel")
-                    .label(tr("Cancel"))
+        if self.layers.contains(Layer::PaperAnchor) {
+            form = form.child(self.paper_anchor_form(cx));
+        }
+        let mut actions = div().h_flex().gap_2().pt_1().child(
+            Button::new("paper-source-cancel")
+                .label(tr("Cancel"))
+                .small()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.close_paper_forms();
+                    cx.notify();
+                })),
+        );
+        if !self.layers.contains(Layer::PaperAnchor) {
+            actions = actions.child(
+                Button::new("paper-anchor-open")
+                    .label(tr("Advanced: locate by source ID"))
                     .small()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.close_paper_forms();
-                        cx.notify();
-                    })),
-            ),
-        )
+                    .ghost()
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.open_paper_anchor(window, cx)),
+                    ),
+            );
+        }
+        form.child(actions)
     }
 
     /// One finding of the check: what it is, and either the reason it was
@@ -1313,6 +1606,161 @@ impl Workspace {
         Some(records)
     }
 
+    /// One piece of evidence: what it is, why it was chosen, whether it is
+    /// meant for the paper and who may see it, a note when the project has
+    /// a newer version of the result, and, opened, where it came from and
+    /// (on a draft) the two choices to change.
+    fn paper_source_entry(
+        &self,
+        paper: &Paper,
+        source: &PaperSource,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let muted = cx.theme().muted_foreground;
+        let open = self.paper_sources_open.contains(&source.id);
+        let toggled = source.id.clone();
+        let mut line = div()
+            .h_flex()
+            .gap_2()
+            .child(
+                icon_button(
+                    SharedString::from(format!("paper-source-open-{}", source.id)),
+                    if open {
+                        "chevron-down"
+                    } else {
+                        "chevron-right"
+                    },
+                    "Source and environment details",
+                )
+                .xsmall()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if !this.paper_sources_open.remove(&toggled) {
+                        this.paper_sources_open.insert(toggled.clone());
+                    }
+                    cx.notify();
+                })),
+            )
+            .child(div().w(px(64.)).flex_shrink_0().child(chip(
+                papers::source_kind_label(source.kind),
+                Tone::Active,
+                cx,
+            )))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_xs()
+                    .child(papers::source_line(source)),
+            )
+            .child(chip(
+                papers::selection_label(source.selection),
+                match source.selection {
+                    PaperSelection::Selected => Tone::Success,
+                    PaperSelection::Candidate => Tone::Neutral,
+                    PaperSelection::Rejected => Tone::Danger,
+                },
+                cx,
+            ))
+            .child(chip(
+                papers::audience_label(source.audience),
+                Tone::Neutral,
+                cx,
+            ));
+        if paper.editable {
+            let (binding, version) = (source.id.clone(), paper.shown.clone());
+            line = line.child(
+                icon_button(
+                    SharedString::from(format!("paper-unbind-{}", source.id)),
+                    "close",
+                    "Remove this evidence",
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    let Some(project) = this.state.project.clone() else {
+                        return;
+                    };
+                    let reply =
+                        this.backend
+                            .unbind_paper_source(project, version.clone(), binding.clone());
+                    this.change_paper(reply, window, cx);
+                })),
+            );
+        } else if let Some(verify) = self.paper_verify_button(paper, source, cx) {
+            line = line.child(verify);
+        }
+        let mut entry = div().v_flex().gap_1().child(line);
+        if let Some(drift) = source.drift {
+            entry = entry.child(
+                div()
+                    .pl(px(28.))
+                    .text_xs()
+                    .text_color(cx.theme().warning)
+                    .child(papers::drift_line(drift)),
+            );
+        }
+        if !open {
+            return entry;
+        }
+        let mut details = div()
+            .v_flex()
+            .gap_1()
+            .ml(px(28.))
+            .p_2()
+            .rounded(cx.theme().radius)
+            .bg(cx.theme().muted)
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(tr("Analysis source")),
+            );
+        for (heading, value) in papers::lineage_chain(source) {
+            details = details.child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .text_xs()
+                    .child(
+                        div()
+                            .w(px(110.))
+                            .flex_shrink_0()
+                            .text_color(muted)
+                            .child(heading),
+                    )
+                    .child(div().flex_1().min_w_0().child(value)),
+            );
+        }
+        details = details.child(
+            div()
+                .pt_1()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .child(tr("Source and environment details")),
+        );
+        details = details.child(
+            div()
+                .h_flex()
+                .flex_wrap()
+                .gap_x_3()
+                .text_xs()
+                .text_color(muted)
+                .children(papers::lineage_details(&source.lineage)),
+        );
+        if paper.editable {
+            let marked = source.clone();
+            details = details.child(div().pt_1().child(self.paper_standing_choices(
+                &format!("paper-mark-{}", source.id),
+                source.selection,
+                source.audience,
+                move |this, selection, audience, window, cx| {
+                    this.mark_paper_source(&marked, selection, audience, window, cx)
+                },
+                cx,
+            )));
+        }
+        entry.child(details)
+    }
+
     fn paper_item_row(&self, paper: &Paper, item: &PaperItem, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let version = paper.shown.clone();
@@ -1329,52 +1777,16 @@ impl Workspace {
             words = words.child(chip(tr("No source yet"), Tone::Danger, cx));
         }
         for source in &item.sources {
-            let mut line = div()
-                .h_flex()
-                .gap_2()
-                .child(div().w(px(64.)).child(chip(
-                    papers::source_kind_label(source.kind),
-                    Tone::Active,
-                    cx,
-                )))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_xs()
-                        .child(papers::source_line(source)),
-                );
-            if paper.editable {
-                let (binding, version) = (source.id.clone(), version.clone());
-                line = line.child(
-                    icon_button(
-                        SharedString::from(format!("paper-unbind-{}", source.id)),
-                        "close",
-                        "Remove this evidence",
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        let Some(project) = this.state.project.clone() else {
-                            return;
-                        };
-                        let reply = this.backend.unbind_paper_source(
-                            project,
-                            version.clone(),
-                            binding.clone(),
-                        );
-                        this.change_paper(reply, window, cx);
-                    })),
-                );
-            } else if let Some(verify) = self.paper_verify_button(paper, source, cx) {
-                line = line.child(verify);
-            }
-            words = words.child(line);
+            words = words.child(self.paper_source_entry(paper, source, cx));
         }
         let mut row = div()
             .h_flex()
             .items_start()
             .gap_3()
             .py_3()
+            // Nested items sit under their parent, as in the WebView's
+            // manuscript tree.
+            .pl(px(20. * item.depth as f32))
             .border_b_1()
             .border_color(cx.theme().border)
             .child(div().w(px(84.)).flex_shrink_0().child(chip(
@@ -1612,18 +2024,7 @@ impl Workspace {
                     .child(tr("Evidence kept with the version as a whole")),
             );
             for source in &paper.loose {
-                let mut line = div().h_flex().gap_2().child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_xs()
-                        .child(papers::source_line(source)),
-                );
-                if let Some(verify) = self.paper_verify_button(paper, source, cx) {
-                    line = line.child(verify);
-                }
-                loose = loose.child(line);
+                loose = loose.child(self.paper_source_entry(paper, source, cx));
             }
             body = body.child(loose);
         }

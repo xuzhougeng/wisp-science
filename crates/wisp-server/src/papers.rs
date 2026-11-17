@@ -2,8 +2,11 @@
 //! for each figure, table or claim the results and runs it rests on.
 //!
 //! This is the store's publication model seen from the desktop: papers,
-//! versions, items and the evidence bound to them (results, runs and
-//! passages of the project's conversations), the readiness check, waivers,
+//! versions, items nested as in the WebView's outline, and the evidence
+//! bound to them (results, runs, passages of the project's conversations
+//! and the exact anchors of the WebView's advanced dialog) with its
+//! selection, who may see it, where it came from and whether a newer result
+//! exists; the readiness check, waivers,
 //! finalizing a version (see `paper_freeze`), starting a new version from
 //! one, rerunning a finalized version's runs in a clean folder and saving
 //! its evidence capsule. The rerun and the capsule are the WebView host's,
@@ -14,10 +17,11 @@ use anyhow::{bail, ensure, Context, Result};
 use std::path::Path;
 use wisp_runs::publication_capsule::{CapsuleArchive, CapsuleHost};
 use wisp_store::{
-    canonical_json_sha256, EvidenceBinding, EvidenceBindingDraft, EvidenceSelectionState,
-    EvidenceSourceKind, EvidenceVisibility, PublicationCapabilityLevel, PublicationFreezePolicy,
-    PublicationItem, PublicationItemKind, PublicationReadinessFinding, PublicationRevisionState,
-    PublicationWaiver, Store,
+    canonical_json_sha256, ArtifactCaptureTiming, EvidenceBinding, EvidenceBindingDraft,
+    EvidenceSelectionState, EvidenceSourceKind, EvidenceVisibility, LineageConfidence,
+    PublicationCapabilityLevel, PublicationEvidenceDrift, PublicationFreezePolicy, PublicationItem,
+    PublicationItemKind, PublicationReadinessFinding, PublicationRevisionState, PublicationWaiver,
+    Store,
 };
 
 const TITLE_LIMIT: usize = 200;
@@ -57,8 +61,7 @@ pub struct PaperVersion {
     pub fingerprint: String,
 }
 
-/// What an item of a paper is. The store knows more kinds than the form
-/// offers; those are shown under their own name.
+/// What an item of a paper is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PaperItemKind {
     Figure,
@@ -70,11 +73,14 @@ pub enum PaperItemKind {
 }
 
 impl PaperItemKind {
-    /// The kinds the form offers.
-    pub const OFFERED: [PaperItemKind; 3] = [
+    /// The kinds the form offers, in the WebView item editor's order.
+    pub const OFFERED: [PaperItemKind; 6] = [
+        PaperItemKind::Section,
+        PaperItemKind::Claim,
         PaperItemKind::Figure,
         PaperItemKind::Table,
-        PaperItemKind::Claim,
+        PaperItemKind::Methods,
+        PaperItemKind::Supplement,
     ];
 
     fn stored(self) -> PublicationItemKind {
@@ -109,9 +115,159 @@ pub enum PaperSourceKind {
     /// A passage of a message of one of the project's conversations, its
     /// text kept as it was when chosen.
     Passage,
-    /// A tool call, a code cell and the like, bound by the WebView
-    /// desktop's exact anchors.
-    Other,
+    /// A tool call of a message and its result, its arguments and result
+    /// kept as they were when chosen.
+    ToolCall,
+    /// One execution (a cell run and its output), kept by its exact id.
+    ExecutionLog,
+    /// The code of one execution, kept by its exact id.
+    CodeCell,
+    /// A data resource registered with the project outside it.
+    Resource,
+}
+
+impl PaperSourceKind {
+    /// How an exact anchor of the advanced dialog names its kind, as the
+    /// WebView sends it (`wisp_dto::publication_sources::precise_evidence_source`).
+    pub fn of_anchor(kind: &str) -> Option<Self> {
+        match kind {
+            "message_span" => Some(PaperSourceKind::Passage),
+            "tool_call" => Some(PaperSourceKind::ToolCall),
+            "execution_log" => Some(PaperSourceKind::ExecutionLog),
+            "code_cell" => Some(PaperSourceKind::CodeCell),
+            "external_resource" => Some(PaperSourceKind::Resource),
+            _ => None,
+        }
+    }
+
+    fn of(kind: EvidenceSourceKind) -> Self {
+        match kind {
+            EvidenceSourceKind::ArtifactVersion => PaperSourceKind::Result,
+            EvidenceSourceKind::Run => PaperSourceKind::Run,
+            EvidenceSourceKind::MessageSpan => PaperSourceKind::Passage,
+            EvidenceSourceKind::ToolCall => PaperSourceKind::ToolCall,
+            EvidenceSourceKind::ExecutionLog => PaperSourceKind::ExecutionLog,
+            EvidenceSourceKind::CodeCell => PaperSourceKind::CodeCell,
+            EvidenceSourceKind::ExternalResource => PaperSourceKind::Resource,
+        }
+    }
+}
+
+/// Whether a piece of evidence is meant for the paper. Only selected
+/// evidence is locked when the version is finalized.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PaperSelection {
+    Candidate,
+    #[default]
+    Selected,
+    Rejected,
+}
+
+impl PaperSelection {
+    pub const ALL: [PaperSelection; 3] = [
+        PaperSelection::Candidate,
+        PaperSelection::Selected,
+        PaperSelection::Rejected,
+    ];
+
+    fn of(state: EvidenceSelectionState) -> Self {
+        match state {
+            EvidenceSelectionState::Candidate => PaperSelection::Candidate,
+            EvidenceSelectionState::Selected => PaperSelection::Selected,
+            EvidenceSelectionState::Rejected => PaperSelection::Rejected,
+        }
+    }
+
+    fn stored(self) -> EvidenceSelectionState {
+        match self {
+            PaperSelection::Candidate => EvidenceSelectionState::Candidate,
+            PaperSelection::Selected => EvidenceSelectionState::Selected,
+            PaperSelection::Rejected => EvidenceSelectionState::Rejected,
+        }
+    }
+}
+
+/// How sure the record is of where a piece of evidence came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaperLineageQuality {
+    Exact,
+    Likely,
+    Uncertain,
+}
+
+/// When a result's bytes were kept.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaperCapture {
+    AtCreation,
+    /// Kept after the fact; the bytes may not be what the run wrote.
+    Late,
+    Unknown,
+}
+
+/// Where a piece of evidence came from, as the WebView's card and its
+/// "Source and environment details" tell it
+/// (`wisp_store::publication_lineage::lineage_summary`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaperLineage {
+    /// The files the run read, as recorded.
+    pub inputs: Vec<String>,
+    /// The run that made it, by name and by id.
+    pub run_title: Option<String>,
+    pub run_id: Option<String>,
+    /// The code the run kept.
+    pub code: Vec<String>,
+    pub quality: PaperLineageQuality,
+    /// For a result: its version, checksum and when it was kept.
+    pub version: Option<i64>,
+    pub checksum: Option<String>,
+    pub capture: Option<PaperCapture>,
+    pub input_count: usize,
+    pub output_count: usize,
+    pub code_count: usize,
+    pub environment: bool,
+    /// How the inputs were known (`declared`, `observed`, `inferred`,
+    /// `user_asserted`), as stored.
+    pub bases: Vec<String>,
+}
+
+impl PaperLineage {
+    fn of(summary: &wisp_store::publication_lineage::PublicationLineageSummary) -> Self {
+        PaperLineage {
+            inputs: summary.input_labels.clone(),
+            run_title: summary.producing_run_title.clone(),
+            run_id: summary.producing_run_id.clone(),
+            code: summary.code_labels.clone(),
+            quality: match summary.quality {
+                LineageConfidence::Exact => PaperLineageQuality::Exact,
+                LineageConfidence::Likely => PaperLineageQuality::Likely,
+                LineageConfidence::Uncertain => PaperLineageQuality::Uncertain,
+            },
+            version: summary.version_number,
+            checksum: summary.checksum.clone(),
+            capture: summary.capture_timing.map(|timing| match timing {
+                ArtifactCaptureTiming::AtCreation => PaperCapture::AtCreation,
+                ArtifactCaptureTiming::Late => PaperCapture::Late,
+                ArtifactCaptureTiming::Unknown => PaperCapture::Unknown,
+            }),
+            input_count: summary.run_input_count,
+            output_count: summary.run_output_count,
+            code_count: summary.code_snapshot_count,
+            environment: summary.environment_captured,
+            bases: summary
+                .bases
+                .iter()
+                .map(|basis| basis.as_str().to_owned())
+                .collect(),
+        }
+    }
+}
+
+/// A result bound at one version when the project has a newer one; the
+/// binding keeps the version it was bound at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PaperDrift {
+    pub bound: i64,
+    pub latest: i64,
 }
 
 /// One result, run or passage a figure, table or claim rests on.
@@ -128,6 +284,12 @@ pub struct PaperSource {
     /// The run a clean rerun of a finalized version repeats for this
     /// evidence: the run itself, or the one that made the result.
     pub run: Option<String>,
+    pub selection: PaperSelection,
+    /// Who it may be shown to.
+    pub audience: PaperAudience,
+    pub lineage: PaperLineage,
+    /// For a result the project has a newer version of.
+    pub drift: Option<PaperDrift>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -136,6 +298,10 @@ pub struct PaperItem {
     pub kind: PaperItemKind,
     pub title: String,
     pub note: String,
+    /// The item it sits under; `None` at the top level.
+    pub parent: Option<String>,
+    /// How deep it sits in the outline; 0 at the top level.
+    pub depth: usize,
     pub sources: Vec<PaperSource>,
 }
 
@@ -229,6 +395,8 @@ pub struct PaperItemInput {
     pub kind: PaperItemKind,
     pub title: String,
     pub note: String,
+    /// The item it sits under; `None` at the top level.
+    pub parent: Option<String>,
 }
 
 /// A result, run or conversation message offered as evidence.
@@ -438,52 +606,46 @@ fn passage_text(snapshot_json: &str) -> Option<String> {
         .map(|text| text.chars().take(80).collect())
 }
 
-async fn source(store: &Store, binding: EvidenceBinding) -> PaperSource {
+/// A piece of evidence as its card shows it: named as the WebView's card
+/// names it, traced to the run that made it, and with a newer version of
+/// its result noted when `drift` has one.
+async fn source(
+    store: &Store,
+    binding: EvidenceBinding,
+    drift: &[PublicationEvidenceDrift],
+) -> Result<PaperSource> {
+    let summary = wisp_store::publication_lineage::lineage_summary(store, &binding).await?;
+    let kind = PaperSourceKind::of(binding.source_kind);
+    // A passage shows its kept text only while the kept snapshot is intact.
+    let name = match kind {
+        PaperSourceKind::Passage => passage_text(&binding.source_snapshot_json),
+        _ => Some(summary.source_label.clone()),
+    };
     // As the WebView's card: the run that made a result, or the binding's
     // own run, or the run itself.
-    let mut run = binding.run_id.clone();
-    let (kind, name) = match binding.source_kind {
-        EvidenceSourceKind::Run => {
-            run = Some(binding.source_id.clone());
-            (
-                PaperSourceKind::Run,
-                store
-                    .get_run(&binding.source_id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|run| run.title),
-            )
-        }
-        EvidenceSourceKind::ArtifactVersion => {
-            let context = store
-                .get_artifact_version_context(&binding.source_id)
-                .await
-                .ok()
-                .flatten();
-            if let Some(context) = &context {
-                run = context.version.producing_run_id.clone();
-            }
-            (
-                PaperSourceKind::Result,
-                context.map(|context| context.filename),
-            )
-        }
-        EvidenceSourceKind::MessageSpan => (
-            PaperSourceKind::Passage,
-            passage_text(&binding.source_snapshot_json),
-        ),
-        _ => (PaperSourceKind::Other, None),
-    };
-    PaperSource {
-        id: binding.id,
+    let run = summary
+        .producing_run_id
+        .clone()
+        .or_else(|| (kind == PaperSourceKind::Run).then(|| binding.source_id.clone()));
+    Ok(PaperSource {
         kind,
         name: name
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| binding.source_kind.as_str().replace('_', " ")),
         purpose: binding.purpose,
         run,
-    }
+        selection: PaperSelection::of(binding.selection_state),
+        audience: PaperAudience::of(binding.visibility),
+        lineage: PaperLineage::of(&summary),
+        drift: drift
+            .iter()
+            .find(|found| found.binding_id == binding.id && found.has_drift)
+            .map(|found| PaperDrift {
+                bound: found.bound_version_number,
+                latest: found.latest_version_number,
+            }),
+        id: binding.id,
+    })
 }
 
 /// The paper at `version`, or at its newest version.
@@ -520,22 +682,40 @@ pub(crate) async fn open(
             }
         },
     };
-    let mut items: Vec<PaperItem> = store
-        .list_publication_items(&shown.id)
-        .await?
-        .into_iter()
-        .map(|item| PaperItem {
-            id: item.id,
-            kind: PaperItemKind::of(item.kind),
-            title: item.title,
-            note: item.content,
-            sources: vec![],
+    // In the outline's order, as the WebView's manuscript tree lists them.
+    let stored = store.list_publication_items(&shown.id).await?;
+    let outline: Vec<_> = stored
+        .iter()
+        .map(|item| wisp_dto::PublicationItemInfo {
+            id: item.id.clone(),
+            revision_id: item.revision_id.clone(),
+            parent_item_id: item.parent_item_id.clone(),
+            kind: item.kind.as_str().to_owned(),
+            title: item.title.clone(),
+            content: String::new(),
+            ordinal: item.ordinal,
         })
         .collect();
+    let mut items: Vec<PaperItem> = wisp_dto::publication_sources::manuscript_rows(&outline)
+        .into_iter()
+        .filter_map(|(row, depth)| {
+            let item = stored.iter().find(|item| item.id == row.id)?;
+            Some(PaperItem {
+                id: item.id.clone(),
+                kind: PaperItemKind::of(item.kind),
+                title: item.title.clone(),
+                note: item.content.clone(),
+                parent: item.parent_item_id.clone(),
+                depth,
+                sources: vec![],
+            })
+        })
+        .collect();
+    let drift = store.list_publication_evidence_drift(&shown.id).await?;
     let mut loose = vec![];
     for binding in store.list_evidence_bindings(&shown.id).await? {
         let item = binding.item_id.clone();
-        let bound = source(store, binding).await;
+        let bound = source(store, binding, &drift).await?;
         match items
             .iter_mut()
             .find(|candidate| Some(&candidate.id) == item.as_ref())
@@ -679,7 +859,9 @@ pub(crate) async fn remove(store: &Store, project: &str, paper: &str) -> Result<
     store.delete_publication(paper).await
 }
 
-/// Adds a figure, table or claim to a draft version, or changes one.
+/// Adds a figure, table or claim to a draft version, or changes one,
+/// under `input.parent` or at the top level. The store refuses a parent of
+/// another version and one that would put the item inside itself.
 pub(crate) async fn save_item(
     store: &Store,
     project: &str,
@@ -688,19 +870,22 @@ pub(crate) async fn save_item(
 ) -> Result<()> {
     draft(store, project, version).await?;
     let existing = store.list_publication_items(version).await?;
+    // After every item, so it never takes a sibling's place.
+    let last = existing
+        .iter()
+        .map(|item| item.ordinal)
+        .max()
+        .map_or(0, |last| last + 1);
+    let parent = input.parent.filter(|parent| !parent.trim().is_empty());
     let item = match input.id.as_str() {
         "" => PublicationItem {
             id: uuid::Uuid::new_v4().to_string(),
             revision_id: version.to_owned(),
-            parent_item_id: None,
+            parent_item_id: parent,
             kind: input.kind.stored(),
             title: title(&input.title)?,
             content: note(&input.note)?,
-            ordinal: existing
-                .iter()
-                .map(|item| item.ordinal)
-                .max()
-                .map_or(0, |last| last + 1),
+            ordinal: last,
             metadata_json: "{}".into(),
             created_at: 0,
             updated_at: 0,
@@ -709,10 +894,18 @@ pub(crate) async fn save_item(
             let Some(kept) = existing.into_iter().find(|item| item.id == id) else {
                 bail!("That item is not in this version");
             };
+            // Moved under another item, it goes last among its new siblings.
+            let ordinal = if kept.parent_item_id == parent {
+                kept.ordinal
+            } else {
+                last
+            };
             PublicationItem {
                 kind: input.kind.stored(),
                 title: title(&input.title)?,
                 content: note(&input.note)?,
+                parent_item_id: parent,
+                ordinal,
                 ..kept
             }
         }
@@ -753,9 +946,7 @@ pub(crate) async fn choices(
         PaperSourceKind::Result => "files",
         PaperSourceKind::Run => "runs",
         PaperSourceKind::Passage => "messages",
-        PaperSourceKind::Other => {
-            bail!("Only results, runs and conversation passages can be chosen here")
-        }
+        _ => bail!("Only results, runs and conversation passages can be chosen here"),
     };
     let page = store
         .publication_source_page(project, category, query, offset)
@@ -775,11 +966,15 @@ pub(crate) async fn choices(
     ))
 }
 
-/// Binds a result (at the version it has now), a run, or a passage of a
-/// conversation message to an item of a draft version, with why it was
-/// chosen. A passage's `source` is its exact locator
+/// Binds a result (at the version it has now), a run, a passage of a
+/// conversation message, or an exact anchor (a tool call, an execution, its
+/// code, an outside resource) to an item of a draft version, with why it
+/// was chosen, whether it is meant for the paper and who may see it. A
+/// passage's `source` is its exact locator
 /// (`wisp_dto::publication_sources::message_span_locator`); a message
-/// changed since it was shown is refused.
+/// changed since it was shown is refused. The store checks an anchor is of
+/// this project and copies what it names into the binding.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn bind(
     store: &Store,
     project: &str,
@@ -788,6 +983,8 @@ pub(crate) async fn bind(
     kind: PaperSourceKind,
     source: &str,
     purpose: &str,
+    selection: PaperSelection,
+    audience: PaperAudience,
 ) -> Result<()> {
     draft(store, project, version).await?;
     ensure!(
@@ -816,11 +1013,13 @@ pub(crate) async fn bind(
             EvidenceSourceKind::Run
         }
         // The store checks the message is of this project and unchanged,
-        // and keeps the passage's text with the binding.
+        // and keeps the passage's text with the binding; it checks and
+        // keeps the exact anchors the same way.
         PaperSourceKind::Passage => EvidenceSourceKind::MessageSpan,
-        PaperSourceKind::Other => {
-            bail!("Only results, runs and conversation passages can be chosen here")
-        }
+        PaperSourceKind::ToolCall => EvidenceSourceKind::ToolCall,
+        PaperSourceKind::ExecutionLog => EvidenceSourceKind::ExecutionLog,
+        PaperSourceKind::CodeCell => EvidenceSourceKind::CodeCell,
+        PaperSourceKind::Resource => EvidenceSourceKind::ExternalResource,
     };
     store
         .save_evidence_binding(&EvidenceBindingDraft {
@@ -831,11 +1030,35 @@ pub(crate) async fn bind(
             source_id: source.to_owned(),
             purpose: note(purpose)?,
             supported_claim_item_id: None,
-            selection_state: EvidenceSelectionState::Selected,
-            visibility: EvidenceVisibility::Private,
+            selection_state: selection.stored(),
+            visibility: audience.stored(),
         })
         .await?;
     Ok(())
+}
+
+/// Changes whether a piece of evidence of a draft version is meant for the
+/// paper and who may see it, as the WebView card's two choices do.
+pub(crate) async fn mark(
+    store: &Store,
+    project: &str,
+    version: &str,
+    binding: &str,
+    selection: PaperSelection,
+    audience: PaperAudience,
+) -> Result<()> {
+    draft(store, project, version).await?;
+    ensure!(
+        store
+            .list_evidence_bindings(version)
+            .await?
+            .iter()
+            .any(|found| found.id == binding),
+        "That evidence is not in this version"
+    );
+    store
+        .update_evidence_binding_selection(binding, selection.stored(), audience.stored())
+        .await
 }
 
 pub(crate) async fn unbind(

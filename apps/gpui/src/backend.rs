@@ -2055,6 +2055,7 @@ impl Backend {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn bind_paper_source(
         &self,
         project: String,
@@ -2063,9 +2064,29 @@ impl Backend {
         kind: wisp_server::desktop::PaperSourceKind,
         source: String,
         purpose: String,
+        selection: wisp_server::desktop::PaperSelection,
+        audience: wisp_server::desktop::PaperAudience,
     ) -> Reply<()> {
         self.local(move |host| async move {
-            host.bind_paper_source(&project, &version, &item, kind, &source, &purpose)
+            host.bind_paper_source(
+                &project, &version, &item, kind, &source, &purpose, selection, audience,
+            )
+            .await
+        })
+    }
+
+    /// Whether evidence of a draft version is meant for the paper, and who
+    /// may see it.
+    pub fn mark_paper_source(
+        &self,
+        project: String,
+        version: String,
+        binding: String,
+        selection: wisp_server::desktop::PaperSelection,
+        audience: wisp_server::desktop::PaperAudience,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.mark_paper_source(&project, &version, &binding, selection, audience)
                 .await
         })
     }

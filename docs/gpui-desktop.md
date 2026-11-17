@@ -188,7 +188,7 @@ desktop can hold them as they are.
 | Notebook | A tab of the side panel: the conversation's code as cells, with what each run returned; copy, save to favorites, or show it in the conversation |
 | Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
 | Scheduled tasks | A page across projects (the clock on the home page, or the command palette): a prompt is sent into a new conversation of its project every few hours, daily or weekly at a time, while the app is open; each task can be run now, switched off or deleted, and its latest firing opens the conversation it made |
-| Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, figures, tables and claims with the project results, runs and conversation passages they rest on and why each was chosen. Research conversations lists what you and the assistant said in the project's own conversations; a message opens read-only, a passage is selected in it (or the whole preview, up to 16 KiB, is used) and its text is kept with the evidence. Finalize… checks a draft for whom the evidence is for (private, restricted or public, with the reviews public needs) and lists what stands in the way, warnings and what the record leaves out; a finding that may stand is kept with a reason; when nothing is left in the way the version is locked under a SHA-256 fingerprint. A finalized version shows its evidence level; evidence a run made offers Verify in a clean folder, which reruns that run with only its frozen inputs and code and lists each output as matching or not (Reproduction reports); Build capsule… saves the version's evidence capsule as a `.zip` where you choose (Capsule builds). New version starts a draft from any version with its items and evidence |
+| Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, sections, claims, figures, tables, methods and supplements, each at the top level or under a parent item, with the project results, runs, conversation passages and exact anchors they rest on and why each was chosen. Each piece of evidence says whether it is a candidate, selected or rejected and who may see it (changed on a draft), notes when the project has a newer version of its result, and opens to where it came from (the run's inputs, the run and its code, and the source and environment details). Advanced: locate by source ID binds a message range, tool result, execution log, code cell or external resource by its ids. Research conversations lists what you and the assistant said in the project's own conversations; a message opens read-only, a passage is selected in it (or the whole preview, up to 16 KiB, is used) and its text is kept with the evidence. Finalize… checks a draft for whom the evidence is for (private, restricted or public, with the reviews public needs) and lists what stands in the way, warnings and what the record leaves out; a finding that may stand is kept with a reason; when nothing is left in the way the version is locked under a SHA-256 fingerprint. A finalized version shows its evidence level; evidence a run made offers Verify in a clean folder, which reruns that run with only its frozen inputs and code and lists each output as matching or not (Reproduction reports); Build capsule… saves the version's evidence capsule as a `.zip` where you choose (Capsule builds). New version starts a draft from any version with its items and evidence |
 | Research mandates | A page of standing goals (the gauge on the home page, or the command palette): each project's agent works on its mandate in rounds on a cadence in one conversation, asks you through the research assistant when it needs something only you can give, and writes reports; answer, run now, pause, report, edit, close or delete from its card |
 | Research assistant | One conversation of its own (the robot on the home page, or the command palette) that reads what was recorded across projects and each project's progress, keeps your dated plan, and hands work to a project conversation, whose outcome it reports back; a bar over it shows today's plan to tick off or drop |
 | Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own. A file's source details (the run that made it, what that run read, the run's record) show beside the days, and Relationships shows the project's research graph as a list or drawn. Each day can have a recap the model drafts from its records, with what was done, found, went wrong and comes next, which you change, confirm or dismiss; Scheduled tasks drafts the last days' recaps each morning |
@@ -1658,11 +1658,22 @@ Limits of this slice:
   its UTF-8 bytes and the message's SHA-256, a message changed since it
   was shown is refused, and the text is kept with the evidence; the
   offsets and locator are `wisp_dto::publication_sources`, which the
-  WebView picker uses too). Tool calls, code cells and outside resources
-  bound through the WebView's advanced anchors are listed by kind but
-  cannot be added here. Evidence is not reviewed or marked from here, and
-  items are flat: they are shown in the order they were added and cannot
-  be nested or reordered.
+  WebView picker uses too), or an exact anchor typed by its ids as in the
+  WebView's advanced dialog (`precise_evidence_source`, shared): a tool
+  call of a message with its result, one execution or its code, or an
+  external resource of the project; the store checks it is the project's
+  and keeps a copy with the evidence. Whether evidence is selected for the
+  paper and who may see it are the binding's own columns, changed only on
+  a draft (only selected evidence is locked when finalizing). Where a
+  source came from is the WebView host's lineage summary, now
+  `wisp_store::publication_lineage`, and a newer version of a bound result
+  is the store's drift list. Items nest as in the WebView's outline (an
+  item cannot go inside itself or one of its own; one moved under another
+  parent goes last among its new siblings; removing an item removes the
+  items under it); like the WebView, items cannot be reordered. Reviews,
+  supersession notes and item links are not shown: nothing in either
+  desktop writes them. Evidence of the version as a whole and the
+  supported claim are not chosen here.
 - A finalized version's clean rerun and capsule are the WebView host's
   own code, moved into `wisp_runs::publication_reproduction` and
   `wisp_runs::publication_capsule` and called by both hosts. Verify in a
@@ -2501,6 +2512,23 @@ Press New version:
 "v2 · Version 2" opens as a draft with the same figure and evidence.
 With the reason field open press Escape: only the field closes; press it
 again: the panel closes and the page stays.
+In a draft add a Section "Results", then a figure whose Parent item is
+"Results": the figure is listed indented under it. Change the section:
+the figure is not offered as its parent. Change the figure to Top level:
+it moves to the end of the list, unindented. Press Add evidence on the
+figure, choose Candidate and Public, then a project result: its line
+reads Candidate and Public. Open it with the arrow: Analysis source lists
+the run's inputs, the run with its code and the result, and below them
+the lineage, version, checksum, counts and environment; press Selected
+and Private there: the line changes. Once that result has a newer
+version in the project (a turn writes the same file again), the line
+says a newer result exists, bound v1, latest v2.
+Press Add evidence, then Advanced: locate by source ID: the dialog opens
+on Message span; press Escape at once: only the dialog closes and the
+source list stays. Open it again, choose Code cell, type an unknown id
+and press Bind exact evidence: the error says the code cell must belong
+to the project. On a finalized version open a source: its details show,
+without the selection and visibility buttons.
 Send `/timer 1m say the time`: a note confirms it, a strip above the
 composer shows the prompt with "Every 1 min · Next: <time>", the
 Scheduled tasks page lists it as a conversation's timer, and within a

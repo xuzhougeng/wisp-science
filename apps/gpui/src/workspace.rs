@@ -324,6 +324,8 @@ pub struct Workspace {
     /// Title, note.
     paper_item_fields: [Entity<InputState>; 2],
     paper_item_kind: wisp_server::desktop::PaperItemKind,
+    /// The item the one in the form sits under; `None` at the top level.
+    paper_item_parent: Option<String>,
     /// The item in the form; empty is a new one.
     paper_item_editing: Option<String>,
     /// The item evidence is being chosen for.
@@ -331,6 +333,16 @@ pub struct Workspace {
     paper_source_kind: wisp_server::desktop::PaperSourceKind,
     /// Search, why it was chosen.
     paper_source_fields: [Entity<InputState>; 2],
+    /// Whether what is chosen is meant for the paper, and who may see it.
+    paper_source_selection: wisp_server::desktop::PaperSelection,
+    paper_source_audience: wisp_server::desktop::PaperAudience,
+    /// The exact anchor being typed in the advanced dialog: its kind as
+    /// the WebView names it, then the session, message, byte range, tool
+    /// call and exact id.
+    paper_anchor_kind: &'static str,
+    paper_anchor_fields: [Entity<InputState>; 6],
+    /// The evidence whose source and environment details are open.
+    paper_sources_open: std::collections::HashSet<String>,
     paper_choices: Vec<wisp_server::desktop::PaperSourceChoice>,
     paper_choices_more: bool,
     /// The conversation message a passage is being chosen from, and its
@@ -1219,6 +1231,14 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
         ];
+        let paper_anchor_fields = [
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+            cx.new(|cx| InputState::new(window, cx)),
+        ];
         let paper_passage_field = cx.new(|cx| InputState::new(window, cx).multi_line(true));
         let paper_waiver_field = cx.new(|cx| {
             InputState::new(window, cx)
@@ -1806,10 +1826,16 @@ impl Workspace {
             paper_fields,
             paper_item_fields,
             paper_item_kind: wisp_server::desktop::PaperItemKind::Figure,
+            paper_item_parent: None,
             paper_item_editing: None,
             paper_source_item: None,
             paper_source_kind: wisp_server::desktop::PaperSourceKind::Result,
             paper_source_fields,
+            paper_source_selection: Default::default(),
+            paper_source_audience: Default::default(),
+            paper_anchor_kind: "message_span",
+            paper_anchor_fields,
+            paper_sources_open: Default::default(),
             paper_choices: Vec::new(),
             paper_choices_more: false,
             paper_passage: None,
@@ -2415,6 +2441,7 @@ impl Workspace {
                 Layer::PaperForm
                 | Layer::PaperItemForm
                 | Layer::PaperSources
+                | Layer::PaperAnchor
                 | Layer::ConfirmRemovePaper,
             ) => {}
             Some(Layer::PaperFinalize) => {

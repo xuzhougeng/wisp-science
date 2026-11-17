@@ -10998,6 +10998,7 @@ async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
         kind,
         title: title.into(),
         note: String::new(),
+        parent: None,
     };
     server
         .save_paper_item(PROJECT, &version, item(PaperItemKind::Figure, "Figure 1"))
@@ -11028,6 +11029,7 @@ async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
                 kind: PaperItemKind::Figure,
                 title: "Figure 1: copy number by strain".into(),
                 note: "qPCR, three replicates".into(),
+                parent: None,
             },
         )
         .await
@@ -11044,7 +11046,7 @@ async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].name, "qpcr_fit.py");
     assert!(server
-        .paper_source_choices(PROJECT, PaperSourceKind::Other, "", 0)
+        .paper_source_choices(PROJECT, PaperSourceKind::ToolCall, "", 0)
         .await
         .is_err());
     server
@@ -11055,13 +11057,24 @@ async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
             PaperSourceKind::Run,
             &runs[0].id,
             " the fit behind panel B ",
+            desktop::PaperSelection::Selected,
+            desktop::PaperAudience::Private,
         )
         .await
         .unwrap();
     // A source that is not there, or an item of no version, is refused.
     for (item, source) in [(figure.as_str(), "run-absent"), ("item-absent", "run-qpcr")] {
         assert!(server
-            .bind_paper_source(PROJECT, &version, item, PaperSourceKind::Run, source, "")
+            .bind_paper_source(
+                PROJECT,
+                &version,
+                item,
+                PaperSourceKind::Run,
+                source,
+                "",
+                desktop::PaperSelection::Selected,
+                desktop::PaperAudience::Private
+            )
             .await
             .is_err());
     }
@@ -11095,6 +11108,8 @@ async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
             PaperSourceKind::Result,
             &results[0].id,
             "",
+            desktop::PaperSelection::Selected,
+            desktop::PaperAudience::Private,
         )
         .await
         .unwrap();
@@ -11199,6 +11214,7 @@ async fn a_paper_version_is_checked_waived_finalized_and_continued() {
         kind: PaperItemKind::Figure,
         title: "Figure 1".into(),
         note: String::new(),
+        parent: None,
     };
     server
         .save_paper_item(PROJECT, &version, figure.clone())
@@ -11262,6 +11278,8 @@ async fn a_paper_version_is_checked_waived_finalized_and_continued() {
             PaperSourceKind::Run,
             "run-fit",
             "the fit",
+            desktop::PaperSelection::Selected,
+            desktop::PaperAudience::Private,
         )
         .await
         .unwrap();
@@ -11395,6 +11413,7 @@ async fn a_passage_of_a_conversation_is_evidence_with_its_text_kept() {
                 kind: PaperItemKind::Claim,
                 title: "Copy number doubles".into(),
                 note: String::new(),
+                parent: None,
             },
         )
         .await
@@ -11449,6 +11468,8 @@ async fn a_passage_of_a_conversation_is_evidence_with_its_text_kept() {
             PaperSourceKind::Passage,
             &exact,
             " the strain we kept ",
+            desktop::PaperSelection::Selected,
+            desktop::PaperAudience::Private,
         )
         .await
         .unwrap();
@@ -11466,7 +11487,9 @@ async fn a_passage_of_a_conversation_is_evidence_with_its_text_kept() {
                 &claim,
                 PaperSourceKind::Passage,
                 &refused,
-                ""
+                "",
+                desktop::PaperSelection::Selected,
+                desktop::PaperAudience::Private,
             )
             .await
             .is_err());
@@ -11509,6 +11532,7 @@ async fn a_passage_of_a_conversation_is_evidence_with_its_text_kept() {
                 kind: PaperItemKind::Claim,
                 title: "Claim".into(),
                 note: String::new(),
+                parent: None,
             },
         )
         .await
@@ -11523,10 +11547,379 @@ async fn a_passage_of_a_conversation_is_evidence_with_its_text_kept() {
             &other_item,
             PaperSourceKind::Passage,
             &exact,
-            ""
+            "",
+            desktop::PaperSelection::Selected,
+            desktop::PaperAudience::Private,
         )
         .await
         .is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn paper_items_nest_and_evidence_is_anchored_marked_and_noted_as_in_the_webview() {
+    use desktop::{
+        PaperAudience, PaperDrift, PaperInput, PaperItemInput, PaperItemKind, PaperSelection,
+        PaperSourceKind,
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let store = &server.0.store;
+    let paper = server
+        .create_paper(
+            PROJECT,
+            PaperInput {
+                title: "Copy number".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let version = paper.shown.clone();
+    let item = |id: &str, kind, title: &str, parent: Option<&str>| PaperItemInput {
+        id: id.into(),
+        kind,
+        title: title.into(),
+        note: String::new(),
+        parent: parent.map(str::to_owned),
+    };
+    let outline = |paper: &desktop::Paper| -> Vec<(String, usize)> {
+        paper
+            .items
+            .iter()
+            .map(|item| (item.title.clone(), item.depth))
+            .collect()
+    };
+
+    // A section holds its figures, listed under it as the WebView's
+    // manuscript tree lists them.
+    for (kind, title) in [
+        (PaperItemKind::Section, "Results"),
+        (PaperItemKind::Methods, "Methods"),
+    ] {
+        server
+            .save_paper_item(PROJECT, &version, item("", kind, title, None))
+            .await
+            .unwrap();
+    }
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    let results = shown.items[0].id.clone();
+    server
+        .save_paper_item(
+            PROJECT,
+            &version,
+            item("", PaperItemKind::Figure, "Figure 1", Some(&results)),
+        )
+        .await
+        .unwrap();
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    assert_eq!(
+        outline(&shown),
+        [
+            ("Results".to_owned(), 0),
+            ("Figure 1".to_owned(), 1),
+            ("Methods".to_owned(), 0)
+        ]
+    );
+    let figure = shown.items[1].id.clone();
+    assert_eq!(shown.items[1].parent.as_deref(), Some(results.as_str()));
+    // An item cannot sit inside itself or one of its own, nor under an
+    // item of no version.
+    for parent in [results.as_str(), figure.as_str(), "item-absent"] {
+        assert!(server
+            .save_paper_item(
+                PROJECT,
+                &version,
+                item(&results, PaperItemKind::Section, "Results", Some(parent)),
+            )
+            .await
+            .is_err());
+    }
+    // Moved to the top level, the figure goes after the rest.
+    server
+        .save_paper_item(
+            PROJECT,
+            &version,
+            item(&figure, PaperItemKind::Figure, "Figure 1", None),
+        )
+        .await
+        .unwrap();
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    assert_eq!(
+        outline(&shown),
+        [
+            ("Results".to_owned(), 0),
+            ("Methods".to_owned(), 0),
+            ("Figure 1".to_owned(), 0)
+        ]
+    );
+
+    // A result bound as a candidate others may see, then marked selected
+    // and kept private; a newer version of it is noted, not followed.
+    let session = create(&server).await;
+    store
+        .create_run(&wisp_store::RunRecord::new(
+            "run-fit", PROJECT, "local", "fit.py", "script",
+        ))
+        .await
+        .unwrap();
+    let result = |version: &str, checksum: char| wisp_store::ArtifactVersionDraft {
+        version_id: Some(version.into()),
+        artifact_id: "figure-artifact".into(),
+        project_id: PROJECT.into(),
+        root_frame_id: session.clone(),
+        filename: "figure1.png".into(),
+        content_type: "image/png".into(),
+        storage_path: format!("snapshots/{version}.png"),
+        logical_key: Some("figure:1".into()),
+        size_bytes: Some(8),
+        checksum: Some(checksum.to_string().repeat(64)),
+        producing_run_id: Some("run-fit".into()),
+        env_snapshot_hash: None,
+        materialization: wisp_store::ArtifactMaterialization::Snapshot,
+        capture_timing: wisp_store::ArtifactCaptureTiming::AtCreation,
+    };
+    store
+        .save_artifact_version(&result("figure-v1", 'a'))
+        .await
+        .unwrap();
+    server
+        .bind_paper_source(
+            PROJECT,
+            &version,
+            &figure,
+            PaperSourceKind::Result,
+            "figure-v1",
+            "panel A",
+            PaperSelection::Candidate,
+            PaperAudience::Public,
+        )
+        .await
+        .unwrap();
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    let bound = shown.items[2].sources[0].clone();
+    assert_eq!(bound.selection, PaperSelection::Candidate);
+    assert_eq!(bound.audience, PaperAudience::Public);
+    assert_eq!(bound.name, "figure1.png");
+    assert_eq!(bound.run.as_deref(), Some("run-fit"));
+    assert_eq!(bound.lineage.run_title.as_deref(), Some("fit.py"));
+    assert_eq!(bound.lineage.version, Some(1));
+    assert_eq!(bound.drift, None);
+    server
+        .mark_paper_source(
+            PROJECT,
+            &version,
+            &bound.id,
+            PaperSelection::Selected,
+            PaperAudience::Private,
+        )
+        .await
+        .unwrap();
+    assert!(server
+        .mark_paper_source(
+            PROJECT,
+            &version,
+            "binding-absent",
+            PaperSelection::Rejected,
+            PaperAudience::Private,
+        )
+        .await
+        .is_err());
+    store
+        .save_artifact_version(&result("figure-v2", 'b'))
+        .await
+        .unwrap();
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    let bound = &shown.items[2].sources[0];
+    assert_eq!(bound.selection, PaperSelection::Selected);
+    assert_eq!(bound.audience, PaperAudience::Private);
+    assert_eq!(bound.lineage.version, Some(1));
+    assert_eq!(
+        bound.drift,
+        Some(PaperDrift {
+            bound: 1,
+            latest: 2
+        })
+    );
+
+    // The advanced dialog's exact anchors: a tool call with its result,
+    // and the code of one execution, are kept as they were.
+    let mut seq = store.max_message_seq(&session).await.unwrap();
+    let mut asked = Message::assistant("");
+    asked.tool_calls = vec![ToolCall {
+        id: "call-fit".into(),
+        kind: "function".into(),
+        function: wisp_llm::FunctionCall {
+            name: "python".into(),
+            arguments: r#"{"code":"fit()"}"#.into(),
+        },
+    }];
+    for message in [
+        Message::user("fit it"),
+        asked,
+        Message::tool("call-fit", "python", "slope 2.0"),
+    ] {
+        seq += 1;
+        store.append_message(&session, seq, &message).await.unwrap();
+    }
+    store
+        .insert_execution_log(&wisp_store::ExecLog {
+            id: "exec-fit".into(),
+            frame_id: session.clone(),
+            cell_index: 3,
+            tool: "python".into(),
+            language: "python".into(),
+            source: "fit()".into(),
+            stdout: "slope 2.0".into(),
+            stderr: String::new(),
+            exit_status: "ok".into(),
+            wall_s: None,
+            files_written: vec![],
+            files_read: vec![],
+            env_hash: None,
+        })
+        .await
+        .unwrap();
+    let anchor = |kind, tool: &str, exact: &str| {
+        wisp_dto::publication_sources::precise_evidence_source(
+            kind,
+            &session,
+            &(seq - 1).to_string(),
+            "",
+            "",
+            tool,
+            exact,
+        )
+        .unwrap()
+    };
+    for found in [
+        anchor("tool_call", "call-fit", ""),
+        anchor("code_cell", "", "exec-fit"),
+    ] {
+        let kind = PaperSourceKind::of_anchor(found.kind).unwrap();
+        server
+            .bind_paper_source(
+                PROJECT,
+                &version,
+                &results,
+                kind,
+                &found.id,
+                "how the slope was found",
+                PaperSelection::Selected,
+                PaperAudience::Private,
+            )
+            .await
+            .unwrap();
+    }
+    // A call that is not at that message is refused.
+    let missing = anchor("tool_call", "call-absent", "");
+    assert!(server
+        .bind_paper_source(
+            PROJECT,
+            &version,
+            &results,
+            PaperSourceKind::ToolCall,
+            &missing.id,
+            "",
+            PaperSelection::Selected,
+            PaperAudience::Private,
+        )
+        .await
+        .is_err());
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    // Bound in the same second, they come in either order.
+    let mut names: Vec<_> = shown.items[0]
+        .sources
+        .iter()
+        .map(|source| (source.name.as_str(), source.kind))
+        .collect();
+    names.sort_by_key(|(name, _)| *name);
+    assert_eq!(
+        names,
+        [
+            ("Tool result: python", PaperSourceKind::ToolCall),
+            ("python cell 3", PaperSourceKind::CodeCell),
+        ]
+    );
+    assert_eq!(
+        PaperSourceKind::of_anchor("message_span"),
+        Some(PaperSourceKind::Passage)
+    );
+    assert_eq!(PaperSourceKind::of_anchor("run"), None);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_finalized_paper_shows_where_its_evidence_came_from_and_stays_as_it_is() {
+    use desktop::{
+        PaperAudience, PaperItemInput, PaperItemKind, PaperLineageQuality, PaperSelection,
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let (paper, version) =
+        finalized_paper_with_a_run(&server, &temp.path().join("workspace")).await;
+    let shown = server.paper(PROJECT, &paper, Some(&version)).await.unwrap();
+    let source = &shown.items[0].sources[0];
+    // Traced as the WebView's card traces it: the run, what it read, its
+    // code, its environment.
+    assert_eq!(source.lineage.run_title.as_deref(), Some("fit"));
+    assert_eq!(source.lineage.run_id.as_deref(), Some("run-fit"));
+    assert_eq!(source.lineage.inputs, ["data/input.txt"]);
+    assert!(source.lineage.code.iter().any(|code| code == "analysis.py"));
+    assert_eq!(source.lineage.bases, ["declared"]);
+    assert_eq!(
+        (
+            source.lineage.input_count,
+            source.lineage.output_count,
+            source.lineage.code_count
+        ),
+        (1, 1, source.lineage.code.len())
+    );
+    // Exact inputs and code: exact once the run's own environment record
+    // holds something, likely otherwise, as the WebView grades it.
+    assert_eq!(
+        source.lineage.quality,
+        if source.lineage.environment {
+            PaperLineageQuality::Exact
+        } else {
+            PaperLineageQuality::Likely
+        }
+    );
+    // Its evidence and outline cannot be changed once finalized.
+    assert!(server
+        .mark_paper_source(
+            PROJECT,
+            &version,
+            &source.id,
+            PaperSelection::Rejected,
+            PaperAudience::Public,
+        )
+        .await
+        .is_err());
+    assert!(server
+        .save_paper_item(
+            PROJECT,
+            &version,
+            PaperItemInput {
+                id: String::new(),
+                kind: PaperItemKind::Figure,
+                title: "Figure 2".into(),
+                note: String::new(),
+                parent: Some(shown.items[0].id.clone()),
+            },
+        )
+        .await
+        .is_err());
+    let again = server.paper(PROJECT, &paper, Some(&version)).await.unwrap();
+    assert_eq!(
+        again.items[0].sources[0].selection,
+        PaperSelection::Selected
+    );
+    assert_eq!(again.items.len(), 1);
     server.shutdown().await;
 }
 
@@ -11682,6 +12075,7 @@ async fn finalized_paper_with_a_run(server: &Server, workspace: &Path) -> (Strin
                 kind: PaperItemKind::Methods,
                 title: "Analysis".into(),
                 note: String::new(),
+                parent: None,
             },
         )
         .await
@@ -11697,6 +12091,8 @@ async fn finalized_paper_with_a_run(server: &Server, workspace: &Path) -> (Strin
             PaperSourceKind::Run,
             "run-fit",
             "the analysis",
+            desktop::PaperSelection::Selected,
+            desktop::PaperAudience::Private,
         )
         .await
         .unwrap();

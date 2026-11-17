@@ -1,8 +1,142 @@
 //! Choosing a passage of a research conversation as paper evidence: the
 //! offsets, teaser and exact locator shared by the WebView source picker and
-//! the GPUI desktop.
-use crate::PublicationSourceChoice;
-use std::collections::BTreeMap;
+//! the GPUI desktop; the exact anchors of the advanced dialog; and the order
+//! the manuscript outline lists nested items in.
+use crate::{PublicationItemInfo, PublicationSourceChoice};
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicationEvidenceSource {
+    pub kind: &'static str,
+    pub id: String,
+    pub label: String,
+}
+
+pub fn manuscript_rows(items: &[PublicationItemInfo]) -> Vec<(PublicationItemInfo, usize)> {
+    fn visit(
+        parent: Option<&str>,
+        children: &HashMap<Option<String>, Vec<PublicationItemInfo>>,
+        seen: &mut HashSet<String>,
+        depth: usize,
+        rows: &mut Vec<(PublicationItemInfo, usize)>,
+    ) {
+        let key = parent.map(str::to_string);
+        let Some(items) = children.get(&key) else {
+            return;
+        };
+        for item in items {
+            if !seen.insert(item.id.clone()) {
+                continue;
+            }
+            rows.push((item.clone(), depth));
+            visit(Some(&item.id), children, seen, depth + 1, rows);
+        }
+    }
+
+    let mut children = HashMap::<Option<String>, Vec<PublicationItemInfo>>::new();
+    for item in items {
+        children
+            .entry(item.parent_item_id.clone())
+            .or_default()
+            .push(item.clone());
+    }
+    for siblings in children.values_mut() {
+        siblings.sort_by(|left, right| {
+            left.ordinal
+                .cmp(&right.ordinal)
+                .then_with(|| left.title.cmp(&right.title))
+        });
+    }
+    let mut rows = Vec::with_capacity(items.len());
+    let mut seen = HashSet::new();
+    visit(None, &children, &mut seen, 0, &mut rows);
+    for item in items {
+        if seen.insert(item.id.clone()) {
+            rows.push((item.clone(), 0));
+            visit(Some(&item.id), &children, &mut seen, 1, &mut rows);
+        }
+    }
+    rows
+}
+
+pub fn precise_evidence_source(
+    kind: &str,
+    frame_id: &str,
+    message_seq: &str,
+    byte_start: &str,
+    byte_end: &str,
+    tool_call_id: &str,
+    exact_id: &str,
+) -> Result<PublicationEvidenceSource, String> {
+    let exact_id = exact_id.trim();
+    match kind {
+        "execution_log" | "code_cell" | "external_resource" => {
+            if exact_id.is_empty() {
+                return Err("An exact source ID is required.".into());
+            }
+            let (kind, label) = match kind {
+                "execution_log" => ("execution_log", "Execution log"),
+                "code_cell" => ("code_cell", "Code cell"),
+                _ => ("external_resource", "External resource"),
+            };
+            Ok(PublicationEvidenceSource {
+                kind,
+                id: exact_id.into(),
+                label: format!("{label}: {exact_id}"),
+            })
+        }
+        "message_span" => {
+            let seq = message_seq
+                .trim()
+                .parse::<i64>()
+                .map_err(|_| "Message sequence must be a positive integer.")?;
+            let start = byte_start
+                .trim()
+                .parse::<usize>()
+                .map_err(|_| "Span start must be a byte offset.")?;
+            let end = byte_end
+                .trim()
+                .parse::<usize>()
+                .map_err(|_| "Span end must be a byte offset.")?;
+            if frame_id.trim().is_empty() || seq < 1 || start >= end {
+                return Err(
+                    "MessageSpan requires a frame, message sequence, and valid range.".into(),
+                );
+            }
+            Ok(PublicationEvidenceSource {
+                kind: "message_span",
+                id: serde_json::to_string(&serde_json::json!({
+                    "byte_end": end,
+                    "byte_start": start,
+                    "frame_id": frame_id.trim(),
+                    "message_seq": seq,
+                }))
+                .map_err(|error| error.to_string())?,
+                label: format!("Message {seq} bytes {start}–{end}"),
+            })
+        }
+        "tool_call" => {
+            let seq = message_seq
+                .trim()
+                .parse::<i64>()
+                .map_err(|_| "Message sequence must be a positive integer.")?;
+            if frame_id.trim().is_empty() || seq < 1 || tool_call_id.trim().is_empty() {
+                return Err("ToolCall requires a frame, message sequence, and call ID.".into());
+            }
+            Ok(PublicationEvidenceSource {
+                kind: "tool_call",
+                id: serde_json::to_string(&serde_json::json!({
+                    "frame_id": frame_id.trim(),
+                    "message_seq": seq,
+                    "tool_call_id": tool_call_id.trim(),
+                }))
+                .map_err(|error| error.to_string())?,
+                label: format!("Tool result: {}", tool_call_id.trim()),
+            })
+        }
+        _ => Err("Unsupported precise evidence kind.".into()),
+    }
+}
 
 /// Selection offsets count UTF-16 code units (the DOM's and GPUI's text
 /// input both do); persisted anchors count UTF-8 bytes. Reject offsets inside
@@ -70,6 +204,45 @@ pub fn message_span_locator(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn item(id: &str, parent: Option<&str>, ordinal: i64) -> PublicationItemInfo {
+        PublicationItemInfo {
+            id: id.into(),
+            revision_id: "revision".into(),
+            parent_item_id: parent.map(str::to_string),
+            kind: "section".into(),
+            title: id.into(),
+            content: String::new(),
+            ordinal,
+        }
+    }
+
+    #[test]
+    fn manuscript_rows_follow_parent_order_and_keep_orphans() {
+        let rows = manuscript_rows(&[
+            item("child", Some("root"), 0),
+            item("later", None, 2),
+            item("root", None, 1),
+            item("orphan", Some("missing"), 0),
+        ]);
+        assert_eq!(
+            rows.iter()
+                .map(|(item, depth)| (item.id.as_str(), *depth))
+                .collect::<Vec<_>>(),
+            [("root", 0), ("child", 1), ("later", 0), ("orphan", 0),]
+        );
+    }
+
+    #[test]
+    fn message_span_source_uses_canonical_exact_locator() {
+        let source =
+            precise_evidence_source("message_span", "frame", "8", "2", "11", "", "").unwrap();
+        assert_eq!(source.kind, "message_span");
+        assert_eq!(
+            source.id,
+            r#"{"byte_end":11,"byte_start":2,"frame_id":"frame","message_seq":8}"#
+        );
+    }
 
     #[test]
     fn transcript_selection_preserves_utf8_boundaries() {

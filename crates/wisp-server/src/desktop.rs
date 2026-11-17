@@ -5770,7 +5770,10 @@ impl Server {
         crate::papers::choices(&self.0.store, project, kind, query, offset).await
     }
 
-    /// Binds a result or a run to an item of a draft version.
+    /// Binds a result, a run, a passage or an exact anchor to an item of a
+    /// draft version, with whether it is meant for the paper and who may
+    /// see it.
+    #[allow(clippy::too_many_arguments)]
     pub async fn bind_paper_source(
         &self,
         project: &str,
@@ -5779,10 +5782,46 @@ impl Server {
         kind: PaperSourceKind,
         source: &str,
         purpose: &str,
+        selection: PaperSelection,
+        audience: PaperAudience,
     ) -> Result<()> {
         let _admission = self.0.admission.read().await;
         self.known_project(project).await?;
-        crate::papers::bind(&self.0.store, project, version, item, kind, source, purpose).await
+        crate::papers::bind(
+            &self.0.store,
+            project,
+            version,
+            item,
+            kind,
+            source,
+            purpose,
+            selection,
+            audience,
+        )
+        .await
+    }
+
+    /// Changes whether evidence of a draft version is meant for the paper
+    /// and who may see it.
+    pub async fn mark_paper_source(
+        &self,
+        project: &str,
+        version: &str,
+        binding: &str,
+        selection: PaperSelection,
+        audience: PaperAudience,
+    ) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::papers::mark(
+            &self.0.store,
+            project,
+            version,
+            binding,
+            selection,
+            audience,
+        )
+        .await
     }
 
     pub async fn unbind_paper_source(
@@ -8195,10 +8234,11 @@ pub use crate::method_search::prepare::{MethodSearchAuditReport, ProtectedFileAu
 pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow, SentContext};
 pub use crate::origin::FileOrigin;
 pub use crate::papers::{
-    Paper, PaperAudience, PaperCapsule, PaperCapsuleStatus, PaperCheck, PaperFinding, PaperInput,
-    PaperItem, PaperItemInput, PaperItemKind, PaperLevel, PaperPolicy, PaperRerun,
-    PaperRerunOutput, PaperRerunStatus, PaperRow, PaperSource, PaperSourceChoice, PaperSourceKind,
-    PaperVersion, PaperVersionState,
+    Paper, PaperAudience, PaperCapsule, PaperCapsuleStatus, PaperCapture, PaperCheck, PaperDrift,
+    PaperFinding, PaperInput, PaperItem, PaperItemInput, PaperItemKind, PaperLevel, PaperLineage,
+    PaperLineageQuality, PaperPolicy, PaperRerun, PaperRerunOutput, PaperRerunStatus, PaperRow,
+    PaperSelection, PaperSource, PaperSourceChoice, PaperSourceKind, PaperVersion,
+    PaperVersionState,
 };
 pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
 pub use crate::plugins::PluginRow;
