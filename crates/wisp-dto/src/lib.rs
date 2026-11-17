@@ -6058,6 +6058,8 @@ mod research_journey;
 pub use research_journey::*;
 mod project_memos;
 pub use project_memos::*;
+mod project_database_recovery;
+pub use project_database_recovery::*;
 mod automation;
 pub use automation::*;
 mod mandate;

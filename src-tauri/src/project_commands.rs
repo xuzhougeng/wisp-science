@@ -496,10 +496,64 @@ pub(super) async fn open_project(
     id: String,
 ) -> Result<ProjectSummary, String> {
     super::project_sync::adopt_newer_folder_version(&state, &id).await;
-    let (name, ws) = set_active_project(state.inner(), window.label(), &id).await?;
+    let (name, ws) = enter_project(state.inner(), window.label(), &id).await?;
     apply_app_window_title(&window, Some(&name));
     let _ = state.store.create_project(&id, &name, &ws).await; // touch updated_at → sorts to top
     Ok(build_project_summary(&state, &id).await)
+}
+
+/// The one-shot errors `wisp_store` returns after it replaced a damaged project
+/// database. The outcome is also recorded durably, so callers that can retry
+/// rely on that record for the notice.
+pub(super) fn is_database_recovery_error(error: &str) -> bool {
+    ["project_database_restored:", "project_database_rebuilt:"]
+        .iter()
+        .any(|prefix| error.contains(prefix))
+}
+
+/// An explicit entry into a project. When the store has just replaced a
+/// damaged database it returns a one-shot error and records the outcome in the
+/// application database (#1635); the project opens on the next attempt, so
+/// enter it then and leave the recorded outcome as the user's one notice.
+pub(super) async fn enter_project(
+    state: &AppState,
+    label: &str,
+    id: &str,
+) -> Result<(String, String), String> {
+    match set_active_project(state, label, id).await {
+        Err(error) if is_database_recovery_error(&error) => {
+            set_active_project(state, label, id).await
+        }
+        result => result,
+    }
+}
+
+/// Recovery outcomes the window's project has not acknowledged yet (#1635).
+#[tauri::command]
+pub(super) async fn list_project_database_recoveries(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+) -> Result<Vec<wisp_dto::ProjectDatabaseRecovery>, String> {
+    let project = state.require_active(window.label())?;
+    state
+        .store
+        .pending_project_database_recoveries(&project.id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(super) async fn acknowledge_project_database_recovery(
+    state: State<'_, AppState>,
+    window: crate::workspace_surface::WorkspaceSurface,
+    id: i64,
+) -> Result<bool, String> {
+    let project = state.require_active(window.label())?;
+    state
+        .store
+        .acknowledge_project_database_recovery(&project.id, id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Project ids that currently have their own window, persisted so the set can be
@@ -686,7 +740,7 @@ pub(super) async fn spawn_project_window_with_label(
     let label = label.to_string();
     // Pre-set this window's active project so its first commands resolve correctly
     // even before the window's frontend calls open_project.
-    let (name, _) = set_active_project(state, &label, id).await?;
+    let (name, _) = enter_project(state, &label, id).await?;
     let url = tauri::WebviewUrl::App(project_window_url(id, session).into());
     let mut builder = tauri::WebviewWindowBuilder::new(app, &label, url)
         .title(app_window_title(Some(&name)))
@@ -1210,12 +1264,27 @@ mod tests {
     use wisp_store::Store;
 
     use super::{
-        app_window_title, blank_window_url, cascaded_window_position, load_window_active_projects,
-        next_blank_window_label, read_project_agent_context, remember_window_project,
-        restored_window_projects, reusable_project_window, same_workspace_path,
-        startup_main_project_id, update_persisted_windows, validate_project_deletion,
-        write_project_agent_context, APP_WINDOW_TITLE,
+        app_window_title, blank_window_url, cascaded_window_position, is_database_recovery_error,
+        load_window_active_projects, next_blank_window_label, read_project_agent_context,
+        remember_window_project, restored_window_projects, reusable_project_window,
+        same_workspace_path, startup_main_project_id, update_persisted_windows,
+        validate_project_deletion, write_project_agent_context, APP_WINDOW_TITLE,
     };
+
+    #[test]
+    fn only_the_store_recovery_errors_count_as_a_completed_recovery() {
+        assert!(is_database_recovery_error(
+            "project_database_restored:project-p.20261024-010203.daily.sqlite:C:\\study\\.wisp\\project.sqlite.corrupt-1"
+        ));
+        assert!(is_database_recovery_error(
+            "project_database_rebuilt:/w/.wisp/project.sqlite.corrupt-1"
+        ));
+        // A failed recovery keeps the project closed and must not be retried.
+        assert!(!is_database_recovery_error(
+            "Project database is damaged; it was moved to /w/.wisp/project.sqlite.corrupt-1 and no replacement could be made"
+        ));
+        assert!(!is_database_recovery_error("Project not found"));
+    }
 
     #[test]
     fn opening_a_conversation_reuses_any_window_already_showing_its_project() {
@@ -1405,12 +1474,25 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.contains("project_database_rebuilt:"), "{error}");
+        assert!(is_database_recovery_error(&error), "{error}");
         let damaged: Vec<std::path::PathBuf> = std::fs::read_dir(database.parent().unwrap())
             .unwrap()
             .map(|entry| entry.unwrap().path())
             .filter(|path| path.to_string_lossy().contains(".corrupt-"))
             .collect();
         assert_eq!(damaged.len(), 1, "{damaged:?}");
+        // A deletion check is not an explicit open, yet the outcome waits for
+        // the next time the project is entered (#1635).
+        let pending = store
+            .pending_project_database_recoveries("p")
+            .await
+            .unwrap();
+        assert_eq!(pending.len(), 1, "{pending:?}");
+        assert_eq!(
+            pending[0].kind,
+            wisp_dto::ProjectDatabaseRecoveryKind::Rebuilt
+        );
+        assert_eq!(std::path::Path::new(&pending[0].damaged_path), damaged[0]);
         assert_eq!(
             std::fs::read(&damaged[0]).unwrap(),
             b"not a SQLite database"

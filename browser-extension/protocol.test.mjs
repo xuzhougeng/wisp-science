@@ -10,10 +10,11 @@ const source = fs.readFileSync(path.join(dir, "protocol.js"), "utf8");
 const root = {};
 vm.runInNewContext(source, { self: root, globalThis: root });
 
-test("handshake reports protocol 2 and extension 0.5.0", () => {
+test("handshake reports protocol 2 and extension 0.5.1", () => {
   const payload = root.handshakePayload([{ id: 1, url: "https://example.com" }], false);
   assert.equal(payload.protocol_version, 2);
-  assert.equal(payload.extension_version, "0.5.0");
+  assert.equal(payload.extension_version, "0.5.1");
+  assert.equal(payload.tab_ids, undefined, "no live-id list is invented");
   assert.ok(payload.capabilities.includes("tab_scope"));
   assert.equal(payload.browser_instance, undefined, "unknown instance is omitted, not invented");
   assert.ok(payload.capabilities.includes("article_scan"));
@@ -28,6 +29,17 @@ test("handshake reports protocol 2 and extension 0.5.0", () => {
 test("handshake carries the browser instance id when known", () => {
   const payload = root.handshakePayload([], false, "inst-1");
   assert.equal(payload.browser_instance, "inst-1");
+});
+
+test("handshake lists every live tab id, including tabs not scriptable yet", () => {
+  const payload = root.handshakePayload(
+    [{ id: 1, url: "https://example.com" }],
+    false,
+    "inst-1",
+    [1, 2, "3", null]
+  );
+  assert.equal(payload.tabs.length, 1);
+  assert.deepEqual(payload.tab_ids, [1, 2]);
 });
 
 test("parseIncomingRequest keeps v1 code requests", () => {

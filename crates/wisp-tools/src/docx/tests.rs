@@ -8,7 +8,7 @@ const DATE: &str = "2026-11-05T00:00:00Z";
 
 fn review_fixture() -> Vec<u8> {
     fixture(
-        r#"<w:p><w:del w:id="1" w:author="Wisp" w:date="2026-11-05T00:00:00Z"><w:r><w:delText>old</w:delText></w:r></w:del><w:ins w:id="2" w:author="Wisp" w:date="2026-11-05T00:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins></w:p><w:p><w:del w:id="3" w:author="Wisp"><w:r><w:delText>delete</w:delText></w:r></w:del></w:p><w:p><w:ins w:id="4" w:author="Human"><w:r><w:t>insert</w:t></w:r></w:ins></w:p><w:tbl><w:tr><w:tc><w:p><w:del w:id="5"><w:r><w:delText>table</w:delText></w:r></w:del></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:p><w:del w:id="1" w:author="Wisp" w:date="2026-11-05T00:00:00Z"><w:r><w:delText>old</w:delText></w:r></w:del><w:ins w:id="2" w:author="Wisp" w:date="2026-11-05T00:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins></w:p><w:p><w:del w:id="3" w:author="Wisp"><w:r><w:delText>delete</w:delText></w:r></w:del></w:p><w:p><w:ins w:id="4" w:author="Human"><w:r><w:t>insert</w:t></w:r></w:ins></w:p><w:sdt><w:sdtContent><w:p><w:del w:id="5"><w:r><w:delText>control</w:delText></w:r></w:del></w:p></w:sdtContent></w:sdt>"#,
     )
 }
 
@@ -384,13 +384,276 @@ fn complex_paragraphs_are_readable_but_cannot_be_changed() {
         r#"<w:p><w:r><w:footnoteReference w:id="1"/><w:t>text</w:t></w:r></w:p>"#,
         r#"<w:p><w:r><w:rPr><w:rPrChange w:id="1"/></w:rPr><w:t>text</w:t></w:r></w:p>"#,
         r#"<w:p><w:pPr><w:sectPr/></w:pPr><w:r><w:t>text</w:t></w:r></w:p>"#,
-        r#"<w:tbl><w:tr><w:tc><w:p><w:r><w:t>text</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:sdt><w:sdtContent><w:p><w:r><w:t>text</w:t></w:r></w:p></w:sdtContent></w:sdt>"#,
+        r#"<w:tbl><w:tr><w:trPr><w:ins w:id="1" w:author="A"/></w:trPr><w:tc><w:p><w:r><w:t>text</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
     ] {
         let source = fixture(body);
         let view = inspect(&source, 0, 10).unwrap();
         assert_eq!(view["paragraphs"][0]["editable"], false, "{body}");
         assert_eq!(view["paragraphs"][0]["text"], "text");
         assert!(change(&source, "p1", "text", "new").is_err());
+    }
+}
+
+// p1 body, p2-p3 row 1, p4 cell with a nested table (p5) and a trailing empty
+// paragraph (p6), p7 a cell with a single paragraph, p8 body.
+const TABLE: &str = r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol/><w:gridCol/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr><w:p><w:r><w:t>Reagent</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>10 mM</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>NaCl</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>nested</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/></w:tc><w:tc><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>remove me</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>Outro</w:t></w:r></w:p>"#;
+
+fn paragraph_texts(bytes: &[u8]) -> Vec<String> {
+    let xml = Package::open(bytes).unwrap().xml;
+    let doc = parse(&xml).unwrap();
+    check_cells(&doc).unwrap();
+    doc.descendants()
+        .filter(|n| is_word(*n, "p"))
+        .map(paragraph_text)
+        .collect()
+}
+
+#[test]
+fn table_cell_paragraphs_are_editable_with_unchanged_ids_and_locations() {
+    let source = fixture(TABLE);
+    let view = inspect(&source, 0, 100).unwrap();
+    let rows = view["paragraphs"].as_array().unwrap();
+    assert_eq!(view["total_paragraphs"], 8);
+    let expected = [
+        ("p1", "Intro", "body"),
+        ("p2", "Reagent", "table 1 row 1 cell 1"),
+        ("p3", "10 mM", "table 1 row 1 cell 2"),
+        ("p4", "NaCl", "table 1 row 2 cell 1"),
+        (
+            "p5",
+            "nested",
+            "table 1 row 2 cell 1 > table 1 row 1 cell 1",
+        ),
+        ("p6", "", "table 1 row 2 cell 1"),
+        ("p7", "remove me", "table 1 row 2 cell 2"),
+        ("p8", "Outro", "body"),
+    ];
+    for (row, (id, text, location)) in rows.iter().zip(expected) {
+        assert_eq!(row["paragraph_id"], id);
+        assert_eq!(row["text"], text);
+        assert_eq!(row["location"], location, "{id}");
+        assert_eq!(row["editable"], true, "{id}: {}", row["reason"]);
+    }
+    // Body paragraph IDs still count table paragraphs in document order.
+    assert!(change(&source, "p8", "Outro", "Summary").is_ok());
+    assert!(change(&source, "p2", "Outro", "Summary").is_err());
+}
+
+#[test]
+fn table_cell_edits_write_tracked_changes_with_cell_formatting_and_review_them() {
+    let source = fixture(TABLE);
+    for (paragraph, depth, old, new, before, after) in [
+        ("p3", 1, "10 mM", "20 mM", "10 mM", "20 mM"),
+        ("p5", 2, "nested", "nested table", "nested", "nested table"),
+    ] {
+        let (output, _) = change(&source, paragraph, old, new).unwrap();
+        let xml = Package::open(&output).unwrap().xml;
+        assert_eq!(
+            text_view(&xml, false),
+            text_view(&Package::open(&source).unwrap().xml, false)
+        );
+        assert!(text_view(&xml, true).contains(after));
+        let doc = parse(&xml).unwrap();
+        let insertion = doc.descendants().find(|n| is_word(*n, "ins")).unwrap();
+        assert_eq!(
+            table_path(insertion.parent().unwrap()).unwrap().len(),
+            depth
+        );
+        if paragraph == "p3" {
+            assert!(insertion.descendants().any(|n| is_word(n, "b")));
+        }
+        // Reading the output keeps every ID and marks only the edited cell read-only.
+        let reread = inspect(&output, 0, 100).unwrap();
+        for row in reread["paragraphs"].as_array().unwrap() {
+            assert_eq!(row["editable"], row["paragraph_id"] != paragraph);
+        }
+        let view = inspect_revisions(&output).unwrap();
+        assert_eq!(view.unsupported_count, 0);
+        assert_eq!(view.changes.len(), 1);
+        assert_eq!(view.changes[0].paragraph_id, paragraph);
+        let selection = DocxReviewSelection::Change(view.changes[0].id.clone());
+        for (action, text) in [
+            (DocxReviewAction::Accept, after),
+            (DocxReviewAction::Reject, before),
+        ] {
+            let resolved =
+                resolve_revisions(&output, &view.source_sha256, &selection, action).unwrap();
+            assert!(inspect_revisions(&resolved).unwrap().changes.is_empty());
+            let index = paragraph[1..].parse::<usize>().unwrap() - 1;
+            assert_eq!(paragraph_texts(&resolved)[index], text);
+            assert_eq!(paragraph_texts(&resolved).len(), 8);
+        }
+    }
+}
+
+#[test]
+fn deleting_a_cells_only_paragraph_text_keeps_the_paragraph() {
+    let source = fixture(TABLE);
+    let (output, summary) = change(&source, "p7", "remove me", "").unwrap();
+    assert_eq!(summary["revisions"][0]["kind"], "del");
+    let view = inspect_revisions(&output).unwrap();
+    assert_eq!(view.changes[0].kind, DocxChangeKind::Deletion);
+    assert_eq!(view.changes[0].paragraph_id, "p7");
+    for selection in [
+        DocxReviewSelection::Change(view.changes[0].id.clone()),
+        DocxReviewSelection::Kind(DocxChangeKind::Deletion),
+    ] {
+        let accepted = resolve_revisions(
+            &output,
+            &view.source_sha256,
+            &selection,
+            DocxReviewAction::Accept,
+        )
+        .unwrap();
+        // The cell keeps its paragraph and paragraph properties, now empty.
+        let texts = paragraph_texts(&accepted);
+        assert_eq!(texts.len(), 8);
+        assert_eq!(texts[6], "");
+        let xml = Package::open(&accepted).unwrap().xml;
+        assert!(xml.contains(r#"<w:tc><w:p><w:pPr><w:jc w:val="center"/></w:pPr></w:p></w:tc>"#));
+        let reread = inspect(&accepted, 6, 1).unwrap();
+        assert_eq!(reread["paragraphs"][0]["location"], "table 1 row 2 cell 2");
+        assert_eq!(reread["paragraphs"][0]["editable"], true);
+    }
+    let rejected = resolve_revisions(
+        &output,
+        &view.source_sha256,
+        &DocxReviewSelection::Change(view.changes[0].id.clone()),
+        DocxReviewAction::Reject,
+    )
+    .unwrap();
+    assert_eq!(paragraph_texts(&rejected)[6], "remove me");
+    // The written-package guard refuses a cell without any paragraph.
+    let empty = format!(
+        r#"<w:document xmlns:w="{W}"><w:body><w:tbl><w:tr><w:tc><w:tcPr/></w:tc></w:tr></w:tbl></w:body></w:document>"#
+    );
+    assert!(check_cells(&parse(&empty).unwrap()).is_err());
+}
+
+#[test]
+fn accept_all_resolves_body_and_table_revisions_by_kind() {
+    let source = fixture(TABLE);
+    let (step, _) = change(&source, "p3", "10 mM", "20 mM").unwrap();
+    let (step, _) = change(&step, "p7", "remove me", "").unwrap();
+    let (step, _) = change(&step, "p1", "Intro", "Introduction").unwrap();
+    let view = inspect_revisions(&step).unwrap();
+    assert_eq!(
+        view.changes
+            .iter()
+            .map(|c| (c.paragraph_id.as_str(), c.kind))
+            .collect::<Vec<_>>(),
+        [
+            ("p1", DocxChangeKind::Insertion),
+            ("p3", DocxChangeKind::Rewrite),
+            ("p7", DocxChangeKind::Deletion)
+        ]
+    );
+    let rewrites = resolve_revisions(
+        &step,
+        &view.source_sha256,
+        &DocxReviewSelection::Kind(DocxChangeKind::Rewrite),
+        DocxReviewAction::Accept,
+    )
+    .unwrap();
+    assert_eq!(paragraph_texts(&rewrites)[2], "20 mM");
+    assert_eq!(
+        inspect_revisions(&rewrites)
+            .unwrap()
+            .changes
+            .iter()
+            .map(|c| (c.paragraph_id.as_str(), c.kind))
+            .collect::<Vec<_>>(),
+        [
+            ("p1", DocxChangeKind::Insertion),
+            ("p7", DocxChangeKind::Deletion)
+        ]
+    );
+    let deletions = resolve_revisions(
+        &rewrites,
+        &sha256(&rewrites),
+        &DocxReviewSelection::Kind(DocxChangeKind::Deletion),
+        DocxReviewAction::Accept,
+    )
+    .unwrap();
+    let remaining = inspect_revisions(&deletions).unwrap();
+    assert_eq!(remaining.changes.len(), 1);
+    assert_eq!(remaining.changes[0].kind, DocxChangeKind::Insertion);
+    let texts = paragraph_texts(&deletions);
+    assert_eq!(texts.len(), 8);
+    assert_eq!(texts[2], "20 mM");
+    assert_eq!(texts[6], "");
+}
+
+#[test]
+fn structural_table_revisions_and_other_containers_stay_refused() {
+    let cell = r#"<w:p><w:r><w:t>text</w:t></w:r><w:del w:id="7" w:author="A"><w:r><w:delText>gone</w:delText></w:r></w:del></w:p>"#;
+    for body in [
+        format!(
+            r#"<w:tbl><w:tr><w:trPr><w:ins w:id="1" w:author="A"/></w:trPr><w:tc>{cell}</w:tc></w:tr></w:tbl>"#
+        ),
+        format!(
+            r#"<w:tbl><w:tr><w:trPr><w:del w:id="1" w:author="A"/></w:trPr><w:tc>{cell}</w:tc></w:tr></w:tbl>"#
+        ),
+        format!(
+            r#"<w:tbl><w:tr><w:tc><w:tcPr><w:cellIns w:id="1" w:author="A"/></w:tcPr>{cell}</w:tc></w:tr></w:tbl>"#
+        ),
+        format!(
+            r#"<w:tbl><w:tr><w:tc><w:tcPr><w:cellDel w:id="1" w:author="A"/></w:tcPr>{cell}</w:tc></w:tr></w:tbl>"#
+        ),
+        format!(
+            r#"<w:tbl><w:tr><w:tc><w:tcPr><w:cellMerge w:id="1" w:author="A" w:vMerge="cont"/></w:tcPr>{cell}</w:tc></w:tr></w:tbl>"#
+        ),
+        format!(
+            r#"<w:tbl><w:tr><w:tc><w:tcPr><w:tcPrChange w:id="1" w:author="A"><w:tcPr/></w:tcPrChange></w:tcPr>{cell}</w:tc></w:tr></w:tbl>"#
+        ),
+        format!(
+            r#"<w:tbl><w:tblPr><w:tblPrChange w:id="1" w:author="A"><w:tblPr/></w:tblPrChange></w:tblPr><w:tr><w:tc>{cell}</w:tc></w:tr></w:tbl>"#
+        ),
+        // A structural change on the outer row also covers its nested tables.
+        format!(
+            r#"<w:tbl><w:tr><w:trPr><w:ins w:id="1" w:author="A"/></w:trPr><w:tc><w:tbl><w:tr><w:tc>{cell}</w:tc></w:tr></w:tbl><w:p/></w:tc></w:tr></w:tbl>"#
+        ),
+    ] {
+        let source = fixture(&body);
+        let view = inspect(&source, 0, 10).unwrap();
+        assert_eq!(view["paragraphs"][0]["editable"], false, "{body}");
+        assert!(view["paragraphs"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("structural"));
+        assert!(change(&source, "p1", "text", "new").is_err());
+        let review = inspect_revisions(&source).unwrap();
+        assert!(review.changes.is_empty(), "{body}");
+        assert!(review.unsupported_count >= 2, "{body}");
+        assert!(resolve_revisions(
+            &source,
+            &review.source_sha256,
+            &DocxReviewSelection::Kind(DocxChangeKind::Deletion),
+            DocxReviewAction::Accept,
+        )
+        .is_err());
+    }
+    for body in [
+        // Text boxes, including a table inside one, and content controls.
+        r#"<w:p><w:r><w:pict><w:txbxContent><w:p><w:r><w:t>text</w:t></w:r></w:p></w:txbxContent></w:pict></w:r></w:p>"#,
+        r#"<w:p><w:r><w:pict><w:txbxContent><w:tbl><w:tr><w:tc><w:p><w:r><w:t>text</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:txbxContent></w:pict></w:r></w:p>"#,
+        r#"<w:tbl><w:tr><w:tc><w:sdt><w:sdtContent><w:p><w:r><w:t>text</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p/></w:tc></w:tr></w:tbl>"#,
+    ] {
+        let source = fixture(body);
+        let view = inspect(&source, 0, 10).unwrap();
+        // The anchoring body paragraph also reports the box text; take the inner one.
+        let row = view["paragraphs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["text"] == "text")
+            .last()
+            .unwrap();
+        assert_eq!(row["editable"], false, "{body}");
+        assert_eq!(row["location"], Value::Null, "{body}");
+        let id = row["paragraph_id"].as_str().unwrap();
+        assert!(change(&source, id, "text", "new").is_err());
     }
 }
 

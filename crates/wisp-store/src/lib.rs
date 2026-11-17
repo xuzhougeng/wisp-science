@@ -28,6 +28,7 @@ mod plugins;
 mod project_chat_search;
 mod project_memos;
 mod project_privacy;
+mod project_recoveries;
 mod project_snapshots;
 mod project_state_revisions;
 mod project_storage;
@@ -220,6 +221,9 @@ const SESSION_TIMERS_MIGRATION: &str = "0063_session_timers";
 const SERVER_TURNS_MIGRATION: &str = "0066_server_turns";
 const SESSION_SUBAGENT_MODEL_MIGRATION: &str = "0067_session_subagent_model";
 const SCHEDULE_HOST_MIGRATION: &str = "0069_schedule_host";
+const PROJECT_DATABASE_RECOVERIES_MIGRATION: &str = "0070_project_database_recoveries";
+const PROJECT_DATABASE_RECOVERIES_MIGRATION_SQL: &str =
+    include_str!("../migrations/0070_project_database_recoveries.sql");
 
 #[derive(Clone)]
 pub struct Store {
@@ -839,6 +843,15 @@ impl Store {
         if !Self::migration_applied(pool, SCHEDULE_HOST_MIGRATION).await? {
             Self::add_columns_if_missing(pool, "schedules", &[("host", "TEXT")]).await?;
             Self::record_migration(pool, SCHEDULE_HOST_MIGRATION).await?;
+        }
+        // Recovery outcomes live in the application database (#1635); the
+        // table is created in every database the store migrates, but only the
+        // application database's copy is ever written.
+        if !Self::migration_applied(pool, PROJECT_DATABASE_RECOVERIES_MIGRATION).await? {
+            sqlx::raw_sql(PROJECT_DATABASE_RECOVERIES_MIGRATION_SQL)
+                .execute(pool)
+                .await?;
+            Self::record_migration(pool, PROJECT_DATABASE_RECOVERIES_MIGRATION).await?;
         }
         if !Self::migration_applied(pool, ARTIFACT_SOURCE_DISCARDED_MIGRATION).await? {
             Self::add_columns_if_missing(

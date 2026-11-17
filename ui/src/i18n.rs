@@ -2806,6 +2806,16 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "browser.needs_human.still") => Some("The challenge is still on the page. Complete it in the browser tab, then try again."),
         (Locale::En, "browser.needs_human.error") => Some("Could not re-check the tab. The browser extension may be disconnected."),
         (Locale::En, "browser.needs_human.continue") => Some("I completed the human verification in the browser. Continue."),
+        (Locale::En, "dbrecovery.restored.eyebrow") => Some("Restored from a backup copy"),
+        (Locale::En, "dbrecovery.restored.title") => Some("This project's database was damaged and has been replaced by an earlier copy"),
+        (Locale::En, "dbrecovery.restored.body") => Some("On {time} Wisp found the database damaged and restored the backup copy {copy}. Conversations and records made after that copy was taken are not in it. Workspace files and artifacts were not touched."),
+        (Locale::En, "dbrecovery.rebuilt.eyebrow") => Some("Rebuilt empty: history not recovered"),
+        (Locale::En, "dbrecovery.rebuilt.title") => Some("This project's database was damaged and no usable backup copy existed"),
+        (Locale::En, "dbrecovery.rebuilt.body") => Some("On {time} Wisp replaced it with an empty database. This project's conversations, runs and other records are no longer listed; they may still be salvageable from the damaged file. Workspace files and artifacts were not touched."),
+        (Locale::En, "dbrecovery.damaged_label") => Some("Damaged file kept at"),
+        (Locale::En, "dbrecovery.backups_label") => Some("Backup copies folder"),
+        (Locale::En, "dbrecovery.guide") => Some("Recovery guide"),
+        (Locale::En, "dbrecovery.dismiss") => Some("Dismiss recovery notice"),
         (Locale::En, "browser.offline.eyebrow") => Some("No live retrieval"),
         (Locale::En, "browser.offline.title") => Some("This answer has no live web results"),
         (Locale::En, "browser.offline.body") => Some("The browser extension is not connected. This reply is based only on the model's existing knowledge."),
@@ -6391,6 +6401,16 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "browser.needs_human.still") => Some("页面上仍有验证。请在浏览器标签中完成后再试。"),
         (Locale::Zh, "browser.needs_human.error") => Some("无法复查该标签。浏览器扩展可能已断开。"),
         (Locale::Zh, "browser.needs_human.continue") => Some("我已在浏览器中完成人机验证，请继续。"),
+        (Locale::Zh, "dbrecovery.restored.eyebrow") => Some("已从备份副本恢复"),
+        (Locale::Zh, "dbrecovery.restored.title") => Some("该项目的数据库曾损坏，已用较早的备份副本替换"),
+        (Locale::Zh, "dbrecovery.restored.body") => Some("{time} Wisp 发现数据库已损坏，已用备份副本 {copy} 恢复。该副本之后的会话和记录不在数据库里。工作区文件和产物未受影响。"),
+        (Locale::Zh, "dbrecovery.rebuilt.eyebrow") => Some("已重建为空库：历史未能恢复"),
+        (Locale::Zh, "dbrecovery.rebuilt.title") => Some("该项目的数据库曾损坏，且没有可用的备份副本"),
+        (Locale::Zh, "dbrecovery.rebuilt.body") => Some("{time} Wisp 用空数据库替换了它。该项目的会话、Run 和其他记录不再列出，可能仍能从损坏的文件中手动找回。工作区文件和产物未受影响。"),
+        (Locale::Zh, "dbrecovery.damaged_label") => Some("损坏的文件保留在"),
+        (Locale::Zh, "dbrecovery.backups_label") => Some("备份副本目录"),
+        (Locale::Zh, "dbrecovery.guide") => Some("恢复说明"),
+        (Locale::Zh, "dbrecovery.dismiss") => Some("关闭恢复提示"),
         (Locale::Zh, "browser.offline.eyebrow") => Some("未联网检索"),
         (Locale::Zh, "browser.offline.title") => Some("本次回答未包含任何联网检索结果"),
         (Locale::Zh, "browser.offline.body") => Some("浏览器扩展未连接。该回答仅基于模型已有知识，不是实时检索结果。"),
@@ -8978,6 +8998,35 @@ mod api_error_hint_tests {
                 lookup(Locale::En, &key).is_some() && lookup(Locale::Zh, &key).is_some(),
                 "{key}"
             );
+        }
+    }
+
+    #[test]
+    fn database_recovery_notice_strings_exist_and_differ_by_outcome() {
+        for key in [
+            "dbrecovery.restored.eyebrow",
+            "dbrecovery.restored.title",
+            "dbrecovery.restored.body",
+            "dbrecovery.rebuilt.eyebrow",
+            "dbrecovery.rebuilt.title",
+            "dbrecovery.rebuilt.body",
+            "dbrecovery.damaged_label",
+            "dbrecovery.backups_label",
+            "dbrecovery.guide",
+            "dbrecovery.dismiss",
+        ] {
+            assert!(
+                lookup(Locale::En, key).is_some() && lookup(Locale::Zh, key).is_some(),
+                "{key}"
+            );
+        }
+        for locale in [Locale::En, Locale::Zh] {
+            assert_ne!(
+                t(locale, "dbrecovery.restored.title"),
+                t(locale, "dbrecovery.rebuilt.title")
+            );
+            assert!(t(locale, "dbrecovery.restored.body").contains("{copy}"));
+            assert!(!t(locale, "dbrecovery.rebuilt.body").contains("{copy}"));
         }
     }
 

@@ -158,7 +158,7 @@ impl<'a> Package<'a> {
         if xml.len() as u64 > MAX_XML {
             return Err("Edited document XML exceeds 8 MiB".into());
         }
-        parse(xml)?;
+        check_cells(&parse(xml)?)?;
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
         for i in 0..self.archive.len() {
             let entry = self.archive.by_index(i).map_err(err)?;
@@ -264,10 +264,100 @@ fn protected_ranges(doc: &Document<'_>) -> Vec<Range<usize>> {
     ranges
 }
 
-fn editable(p: Node<'_, '_>, protected: &[Range<usize>]) -> Result<()> {
-    if !p.parent().is_some_and(|n| is_word(n, "body")) {
-        return Err("Only top-level body paragraphs are editable".into());
+/// Tracked-change markers, including whole-cell insertions, deletions and merges
+/// that only appear inside table cell properties.
+fn tracked(n: Node<'_, '_>) -> bool {
+    n.tag_name().namespace() == Some(W)
+        && (matches!(
+            n.tag_name().name(),
+            "ins" | "del" | "moveFrom" | "moveTo" | "cellIns" | "cellDel" | "cellMerge"
+        ) || n.tag_name().name().ends_with("Change"))
+}
+
+/// Table coordinates (1-based table, row, cell) from the outermost table to the
+/// paragraph's own cell; empty for a top-level body paragraph. None for any
+/// other container (text boxes, content controls, custom XML, ...). Tables are
+/// numbered among their siblings: in the body, or in the enclosing cell.
+fn table_path(p: Node<'_, '_>) -> Option<Vec<[usize; 3]>> {
+    fn position(n: Node<'_, '_>, name: &str) -> usize {
+        1 + n
+            .prev_siblings()
+            .skip(1)
+            .filter(|s| is_word(*s, name))
+            .count()
     }
+    let mut path = Vec::new();
+    let mut node = p;
+    loop {
+        let parent = node.parent()?;
+        if is_word(parent, "body") {
+            path.reverse();
+            return Some(path);
+        }
+        let cell = Some(parent).filter(|n| is_word(*n, "tc"))?;
+        let row = cell.parent().filter(|n| is_word(*n, "tr"))?;
+        let table = row.parent().filter(|n| is_word(*n, "tbl"))?;
+        path.push([
+            position(table, "tbl"),
+            position(row, "tr"),
+            position(cell, "tc"),
+        ]);
+        node = table;
+    }
+}
+
+fn location(p: Node<'_, '_>) -> Option<String> {
+    let path = table_path(p)?;
+    if path.is_empty() {
+        return Some("body".into());
+    }
+    Some(
+        path.iter()
+            .map(|[t, r, c]| format!("table {t} row {r} cell {c}"))
+            .collect::<Vec<_>>()
+            .join(" > "),
+    )
+}
+
+/// Top-level body paragraphs and ordinary table-cell paragraphs (nested tables
+/// included) may carry inline text revisions. Rows, cells and tables with
+/// structural tracked changes are left to Word.
+fn container(p: Node<'_, '_>) -> Result<()> {
+    if table_path(p).is_none() {
+        return Err("Only body and table-cell paragraphs are editable; text boxes, content controls and other containers are read-only".into());
+    }
+    let structural = p
+        .ancestors()
+        .filter(|a| is_word(*a, "tc") || is_word(*a, "tr") || is_word(*a, "tbl"))
+        .flat_map(|a| a.children())
+        .filter(|n| {
+            ["tblPr", "tblGrid", "tblPrEx", "trPr", "tcPr"]
+                .iter()
+                .any(|name| is_word(*n, name))
+        })
+        .any(|props| props.descendants().any(tracked));
+    if structural {
+        return Err("Table row or cell has structural tracked changes (inserted, deleted or merged rows/cells, or table property changes); review them in Word first".into());
+    }
+    Ok(())
+}
+
+// Word reports a cell without a paragraph as corrupt. Text revisions never
+// remove paragraphs, but check the written XML rather than rely on that.
+// Descendants, not children: a cell may wrap its paragraph in a content control.
+fn check_cells(doc: &Document<'_>) -> Result<()> {
+    if doc
+        .descendants()
+        .filter(|n| is_word(*n, "tc"))
+        .any(|tc| !tc.descendants().any(|n| is_word(n, "p")))
+    {
+        return Err("Edit would leave a table cell without a paragraph".into());
+    }
+    Ok(())
+}
+
+fn editable(p: Node<'_, '_>, protected: &[Range<usize>]) -> Result<()> {
+    container(p)?;
     if protected
         .iter()
         .any(|r| r.start < p.range().end && p.range().start < r.end)
@@ -323,7 +413,7 @@ fn inspect(bytes: &[u8], offset: usize, limit: usize) -> Result<Value> {
         let text = paragraph_text(*p);
         let reason = editable(*p, &protected).err();
         let row = json!({"paragraph_id": format!("p{}", index + 1), "text": text,
-            "editable": reason.is_none(), "reason": reason});
+            "location": location(*p), "editable": reason.is_none(), "reason": reason});
         budget += row.to_string().len();
         if budget > MAX_RESULT {
             if rows.is_empty() {
@@ -337,7 +427,7 @@ fn inspect(bytes: &[u8], offset: usize, limit: usize) -> Result<Value> {
     Ok(json!({"source_sha256": sha256(bytes), "paragraphs": rows,
         "total_paragraphs": paragraphs.len(),
         "next_offset": (next < paragraphs.len()).then_some(next),
-        "view": "current text (insertions included, deleted text omitted); complex paragraphs are read-only"}))
+        "view": "current text (insertions included, deleted text omitted); location is body, a table cell (1-based table/row/cell, nested tables joined by >) or null for other containers; complex paragraphs are read-only"}))
 }
 
 fn escape(text: &str) -> String {
@@ -566,7 +656,7 @@ impl Tool for ReadDocxTool {
     }
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(self.name(),
-            "Read DOCX paragraphs with snapshot-bound IDs, editable flags and source_sha256 for suggest_docx_edit. No Word installation needed. Use offset/limit to page; complex paragraphs are read-only.",
+            "Read DOCX paragraphs in document order, including paragraphs inside table cells, with snapshot-bound IDs, location (body or table/row/cell), editable flags and source_sha256 for suggest_docx_edit. No Word installation needed. Use offset/limit to page; complex paragraphs are read-only.",
             json!({"type":"object", "properties": {
                 "path":{"type":"string"}, "offset":{"type":"integer", "minimum":0},
                 "limit":{"type":"integer", "minimum":1, "maximum":100}
@@ -612,7 +702,7 @@ impl Tool for SuggestDocxEditTool {
     }
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(self.name(),
-            "Propose a text edit as native Word tracked changes in a NEW .docx output; never overwrites source or existing output. First use read_docx for paragraph_id/source_sha256. old must match once, new is single-paragraph text (empty means delete). Common edges stay unchanged; inserted text inherits the first affected run's formatting. Only plain top-level body paragraphs are editable. Review the output in Word; reread each output before further edits. Existing revisions and complex paragraphs cannot be edited by this prototype.",
+            "Propose a text edit as native Word tracked changes in a NEW .docx output; never overwrites source or existing output. First use read_docx for paragraph_id/source_sha256. old must match once, new is single-paragraph text (empty means delete). Common edges stay unchanged; inserted text inherits the first affected run's formatting. Plain body paragraphs and plain paragraphs inside table cells are editable; one edit stays within one paragraph, and table rows/cells cannot be added or removed. Review the output in Word; reread each output before further edits. Existing revisions and complex paragraphs cannot be edited by this prototype.",
             json!({"type":"object", "properties": {
                 "path":{"type":"string", "description":"Source DOCX"},
                 "output_path":{"type":"string", "description":"New DOCX path inside project; parent directory must exist"},

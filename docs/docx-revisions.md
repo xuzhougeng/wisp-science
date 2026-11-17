@@ -17,7 +17,11 @@ Ask the agent to read the document with `read_docx` and propose changes with
 
 `read_docx` takes `path`, optional zero-based `offset` (default 0), and `limit`
 (default 50, maximum 100). Its JSON result includes `source_sha256`, numbered
-`paragraph_id` values, paragraph text, editability/reason, and `next_offset`.
+`paragraph_id` values, paragraph text, `location`, editability/reason, and
+`next_offset`. Paragraphs are listed in document order, including those inside
+table cells. `location` is `body`, a table cell such as `table 2 row 3 cell 1`
+(tables counted from 1 in the body, or within the enclosing cell; nested tables
+are joined with ` > `), or `null` for other containers such as text boxes.
 Paragraph IDs are valid only for the accompanying source hash. The read view
 includes pending insertions and omits deleted text; paragraphs containing
 revisions are read-only in this prototype.
@@ -58,8 +62,10 @@ conversion, a persistent edit-group log, or editing an existing pending suggesti
 The agent is instructed to use these two tools whenever it is asked to reword an
 existing `.docx` (polish, rewrite, shorten, translate, delete), instead of
 regenerating the file from a script, overwriting it, or answering with
-before/after text in chat. When the affected paragraphs are not editable, such
-as table cells, it reports that and asks before changing them another way. This
+before/after text in chat. Paragraphs in table cells are revised the same way.
+When the affected paragraphs are not editable, such as text boxes or rows with
+structural tracked changes, it reports that and asks before changing them
+another way. This
 is prompt guidance, not enforcement: a direct overwrite through `shell` or
 `python` still bypasses review.
 
@@ -100,9 +106,14 @@ universal replacement-group ID: unpaired elements stay separate. Bulk actions
 apply to the types shown in the list, across authors, and never include complex
 revisions that Wisp cannot safely resolve. Those remain in the file for Word.
 
-Review is limited to flat text revisions in ordinary top-level body paragraphs.
-Tables, nested revisions, moves, property/formatting changes and protected spans
-are not resolved. Revisions in headers, footers and other package parts are not
+Review is limited to flat text revisions in ordinary top-level body paragraphs
+and in paragraphs inside table cells (nested tables included). Accepting a
+deletion of all of a cell's text leaves the cell's empty paragraph in place, so
+Word never sees a cell without a paragraph. Structural table revisions (inserted
+or deleted rows, inserted, deleted or merged cells, table/row/cell property
+changes), text boxes, content controls, nested revisions, moves,
+property/formatting changes and protected spans are not resolved; they count as
+unsupported and stay in the file for Word. Revisions in headers, footers and other package parts are not
 listed or modified. Up to 1,000 reviewable changes / 1 MiB of changed text can be
 listed. Remote files, artifact references, historical snapshots and read-only
 workspaces support preview only; open the current local file in a writable
@@ -146,8 +157,10 @@ directory. The checked-in sample stays reusable when you work on a copy.
 
 - Transitional `.docx` packages with the standard `word/document.xml` main
   part; legacy `.doc`, Strict OOXML, ODT and RTF are outside this prototype.
-- Ordinary top-level body paragraphs containing plain text runs, including
-  text split across multiple runs and mixed character formatting.
+- Ordinary top-level body paragraphs and paragraphs inside table cells
+  (including nested tables) containing plain text runs, including text split
+  across multiple runs and mixed character formatting. One edit stays inside
+  one paragraph; rows and cells are never added or removed.
 - Deleted fragments retain their original run properties. Inserted text
   inherits the first affected run's properties. This is a defined insertion
   policy, not an attempt to infer formatting for newly written words.
@@ -156,8 +169,11 @@ directory. The checked-in sample stays reusable when you work on a copy.
   pages when Word lays out the document.
 - Paragraphs containing links, existing revisions, formulas, fields, drawings,
   footnote references, section breaks or other complex content are read-only.
-  Table/text-box paragraphs are read-only. Cross-paragraph bookmarks, fields,
-  comment ranges and protected ranges also block edits within their span.
+  Text-box and content-control paragraphs are read-only, and so are cells in a
+  table, row or cell with structural tracked changes (`w:trPr` insertions or
+  deletions, `w:cellIns`, `w:cellDel`, `w:cellMerge`, property changes).
+  Cross-paragraph bookmarks, fields, comment ranges and protected ranges also
+  block edits within their span.
 - The source hash is checked before editing; source bytes are checked again
   before saving. A conflict requires a fresh read. Existing unrelated Word
   revisions are preserved; new main-document annotation IDs avoid collisions.
@@ -169,7 +185,8 @@ directory. The checked-in sample stays reusable when you work on a copy.
 ## Validation
 
 Offline test code covers original/final text projections, Unicode, edits across
-formatted runs, untouched package parts, insertion/deletion, stale versions,
+formatted runs, table-cell and nested-table paragraphs, untouched package
+parts, insertion/deletion, stale versions,
 ambiguous matches, protected content, existing revisions, pagination, source
 preservation, no-overwrite outputs, path restrictions, plan mode and cancellation.
 Tests create their own small packages and do not require Word or a network.

@@ -1,6 +1,6 @@
 # Browser Runtime acceptance
 
-Use a Wisp build that bundles extension **0.5.0**. Load the unpacked extension from `browser_setup.extension_path` before testing.
+Use a Wisp build that bundles extension **0.5.1**. Load the unpacked extension from `browser_setup.extension_path` before testing.
 
 For #1107, test on Windows, macOS, and Linux with automatic launch enabled:
 close daily Chrome, call `browser_setup` with no action, and verify its normal
@@ -13,7 +13,7 @@ action must behave like an omitted action. Existing blank/new-tab pages are neve
 cleaned up by startup; ordinary per-turn cleanup still applies only to recorded
 tool-created tabs.
 
-1. Connect extension 0.2.1 and confirm the app shows current 0.2.1 / bundled 0.5.0, the verified managed path, and the update actions. **Update extension** must return the manual fallback, open the extension page, and clear only after Reload reconnects as 0.5.0. With an extension that advertises `runtime_reload`, the same action must reconnect automatically. `browser_setup` then shows `update_required=false`, `extension_version` 0.5.0, and `required_protocol` 2.
+1. Connect extension 0.2.1 and confirm the app shows current 0.2.1 / bundled 0.5.1, the verified managed path, and the update actions. **Update extension** must return the manual fallback, open the extension page, and clear only after Reload reconnects as 0.5.1. With an extension that advertises `runtime_reload`, the same action must reconnect automatically. `browser_setup` then shows `update_required=false`, `extension_version` 0.5.1, and `required_protocol` 2.
    With the extension connected, quit Wisp without closing Chrome, wait two
    minutes, and restart Wisp: the extension must reconnect on its own within
    about two minutes (keepalive staleness plus the one-minute alarm) without a
@@ -41,13 +41,16 @@ Popup **Pause control** must fail later automations with `USER_CONTROLLING`.
    line shows the selection length. Open a PDF URL and ask: the line says there
    is no readable text, and an approval card appears when the agent reaches
    for a tool; **Allow once** continues the turn and **Deny** makes the agent
-   answer without it. **Stop** cancels a running turn. The context menu and
+   answer without it. Ask for something that makes the agent read the page
+   twice (for example two `web_scan` calls) and choose **Allow for this chat**
+   on the first card: the second call runs without a card, and so do later
+   questions in the same panel conversation. **New chat** asks again. **Stop** cancels a running turn. The context menu and
    `Alt+Shift+W` open the same panel. Quit Wisp and ask: the panel reports that
    Wisp is not running.
 
 ## Project tab scope (#1617)
 
-Shared Chrome with extension 0.5.0 and two projects A and B open in Wisp.
+Shared Chrome with extension 0.5.1 and two projects A and B open in Wisp.
 
 1. In A, `web_open_tab` twice. Both tabs appear in one native group titled
    `Wisp · <A's name>` in the same window. Focus a different Chrome window and
@@ -64,6 +67,12 @@ Shared Chrome with extension 0.5.0 and two projects A and B open in Wisp.
    that id shows the **Share browser tab …** approval. Deny: the tool fails
    and the tab stays unscoped. Allow: the scan runs, the tab is listed under
    `tabs` with `granted: true`, and the window binding is unchanged.
+   With extension 0.5.1, navigate the shared tab to `chrome://version` and
+   back, stop the extension's service worker from `chrome://extensions` (it
+   restarts and reconnects), then scan it again from a new conversation in A:
+   no share prompt appears. Close the tab and the share ends. Reloading or
+   updating the extension clears `chrome.storage.session`, so it counts as a
+   new browser instance and the tab must be shared again.
 4. With A's tab focused in Chrome, run `web_scan` from B without
    `switch_tab_id`: B reads its own tab, not A's. With no tab in scope, B is
    told to open one or ask for one instead of being handed the active tab.

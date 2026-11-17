@@ -669,6 +669,7 @@
 .exploration-banner button.danger-text { color: var(--err); }
 .exploration-banner.browser-offline,
 .exploration-banner.excerpt-selection,
+.exploration-banner.database-recovery,
 .exploration-banner.browser-extension-update {
   /* Match composer-inner / runtime strip: these sit in .composer, which is the
      full center pane, not the 920px chat column. */
@@ -702,6 +703,32 @@
   color: var(--text); font-size: calc(10px * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap;
 }
 .exploration-banner-copy .browser-extension-error { color: var(--err); }
+/* Database recovery notice (#1635): a restored copy reads as a warning, an
+   empty rebuild as an error, never as an ordinary open. */
+.exploration-banner.database-recovery { align-items: flex-start; }
+.exploration-banner.database-recovery.restored {
+  border-color: color-mix(in srgb, var(--warn) 48%, var(--border));
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg-elev));
+}
+.exploration-banner.database-recovery.rebuilt {
+  border-color: color-mix(in srgb, var(--err) 55%, var(--border));
+  background: color-mix(in srgb, var(--err) 12%, var(--bg-elev));
+}
+.exploration-banner.database-recovery.restored .exploration-banner-eyebrow,
+.exploration-banner.database-recovery.restored .database-recovery-icon { color: var(--warn); }
+.exploration-banner.database-recovery.rebuilt .exploration-banner-eyebrow,
+.exploration-banner.database-recovery.rebuilt .database-recovery-icon { color: var(--err); }
+.exploration-banner.database-recovery .exploration-banner-copy { max-width: 100%; }
+.exploration-banner.database-recovery .exploration-banner-copy strong { white-space: normal; }
+.database-recovery-icon { display: inline-flex; flex: 0 0 auto; padding-top: 2px; }
+.database-recovery-icon svg { width: 18px; height: 18px; }
+.database-recovery-label {
+  margin-top: 4px; color: var(--text-muted); font-size: calc(10px * var(--ui-font-scale, 1));
+}
+.exploration-banner.database-recovery button.database-recovery-dismiss {
+  display: inline-flex; align-items: center; justify-content: center; padding: 4px;
+}
+.database-recovery-dismiss svg { width: 14px; height: 14px; }
 .browser-setup-steps {
   margin: 4px 0 0; padding-left: 18px; color: var(--text-muted);
   font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.45;
