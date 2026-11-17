@@ -19782,3 +19782,206 @@ async fn a_hosts_interpreter_paths_are_kept_and_its_conversations_python_starts_
         .is_err());
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn the_model_saves_a_hosts_interpreter_and_its_running_one_restarts_but_not_for_local() {
+    use desktop::SshHostRow;
+    use wisp_tools::ToolEnv;
+
+    /// Keeps where each interpreter was asked to start; starts nothing.
+    struct Launcher(Arc<std::sync::Mutex<Vec<String>>>);
+    struct Idle;
+    #[async_trait]
+    impl wisp_runtime::RuntimeKernel for Idle {
+        async fn execute(
+            &mut self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: &[String],
+            _: &wisp_runtime::RuntimeOutput,
+        ) -> anyhow::Result<wisp_runtime::KernelResp> {
+            Ok(Default::default())
+        }
+        async fn inspect(&mut self, _: &str) -> anyhow::Result<wisp_runtime::RuntimeObjectList> {
+            Ok(Default::default())
+        }
+        async fn shutdown(&mut self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+    #[async_trait]
+    impl wisp_runtime::RuntimeLauncher for Launcher {
+        async fn launch(
+            &self,
+            key: &wisp_runtime::RuntimeKey,
+            _: &Path,
+        ) -> anyhow::Result<wisp_runtime::LaunchedRuntime> {
+            self.0.lock().unwrap().push(key.context_id.clone());
+            Ok(wisp_runtime::LaunchedRuntime::new(
+                Box::new(Idle),
+                Default::default(),
+            ))
+        }
+    }
+    struct Env(std::path::PathBuf);
+    #[async_trait]
+    impl ToolEnv for Env {
+        fn project_root(&self) -> &Path {
+            &self.0
+        }
+        async fn confirm(&self, _: &str) -> bool {
+            true
+        }
+        async fn emit(&self, _: wisp_tools::ToolEvent) {}
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let key = temp.path().join("id_lab");
+    std::fs::write(&key, b"test-key\n").unwrap();
+    server
+        .save_ssh_host(SshHostRow {
+            alias: "interp-tool".into(),
+            host_name: "10.0.0.8".into(),
+            user: "lab".into(),
+            identity_file: key.to_string_lossy().into_owned(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let store = &server.0.store;
+    let session = create(&server).await;
+    let options = server
+        .conversation_status(PROJECT, &session)
+        .await
+        .unwrap()
+        .options;
+    let started: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let manager = wisp_runtime::RuntimeManager::new(Arc::new(Launcher(started.clone())));
+    *server.session(&session).runtime.lock().unwrap() = Some(manager.clone());
+    let root = server.project_root(PROJECT).await.unwrap();
+    let model = server.0.model.read().unwrap().pick(&options.model).unwrap();
+    let request = wisp_dto::native_conversations::SendRequest {
+        session_id: session.clone(),
+        request_id: "turn-1".into(),
+        message: "hello".into(),
+        resume: false,
+        resume_after: None,
+        attachments: Vec::new(),
+        references: Vec::new(),
+        acp_agent_id: None,
+    };
+    let agent = server
+        .wisp_agent(
+            PROJECT,
+            &root,
+            &request,
+            &server.session(&session),
+            &options,
+            &model,
+            false,
+            Vec::new(),
+            None,
+        )
+        .await
+        .unwrap();
+    let tool = agent
+        .tools
+        .get("set_runtime_interpreter")
+        .expect("the tool is offered, as in the WebView");
+    let env = Env(root.clone().into());
+    let save = |context: &str, language: &str, path: &str| json!({"context_id": context, "language": language, "executable": path});
+
+    // A host the conversation has not attached is refused, as in the WebView.
+    let refused = tool
+        .run(
+            &save("ssh:interp-tool", "python", "/opt/conda/bin/python"),
+            &env,
+        )
+        .await;
+    assert!(!refused.success);
+    assert!(
+        refused.content.contains("not selected for this session"),
+        "{}",
+        refused.content
+    );
+    store
+        .set_session_execution_context_enabled(&session, "ssh:interp-tool", true)
+        .await
+        .unwrap();
+
+    // Saved for the host; its Python, which this conversation's `python`
+    // started there, starts again with it.
+    manager
+        .start(
+            wisp_runtime::RuntimeKey::python(root.clone(), "ssh:interp-tool"),
+            root.clone().into(),
+        )
+        .await
+        .unwrap();
+    let saved = tool
+        .run(
+            &save("ssh:interp-tool", "python", " /opt/conda/bin/python "),
+            &env,
+        )
+        .await;
+    assert!(saved.success, "{}", saved.content);
+    assert!(
+        saved
+            .content
+            .contains("restarted this conversation's Python runtime"),
+        "{}",
+        saved.content
+    );
+    assert_eq!(
+        *started.lock().unwrap(),
+        ["ssh:interp-tool".to_owned(), "ssh:interp-tool".to_owned()]
+    );
+    assert_eq!(
+        server
+            .host_interpreters("interp-tool")
+            .await
+            .unwrap()
+            .python,
+        "/opt/conda/bin/python"
+    );
+    // R was not running: it is only saved.
+    let saved = tool
+        .run(&save("ssh:interp-tool", "r", "/usr/bin/Rscript"), &env)
+        .await;
+    assert!(saved.success, "{}", saved.content);
+    assert!(saved.content.contains("next r call"), "{}", saved.content);
+    assert_eq!(started.lock().unwrap().len(), 2);
+
+    // This computer's interpreters here never read a path kept for
+    // `local`, so none is saved for it.
+    let before = store
+        .get_execution_context("local")
+        .await
+        .unwrap()
+        .map(|context| context.config_json);
+    let refused = tool
+        .run(&save("local", "python", "/opt/venv/bin/python"), &env)
+        .await;
+    assert!(!refused.success);
+    assert_eq!(
+        refused.content,
+        format!(
+            "set_runtime_interpreter error: {}",
+            runtime::LOCAL_INTERPRETER_REFUSED
+        )
+    );
+    assert_eq!(
+        store
+            .get_execution_context("local")
+            .await
+            .unwrap()
+            .map(|context| context.config_json),
+        before
+    );
+    assert_eq!(started.lock().unwrap().len(), 2);
+    server.shutdown().await;
+}

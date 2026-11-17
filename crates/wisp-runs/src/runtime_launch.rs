@@ -17,8 +17,10 @@ use std::{
 };
 
 /// Which interpreter a worker is for. Each host maps its runtime language
-/// onto this; `wisp-runs` does not depend on `wisp-runtime`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// onto this; `wisp-runs` does not depend on `wisp-runtime`. It reads as
+/// `python` or `r`, as `wisp_runtime::RuntimeLanguage` does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InterpreterLanguage {
     Python,
     R,
@@ -65,6 +67,26 @@ pub async fn save_interpreter_config(
             "rscript_path",
             rscript_executable,
         )
+    })
+    .await
+}
+
+/// Keeps one language's interpreter on a context and leaves the other's as
+/// it was: what the agent's `set_runtime_interpreter` saves. Moved from the
+/// Tauri shell's `runtime_launcher::save_runtime_interpreter`.
+pub async fn save_runtime_interpreter(
+    store: &wisp_store::Store,
+    context_id: &str,
+    language: InterpreterLanguage,
+    executable: &str,
+) -> Result<wisp_store::ExecutionContext> {
+    update_interpreter_config(store, context_id, move |object| match language {
+        InterpreterLanguage::Python => {
+            set_interpreter(object, "python_executable", "python_path", executable)
+        }
+        InterpreterLanguage::R => {
+            set_interpreter(object, "rscript_executable", "rscript_path", executable)
+        }
     })
     .await
 }

@@ -16,31 +16,13 @@ use std::{
 };
 use tauri::State;
 use wisp_runs::runtime_launch::{
-    build_attached_command, ensure_remote_worker, set_interpreter, update_interpreter_config,
-    InterpreterLanguage,
+    build_attached_command, ensure_remote_worker, InterpreterLanguage,
 };
 pub use wisp_runs::runtime_launch::{preserve_interpreter_config, save_interpreter_config};
 use wisp_runtime::{
     find_rscript, KernelClient, KernelWriteScope, LaunchedRuntime, PythonEnv, RuntimeKey,
     RuntimeLanguage, RuntimeLauncher, RuntimeMetadata, PROTOCOL_VERSION,
 };
-
-pub(crate) async fn save_runtime_interpreter(
-    store: &wisp_store::Store,
-    context_id: &str,
-    language: RuntimeLanguage,
-    executable: &str,
-) -> Result<wisp_store::ExecutionContext> {
-    update_interpreter_config(store, context_id, move |object| match language {
-        RuntimeLanguage::Python => {
-            set_interpreter(object, "python_executable", "python_path", executable)
-        }
-        RuntimeLanguage::R => {
-            set_interpreter(object, "rscript_executable", "rscript_path", executable)
-        }
-    })
-    .await
-}
 
 #[tauri::command]
 pub async fn update_execution_context_interpreters(

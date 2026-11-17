@@ -625,6 +625,18 @@ pub async fn build(
             ),
         )
     };
+    // Saving a context's interpreter path, the WebView's tool, offered to a
+    // conversation's own agent as there.
+    let scope_key = match store.frame_state_scope(frame).await? {
+        Some(scope) => scope.scope_key().to_owned(),
+        None => wisp_store::MAINLINE_SCOPE_KEY.to_owned(),
+    };
+    agent.add_tool(in_conversation(Box::new(interpreter_tool(
+        store,
+        runtime.clone(),
+        &root,
+        scope_key,
+    ))));
     if worker.is_file() {
         agent.add_tool(in_conversation(Box::new(wisp_runtime::ReplTool::new(
             runtime.clone(),
@@ -638,6 +650,68 @@ pub async fn build(
         ))));
     }
     Ok(agent)
+}
+
+/// Why `set_runtime_interpreter` refuses `local` here: this computer's
+/// interpreters start from the managed environment and `PATH`
+/// (`wisp_runtime`'s own launcher), which never reads a path kept on the
+/// `local` context as the WebView's launcher does.
+pub(crate) const LOCAL_INTERPRETER_REFUSED: &str = "this app starts Python and R on this computer from its managed environment and PATH and does not read a path saved for 'local'; to use another interpreter here, run it through the shell or a run. A path can be saved for an SSH host (ssh:<alias>).";
+
+/// A conversation's interpreters, as the shared `set_runtime_interpreter`
+/// restarts them: keyed as its `python` and `r` key theirs.
+struct ConversationRuntimes(wisp_runtime::RuntimeManager);
+
+fn runtime_key(key: &wisp_runs::runtime_config_tool::InterpreterKey) -> wisp_runtime::RuntimeKey {
+    use wisp_runs::runtime_launch::InterpreterLanguage;
+    wisp_runtime::RuntimeKey {
+        project_id: key.project_id.clone(),
+        scope_key: key.scope_key.clone(),
+        session_id: key.session_id.clone(),
+        context_id: key.context_id.clone(),
+        language: match key.language {
+            InterpreterLanguage::Python => wisp_runtime::RuntimeLanguage::Python,
+            InterpreterLanguage::R => wisp_runtime::RuntimeLanguage::R,
+        },
+    }
+}
+
+#[async_trait::async_trait]
+impl wisp_runs::runtime_config_tool::InterpreterRuntimes for ConversationRuntimes {
+    fn has_runtime(&self, key: &wisp_runs::runtime_config_tool::InterpreterKey) -> bool {
+        let key = runtime_key(key);
+        self.0.list().iter().any(|runtime| runtime.key == key)
+    }
+
+    async fn restart(
+        &self,
+        key: &wisp_runs::runtime_config_tool::InterpreterKey,
+        project_root: PathBuf,
+    ) -> Result<()> {
+        self.0
+            .restart(runtime_key(key), project_root)
+            .await
+            .map(drop)
+    }
+}
+
+/// The WebView's `set_runtime_interpreter` for a conversation whose
+/// interpreters are `runtime`, keyed by the project folder `root` as its
+/// `python` and `r` tools key them; `local` is refused.
+pub(crate) fn interpreter_tool(
+    store: &Store,
+    runtime: wisp_runtime::RuntimeManager,
+    root: &std::path::Path,
+    scope_key: String,
+) -> wisp_runs::runtime_config_tool::SetRuntimeInterpreterTool {
+    wisp_runs::runtime_config_tool::SetRuntimeInterpreterTool::new_in_session(
+        store.clone(),
+        Box::new(ConversationRuntimes(runtime)),
+        root.to_string_lossy(),
+        scope_key,
+        "",
+    )
+    .refusing(wisp_runtime::LOCAL_CONTEXT_ID, LOCAL_INTERPRETER_REFUSED)
 }
 
 /// The Python and R workers interpreters are started with; a path that

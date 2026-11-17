@@ -1,12 +1,16 @@
 //! A terminal's screen as the window draws it, from what the host's PTY
 //! wrote (the WebView draws the same output with xterm.js): `vt100` keeps
 //! the grid, its colours, the cursor and the lines scrolled away; this
-//! turns each row into runs of one style, and keys into the bytes a
-//! terminal sends for them. Pure, so it is tested here.
-use std::num::NonZeroU16;
+//! turns each row into runs of one style, keys into the bytes a terminal
+//! sends for them, a mouse selection into the cells and text it covers,
+//! and keeps what the system's input method is composing. Pure, so it is
+//! tested here.
+use std::{num::NonZeroU16, ops::Range};
 
 use base64::Engine as _;
 use wisp_dto::native_conversations::TerminalOutput;
+
+use crate::notify::System;
 
 /// Lines kept above the screen to scroll back to.
 pub const SCROLLBACK: usize = 5_000;
@@ -29,12 +33,69 @@ pub struct Run {
     pub style: Style,
 }
 
+/// Counts the lines `vt100` lets go of above the scrollback, on each
+/// screen, so a line keeps one number while it scrolls.
+#[derive(Default)]
+struct Dropped {
+    main: u64,
+    alternate: u64,
+}
+
+impl vt100::Callbacks for Dropped {
+    fn on_scroll(&mut self, _: vt100::capture::RowContents<'_>, alternate: bool) {
+        if alternate {
+            self.alternate += 1;
+        } else {
+            self.main += 1;
+        }
+    }
+}
+
+/// A place between two cells: a line, counted from the first the screen
+/// ever had so scrolling does not move it, and a column edge, from 0 to
+/// the width.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Spot {
+    pub line: u64,
+    pub col: u16,
+}
+
+/// What a selection grows by: cells for a drag, words after a double
+/// click, lines after a triple click, as xterm.js does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unit {
+    Cell,
+    Word,
+    Line,
+}
+
+/// Part of the screen picked with the mouse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Selection {
+    /// What the first click took: one place for a drag, the word or the
+    /// line it was on otherwise.
+    anchor: (Spot, Spot),
+    unit: Unit,
+    /// From and up to, in reading order.
+    pub start: Spot,
+    pub end: Spot,
+}
+
+/// The characters xterm.js ends a word at (its `wordSeparator`).
+const WORD_SEPARATORS: &str = " ()[]{}',\"`";
+
+/// A cell that reads as a space: one, or one never written (`\0`).
+fn is_blank(cell: &str) -> bool {
+    cell == " " || cell == "\0"
+}
+
 pub struct Screen {
-    parser: vt100::Parser,
+    parser: vt100::Parser<Dropped>,
     /// How far the host's output has been read.
     pub cursor: Option<u64>,
     /// How the terminal ended, once it has.
     pub exit: Option<u32>,
+    selection: Option<Selection>,
 }
 
 fn size(rows: u16, cols: u16) -> (NonZeroU16, NonZeroU16) {
@@ -48,9 +109,10 @@ impl Screen {
     pub fn new(rows: u16, cols: u16) -> Self {
         let (rows, cols) = size(rows, cols);
         Self {
-            parser: vt100::Parser::new(rows, cols, SCROLLBACK),
+            parser: vt100::Parser::new_with_callbacks(rows, cols, SCROLLBACK, Dropped::default()),
             cursor: None,
             exit: None,
+            selection: None,
         }
     }
 
@@ -62,7 +124,24 @@ impl Screen {
             *self = Self::new(rows, cols);
         }
         if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&output.base64) {
+            let alternate = self.parser.screen().alternate_screen();
             self.parser.process(&bytes);
+            // Another screen drops the selection, and lines let go of
+            // take it with them, as in xterm.js.
+            if self.parser.screen().alternate_screen() != alternate {
+                self.selection = None;
+            }
+            let first = self.first_line();
+            match self.selection {
+                Some(selection) if selection.end.line < first => self.selection = None,
+                Some(ref mut selection) if selection.start.line < first => {
+                    selection.start = Spot {
+                        line: first,
+                        col: 0,
+                    };
+                }
+                _ => {}
+            }
         }
         self.cursor = Some(output.end);
         self.exit = output.exit_code;
@@ -81,6 +160,7 @@ impl Screen {
         }
         let (rows, cols) = size(rows, cols);
         self.parser.set_size(rows, cols);
+        self.selection = None;
         true
     }
 
@@ -140,6 +220,11 @@ impl Screen {
         (!screen.hide_cursor() && screen.scrollback() == 0).then(|| screen.cursor_position())
     }
 
+    /// Where typing goes, hidden or not: where a composition is shown.
+    pub fn typing_at(&self) -> (u16, u16) {
+        self.parser.screen().cursor_position()
+    }
+
     /// Scrolls the view back (`lines` above zero) or forward; zero is the
     /// live screen.
     pub fn scroll(&mut self, lines: i32) {
@@ -166,9 +251,390 @@ impl Screen {
         self.parser.screen().bracketed_paste()
     }
 
-    /// The text on screen, for copying.
+    /// The text on screen.
+    #[cfg(test)]
     pub fn text(&self) -> String {
         self.parser.screen().contents()
+    }
+
+    /// The number of the first line still kept.
+    fn first_line(&self) -> u64 {
+        let screen = self.parser.screen();
+        let dropped = self.parser.callbacks();
+        if screen.alternate_screen() {
+            dropped.alternate
+        } else {
+            dropped.main
+        }
+    }
+
+    /// The number of the line shown on the view's first row.
+    fn top_line(&self) -> u64 {
+        let screen = self.parser.screen();
+        self.first_line() + (screen.scrollback_len() - screen.scrollback()) as u64
+    }
+
+    /// The number of the last line kept: the live screen's last row.
+    fn last_line(&self) -> u64 {
+        let screen = self.parser.screen();
+        self.first_line() + screen.scrollback_len() as u64 + u64::from(self.size().0) - 1
+    }
+
+    /// Reads `line` where it is, scrolled back or not, and puts the view
+    /// back as it was.
+    fn with_line<R>(
+        &mut self,
+        line: u64,
+        read: impl FnOnce(&vt100::Screen, u16) -> R,
+    ) -> Option<R> {
+        let first = self.first_line();
+        if line < first || line > self.last_line() {
+            return None;
+        }
+        let index = (line - first) as usize;
+        let screen = self.parser.screen_mut();
+        let kept = screen.scrollback_len();
+        let was = screen.scrollback();
+        let row = if index < kept {
+            screen.set_scrollback(kept - index);
+            0
+        } else {
+            screen.set_scrollback(0);
+            (index - kept) as u16
+        };
+        let result = read(screen, row);
+        screen.set_scrollback(was);
+        Some(result)
+    }
+
+    /// The cells of `line` as text, one string per cell (a wide
+    /// character's second cell is empty), and whether it runs on into the
+    /// next line.
+    fn line_cells(&mut self, line: u64) -> Option<(Vec<String>, bool)> {
+        let cols = self.size().1;
+        self.with_line(line, |screen, row| {
+            let cells = (0..cols)
+                .map(|col| match screen.cell(row, col) {
+                    Some(cell) if cell.is_wide_continuation() => String::new(),
+                    Some(cell) if cell.has_contents() => cell.contents().to_owned(),
+                    // Never written: kept apart from a written space so
+                    // the end of a line can be trimmed as xterm.js does.
+                    _ => "\0".to_owned(),
+                })
+                .collect();
+            (cells, screen.row_wrapped(row))
+        })
+    }
+
+    /// The place under the pointer: `row` of the view (above or below it
+    /// is its first or last row) and `x` in cells from its left edge. The
+    /// nearest column edge, and the cell the pointer is over.
+    fn spot_at(&self, row: i64, x: f32) -> (Spot, Spot) {
+        let (rows, cols) = self.size();
+        let top = self.top_line();
+        if row < 0 {
+            let spot = Spot { line: top, col: 0 };
+            return (spot, spot);
+        }
+        if row >= i64::from(rows) {
+            let line = top + u64::from(rows) - 1;
+            return (
+                Spot { line, col: cols },
+                Spot {
+                    line,
+                    col: cols - 1,
+                },
+            );
+        }
+        let line = top + row as u64;
+        let x = x.max(0.);
+        (
+            Spot {
+                line,
+                col: (x.round() as u16).min(cols),
+            },
+            Spot {
+                line,
+                col: (x.floor() as u16).min(cols - 1),
+            },
+        )
+    }
+
+    /// The word under `cell`, or the run of blanks it is in.
+    fn word_at(&mut self, cell: Spot) -> (Spot, Spot) {
+        let Some((cells, _)) = self.line_cells(cell.line) else {
+            return (cell, cell);
+        };
+        let at = usize::from(cell.col).min(cells.len().saturating_sub(1));
+        // A wide character's second cell belongs to its first.
+        let at = if cells[at].is_empty() && at > 0 {
+            at - 1
+        } else {
+            at
+        };
+        let blanks = is_blank(&cells[at]);
+        let joins = |text: &str| {
+            if blanks {
+                is_blank(text)
+            } else {
+                text.is_empty() || !(is_blank(text) || WORD_SEPARATORS.contains(text))
+            }
+        };
+        let mut start = at;
+        while start > 0 && joins(&cells[start - 1]) {
+            start -= 1;
+        }
+        let mut end = at + 1;
+        while end < cells.len() && joins(&cells[end]) {
+            end += 1;
+        }
+        (
+            Spot {
+                line: cell.line,
+                col: start as u16,
+            },
+            Spot {
+                line: cell.line,
+                col: end as u16,
+            },
+        )
+    }
+
+    /// The whole of the line `line` is part of, over the lines it wraps
+    /// onto.
+    fn line_at(&mut self, line: u64) -> (Spot, Spot) {
+        let cols = self.size().1;
+        let mut first = line;
+        while first > self.first_line()
+            && self.line_cells(first - 1).is_some_and(|(_, wraps)| wraps)
+        {
+            first -= 1;
+        }
+        let mut last = line;
+        while last < self.last_line() && self.line_cells(last).is_some_and(|(_, wraps)| wraps) {
+            last += 1;
+        }
+        (
+            Spot {
+                line: first,
+                col: 0,
+            },
+            Spot {
+                line: last,
+                col: cols,
+            },
+        )
+    }
+
+    /// Where the selection reaches with its moving end at the pointer.
+    fn reach(&mut self, anchor: (Spot, Spot), unit: Unit, row: i64, x: f32) -> (Spot, Spot) {
+        let (edge, cell) = self.spot_at(row, x);
+        let (from, to) = match unit {
+            Unit::Cell => (edge, edge),
+            Unit::Word => self.word_at(cell),
+            Unit::Line => self.line_at(cell.line),
+        };
+        if from < anchor.0 {
+            (from, anchor.1)
+        } else {
+            (anchor.0, to.max(anchor.1))
+        }
+    }
+
+    /// A press of the mouse at the pointer: `clicks` in a row picks a
+    /// place, a word or a line.
+    pub fn select_from(&mut self, row: i64, x: f32, clicks: usize) {
+        let (edge, cell) = self.spot_at(row, x);
+        let (unit, anchor) = match clicks {
+            0 | 1 => (Unit::Cell, (edge, edge)),
+            2 => (Unit::Word, self.word_at(cell)),
+            _ => (Unit::Line, self.line_at(cell.line)),
+        };
+        self.selection = Some(Selection {
+            anchor,
+            unit,
+            start: anchor.0,
+            end: anchor.1,
+        });
+    }
+
+    /// The selection's moving end to the pointer, by what it grows by; a
+    /// selection is begun when there is none.
+    pub fn select_to(&mut self, row: i64, x: f32) {
+        let Some(selection) = self.selection else {
+            self.select_from(row, x, 1);
+            return;
+        };
+        let (start, end) = self.reach(selection.anchor, selection.unit, row, x);
+        self.selection = Some(Selection {
+            start,
+            end,
+            ..selection
+        });
+    }
+
+    /// Everything kept, scrolled away or on screen.
+    pub fn select_all(&mut self) {
+        let start = Spot {
+            line: self.first_line(),
+            col: 0,
+        };
+        let end = Spot {
+            line: self.last_line(),
+            col: self.size().1,
+        };
+        self.selection = Some(Selection {
+            anchor: (start, end),
+            unit: Unit::Cell,
+            start,
+            end,
+        });
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection = None;
+    }
+
+    /// The selection, when it covers anything.
+    pub fn selection(&self) -> Option<Selection> {
+        self.selection
+            .filter(|selection| selection.start < selection.end)
+    }
+
+    /// The columns selected on `row` of the view, from and up to.
+    pub fn selected_cols(&self, row: u16) -> Option<(u16, u16)> {
+        let selection = self.selection()?;
+        let line = self.top_line() + u64::from(row);
+        if line < selection.start.line || line > selection.end.line {
+            return None;
+        }
+        let from = if line == selection.start.line {
+            selection.start.col
+        } else {
+            0
+        };
+        let to = if line == selection.end.line {
+            selection.end.col
+        } else {
+            self.size().1
+        };
+        (from < to).then_some((from, to))
+    }
+
+    /// The selected text, as xterm.js copies it: each line without the
+    /// cells nothing was written to at its end, a line that wraps joined to
+    /// the next, and lines ended by `\r\n` on Windows and `\n` elsewhere.
+    pub fn selected_text(&mut self, system: System) -> Option<String> {
+        let selection = self.selection()?;
+        let mut lines: Vec<String> = Vec::new();
+        let mut joined = false;
+        for line in selection.start.line..=selection.end.line {
+            let Some((cells, wraps)) = self.line_cells(line) else {
+                continue;
+            };
+            let from = if line == selection.start.line {
+                usize::from(selection.start.col)
+            } else {
+                0
+            };
+            let to = if line == selection.end.line {
+                usize::from(selection.end.col)
+            } else {
+                cells.len()
+            }
+            .min(cells.len());
+            let from = from.min(to);
+            // Cells never written at the end are not copied.
+            let written = cells
+                .iter()
+                .rposition(|cell| cell != "\0")
+                .map_or(0, |last| last + 1);
+            let text: String = cells[from..to.min(written).max(from)]
+                .iter()
+                .map(|cell| if cell == "\0" { " " } else { cell.as_str() })
+                .collect();
+            match lines.last_mut() {
+                Some(last) if joined => last.push_str(&text),
+                _ => lines.push(text),
+            }
+            joined = wraps;
+        }
+        let end = if system == System::Windows {
+            "\r\n"
+        } else {
+            "\n"
+        };
+        Some(lines.join(end))
+    }
+}
+
+/// What the system's input method is composing, before it is typed: shown
+/// at the cursor and sent only once the input method commits it, as
+/// xterm.js does with the browser's composition.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Composition {
+    text: String,
+    /// The input method's caret in it, in UTF-16 units.
+    caret: Option<Range<usize>>,
+}
+
+fn utf16_len(text: &str) -> usize {
+    text.encode_utf16().count()
+}
+
+/// The part of `text` between two UTF-16 offsets, clamped to it.
+fn utf16_slice(text: &str, range: Range<usize>) -> (String, Range<usize>) {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let end = range.end.min(units.len());
+    let start = range.start.min(end);
+    (String::from_utf16_lossy(&units[start..end]), start..end)
+}
+
+impl Composition {
+    /// What is being composed, when anything is.
+    pub fn marked(&self) -> Option<&str> {
+        (!self.text.is_empty()).then_some(self.text.as_str())
+    }
+
+    /// Its extent, in UTF-16 units, as the input method counts.
+    pub fn marked_range(&self) -> Option<Range<usize>> {
+        self.marked().map(|text| 0..utf16_len(text))
+    }
+
+    /// Where the input method's caret is: in the composition, or after it.
+    pub fn selected_range(&self) -> Range<usize> {
+        let len = utf16_len(&self.text);
+        self.caret.clone().unwrap_or(len..len)
+    }
+
+    /// The composition's text in `range`, and the range it is.
+    pub fn text_for_range(&self, range: Range<usize>) -> (String, Range<usize>) {
+        utf16_slice(&self.text, range)
+    }
+
+    /// The input method shows `text` as being composed; empty ends it.
+    pub fn mark(&mut self, text: &str, caret: Option<Range<usize>>) {
+        self.text = text.to_owned();
+        self.caret = caret;
+    }
+
+    /// The input method commits `text`; what to type, if anything.
+    pub fn commit(&mut self, text: &str) -> Option<String> {
+        *self = Self::default();
+        (!text.is_empty()).then(|| text.to_owned())
+    }
+
+    /// The input method lets go of what it was composing (a click away,
+    /// the input method switched): it is dropped, not typed, since only
+    /// what an input method commits is meant to reach the program.
+    pub fn unmark(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Where the input method's text from `offset` (UTF-16) starts, in
+    /// characters into the composition.
+    pub fn prefix(&self, offset: usize) -> String {
+        utf16_slice(&self.text, 0..offset).0
     }
 }
 
@@ -184,8 +650,12 @@ pub struct Key<'a> {
 }
 
 /// The bytes a terminal sends for `key`, or none for a key it does not
-/// send (the window's own shortcuts).
-pub fn key_bytes(key: Key, application_cursor: bool) -> Option<Vec<u8>> {
+/// send: the window's own shortcuts, and text, which the system's input
+/// method types (`Composition`) so a character it composes reaches the
+/// terminal as one. As xterm.js does, Option composes characters on
+/// macOS, and AltGr (Ctrl+Alt) does on Windows; elsewhere Alt sends Escape
+/// before the key.
+pub fn key_bytes(key: Key, application_cursor: bool, system: System) -> Option<Vec<u8>> {
     let arrow = |letter: u8| {
         if application_cursor {
             vec![0x1b, b'O', letter]
@@ -214,6 +684,7 @@ pub fn key_bytes(key: Key, application_cursor: bool) -> Option<Vec<u8>> {
         "f3" => b"\x1bOR".to_vec(),
         "f4" => b"\x1bOS".to_vec(),
         "space" if key.control => vec![0],
+        _ if key.control && key.alt && system == System::Windows => return None,
         name if key.control && name.len() == 1 => {
             let byte = name.as_bytes()[0].to_ascii_lowercase();
             match byte {
@@ -224,9 +695,10 @@ pub fn key_bytes(key: Key, application_cursor: bool) -> Option<Vec<u8>> {
                 _ => return None,
             }
         }
+        _ if !key.alt || key.control || system == System::Mac => return None,
+        "space" => vec![b' '],
         _ => match key.typed {
-            Some(text) if !text.is_empty() && !key.control => text.as_bytes().to_vec(),
-            _ if key.name == "space" => vec![b' '],
+            Some(text) if !text.is_empty() => text.as_bytes().to_vec(),
             _ => return None,
         },
     };
@@ -352,40 +824,250 @@ mod tests {
             name,
             ..Key::default()
         };
-        assert_eq!(key_bytes(key("enter"), false), Some(b"\r".to_vec()));
-        assert_eq!(key_bytes(key("backspace"), false), Some(vec![0x7f]));
-        assert_eq!(key_bytes(key("up"), false), Some(b"\x1b[A".to_vec()));
-        assert_eq!(key_bytes(key("up"), true), Some(b"\x1bOA".to_vec()));
+        let linux = System::Linux;
+        assert_eq!(key_bytes(key("enter"), false, linux), Some(b"\r".to_vec()));
+        assert_eq!(key_bytes(key("backspace"), false, linux), Some(vec![0x7f]));
+        assert_eq!(key_bytes(key("up"), false, linux), Some(b"\x1b[A".to_vec()));
+        assert_eq!(key_bytes(key("up"), true, linux), Some(b"\x1bOA".to_vec()));
         let ctrl_c = Key {
             name: "c",
             typed: Some("c"),
             control: true,
             ..Key::default()
         };
-        assert_eq!(key_bytes(ctrl_c, false), Some(vec![3]));
+        for system in [System::Mac, System::Linux, System::Windows] {
+            assert_eq!(key_bytes(ctrl_c, false, system), Some(vec![3]));
+        }
+        // Text is the input method's to type, on every system.
         let typed = Key {
             name: "a",
             typed: Some("A"),
             shift: true,
             ..Key::default()
         };
-        assert_eq!(key_bytes(typed, false), Some(b"A".to_vec()));
+        for system in [System::Mac, System::Linux, System::Windows] {
+            assert_eq!(key_bytes(typed, false, system), None);
+            assert_eq!(key_bytes(key("space"), false, system), None);
+        }
+        // Alt sends Escape first off macOS; Option composes on macOS.
         let alt_b = Key {
             name: "b",
             typed: Some("b"),
             alt: true,
             ..Key::default()
         };
-        assert_eq!(key_bytes(alt_b, false), Some(b"\x1bb".to_vec()));
+        assert_eq!(key_bytes(alt_b, false, linux), Some(b"\x1bb".to_vec()));
+        assert_eq!(
+            key_bytes(alt_b, false, System::Windows),
+            Some(b"\x1bb".to_vec())
+        );
+        assert_eq!(key_bytes(alt_b, false, System::Mac), None);
+        let alt_backspace = Key {
+            alt: true,
+            ..key("backspace")
+        };
+        assert_eq!(
+            key_bytes(alt_backspace, false, System::Mac),
+            Some(vec![0x1b, 0x7f])
+        );
+        // AltGr on Windows types its character.
+        let alt_gr_q = Key {
+            name: "q",
+            typed: Some("@"),
+            control: true,
+            alt: true,
+            ..Key::default()
+        };
+        assert_eq!(key_bytes(alt_gr_q, false, System::Windows), None);
+        assert_eq!(key_bytes(alt_gr_q, false, linux), Some(vec![0x11]));
         let back_tab = Key {
             name: "tab",
             shift: true,
             ..Key::default()
         };
-        assert_eq!(key_bytes(back_tab, false), Some(b"\x1b[Z".to_vec()));
+        assert_eq!(key_bytes(back_tab, false, linux), Some(b"\x1b[Z".to_vec()));
         // A key that types nothing sends nothing.
-        assert_eq!(key_bytes(key("f12"), false), None);
-        assert_eq!(key_bytes(key("space"), false), Some(b" ".to_vec()));
+        assert_eq!(key_bytes(key("f12"), false, linux), None);
+    }
+
+    fn screen(rows: u16, cols: u16, text: &[u8]) -> Screen {
+        let mut screen = Screen::new(rows, cols);
+        screen.apply(&output(text, false, 1));
+        screen
+    }
+
+    #[test]
+    fn a_drag_selects_from_edge_to_edge_and_copies_as_xterm_does() {
+        let mut screen = screen(4, 20, b"hello world\r\n  two  \r\nthree");
+        assert_eq!(screen.selection(), None);
+        // A press without a drag selects nothing.
+        screen.select_from(0, 6.2, 1);
+        assert_eq!(screen.selection(), None);
+        assert_eq!(screen.selected_text(System::Linux), None);
+        // Dragging to the middle of the next row: the nearest edges.
+        screen.select_to(1, 4.6);
+        assert_eq!(screen.selected_cols(0), Some((6, 20)));
+        assert_eq!(screen.selected_cols(1), Some((0, 5)));
+        assert_eq!(screen.selected_cols(2), None);
+        assert_eq!(
+            screen.selected_text(System::Linux).as_deref(),
+            Some("world\n  two")
+        );
+        assert_eq!(
+            screen.selected_text(System::Windows).as_deref(),
+            Some("world\r\n  two")
+        );
+        // Back past where it began; past the last row is its end. Spaces
+        // written at a line's end are kept, cells never written are not.
+        screen.select_to(-3, 0.);
+        assert_eq!(screen.selected_text(System::Mac).as_deref(), Some("hello "));
+        screen.select_to(9, 0.);
+        assert_eq!(
+            screen.selected_text(System::Mac).as_deref(),
+            Some("world\n  two  \nthree\n")
+        );
+        // Typing, a new size and another screen each drop it.
+        screen.clear_selection();
+        assert_eq!(screen.selection(), None);
+        screen.select_from(0, 0., 1);
+        screen.select_to(0, 5.);
+        assert!(screen.resize(4, 21));
+        assert_eq!(screen.selection(), None);
+        screen.select_from(0, 0., 1);
+        screen.select_to(0, 5.);
+        screen.apply(&output(b"\x1b[?1049h", false, 2));
+        assert_eq!(screen.selection(), None);
+    }
+
+    #[test]
+    fn a_double_click_takes_a_word_and_a_triple_click_the_wrapped_line() {
+        let mut screen = screen(4, 20, b"run (foo.bar) now");
+        screen.select_from(0, 7.5, 2);
+        assert_eq!(
+            screen.selected_text(System::Linux).as_deref(),
+            Some("foo.bar")
+        );
+        // Dragging on grows it by words.
+        screen.select_to(0, 15.);
+        assert_eq!(
+            screen.selected_text(System::Linux).as_deref(),
+            Some("foo.bar) now")
+        );
+        screen.select_to(0, 1.);
+        assert_eq!(
+            screen.selected_text(System::Linux).as_deref(),
+            Some("run (foo.bar")
+        );
+        // On blank cells, the run of them.
+        screen.select_from(0, 18.5, 2);
+        assert_eq!(screen.selected_cols(0), Some((17, 20)));
+
+        let mut screen = screen_wrapped();
+        screen.select_from(1, 1., 3);
+        assert_eq!(screen.selected_cols(0), Some((0, 10)));
+        assert_eq!(screen.selected_cols(1), Some((0, 10)));
+        assert_eq!(screen.selected_cols(2), None);
+        assert_eq!(
+            screen.selected_text(System::Linux).as_deref(),
+            Some("abcdefghijKLM")
+        );
+        // A drag over the wrap joins the lines too.
+        screen.select_from(0, 8., 1);
+        screen.select_to(2, 2.);
+        assert_eq!(
+            screen.selected_text(System::Linux).as_deref(),
+            Some("ijKLM\nne")
+        );
+    }
+
+    fn screen_wrapped() -> Screen {
+        screen(4, 10, b"abcdefghijKLM\r\nnext")
+    }
+
+    #[test]
+    fn wide_characters_are_copied_whole_and_selected_as_one_word() {
+        let mut screen = screen(2, 10, "中文ab x".as_bytes());
+        screen.select_from(0, 0., 1);
+        screen.select_to(0, 3.);
+        assert_eq!(screen.selected_text(System::Linux).as_deref(), Some("中文"));
+        // A double click on a wide character's second half.
+        screen.select_from(0, 1.5, 2);
+        assert_eq!(
+            screen.selected_text(System::Linux).as_deref(),
+            Some("中文ab")
+        );
+        assert_eq!(screen.selected_cols(0), Some((0, 6)));
+    }
+
+    #[test]
+    fn a_selection_stays_on_its_lines_as_they_scroll_and_goes_with_them() {
+        let mut screen = screen(3, 10, b"first\r\nsecond\r\n");
+        screen.select_from(0, 0., 1);
+        screen.select_to(0, 5.);
+        let lines: Vec<u8> = (0..4)
+            .flat_map(|n| format!("more{n}\r\n").into_bytes())
+            .collect();
+        screen.apply(&output(&lines, false, 2));
+        // "first" scrolled away above the screen: still it.
+        assert_eq!(screen.selected_cols(0), None);
+        assert_eq!(
+            screen.selected_text(System::Linux).as_deref(),
+            Some("first")
+        );
+        screen.scroll(10);
+        assert_eq!(screen.selected_cols(0), Some((0, 5)));
+        assert_eq!(screen.scrolled(), 4);
+        // Copying leaves the view where it was.
+        assert_eq!(
+            screen.selected_text(System::Linux).as_deref(),
+            Some("first")
+        );
+        assert_eq!(screen.scrolled(), 4);
+        screen.follow();
+        // Everything kept, scrolled away or not.
+        screen.select_all();
+        let all = screen.selected_text(System::Linux).unwrap();
+        assert!(
+            all.starts_with("first\nsecond\nmore0\nmore1\nmore2\nmore3"),
+            "{all}"
+        );
+        // Once its lines are let go of, so is the selection.
+        screen.select_from(0, 0., 1);
+        screen.select_to(0, 2.);
+        let flood: Vec<u8> = (0..SCROLLBACK + 10)
+            .flat_map(|n| format!("x{n}\r\n").into_bytes())
+            .collect();
+        screen.apply(&output(&flood, false, 3));
+        assert_eq!(screen.selection(), None);
+    }
+
+    #[test]
+    fn a_composition_is_kept_until_the_input_method_commits_it() {
+        let mut composing = Composition::default();
+        assert_eq!(composing.marked(), None);
+        assert_eq!(composing.marked_range(), None);
+        assert_eq!(composing.selected_range(), 0..0);
+        composing.mark("zhong", None);
+        assert_eq!(composing.marked(), Some("zhong"));
+        assert_eq!(composing.marked_range(), Some(0..5));
+        assert_eq!(composing.selected_range(), 5..5);
+        assert_eq!(composing.text_for_range(1..3), ("ho".to_owned(), 1..3));
+        assert_eq!(composing.text_for_range(3..99), ("ng".to_owned(), 3..5));
+        // Committed, it is typed once and the composition ends.
+        assert_eq!(composing.commit("中"), Some("中".to_owned()));
+        assert_eq!(composing.marked(), None);
+        // An emptied composition types nothing.
+        composing.mark("ni", Some(1..1));
+        assert_eq!(composing.selected_range(), 1..1);
+        composing.mark("", None);
+        assert_eq!(composing.marked(), None);
+        assert_eq!(composing.commit(""), None);
+        // UTF-16, as the input method counts; let go of, nothing is typed.
+        composing.mark("😀é", None);
+        assert_eq!(composing.marked_range(), Some(0..3));
+        assert_eq!(composing.prefix(2), "😀");
+        composing.unmark();
+        assert_eq!(composing.marked(), None);
     }
 
     #[test]

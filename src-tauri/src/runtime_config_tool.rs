@@ -1,300 +1,94 @@
 //! Agent tool for saving an interpreter on an existing ExecutionContext.
+//!
+//! The tool is `wisp_runs::runtime_config_tool`, shared with the embedded
+//! host; this file hands it the desktop's runtime manager.
 
-use serde::Deserialize;
-use wisp_llm::ToolSchema;
+use std::path::PathBuf;
+
+use wisp_runs::{
+    runtime_config_tool::{InterpreterKey, InterpreterRuntimes},
+    runtime_launch::InterpreterLanguage,
+};
 use wisp_runtime::{RuntimeKey, RuntimeLanguage, RuntimeManager};
 use wisp_store::Store;
-use wisp_tools::{Tool, ToolEnv, ToolResult};
 
-pub struct SetRuntimeInterpreterTool {
-    store: Store,
-    runtime_manager: RuntimeManager,
-    project_id: String,
-    scope_key: String,
-    session_id: String,
-}
+pub use wisp_runs::runtime_config_tool::SetRuntimeInterpreterTool;
 
-#[derive(Deserialize)]
-struct SetRuntimeInterpreterArgs {
-    context_id: String,
-    language: RuntimeLanguage,
-    executable: String,
-}
+/// The desktop's runtime manager, as the shared tool asks for it.
+struct ManagedRuntimes(RuntimeManager);
 
-impl SetRuntimeInterpreterTool {
-    pub fn new_in_session(
-        store: Store,
-        runtime_manager: RuntimeManager,
-        project_id: impl Into<String>,
-        scope_key: impl Into<String>,
-        session_id: impl Into<String>,
-    ) -> Self {
-        Self {
-            store,
-            runtime_manager,
-            project_id: project_id.into(),
-            scope_key: scope_key.into(),
-            session_id: session_id.into(),
-        }
-    }
-}
-
-fn language_names(language: RuntimeLanguage) -> (&'static str, &'static str) {
-    match language {
-        RuntimeLanguage::Python => ("python", "Python"),
-        RuntimeLanguage::R => ("r", "R"),
+fn runtime_key(key: &InterpreterKey) -> RuntimeKey {
+    RuntimeKey {
+        project_id: key.project_id.clone(),
+        scope_key: key.scope_key.clone(),
+        session_id: key.session_id.clone(),
+        context_id: key.context_id.clone(),
+        language: match key.language {
+            InterpreterLanguage::Python => RuntimeLanguage::Python,
+            InterpreterLanguage::R => RuntimeLanguage::R,
+        },
     }
 }
 
 #[async_trait::async_trait]
-impl Tool for SetRuntimeInterpreterTool {
-    fn name(&self) -> &str {
-        "set_runtime_interpreter"
+impl InterpreterRuntimes for ManagedRuntimes {
+    fn has_runtime(&self, key: &InterpreterKey) -> bool {
+        let key = runtime_key(key);
+        self.0.list().iter().any(|runtime| runtime.key == key)
     }
 
-    fn schema(&self) -> ToolSchema {
-        ToolSchema::new(
-            "set_runtime_interpreter",
-            "Save the Python or R executable for an existing execution context. This writes Wisp's persisted context settings; it does not set host environment variables or install software. An interpreter inside a conda, mamba, or pixi environment prefix is launched with that prefix on the worker's own PATH, so it can load its own libraries. If this project's matching REPL already exists, it is restarted and its in-memory variables are cleared.",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "context_id": {
-                        "type": "string",
-                        "description": "Registered execution context id, for example local, ssh:CPU2, or wsl:Ubuntu"
-                    },
-                    "language": {
-                        "type": "string",
-                        "enum": ["python", "r"],
-                        "description": "Runtime whose interpreter should be changed"
-                    },
-                    "executable": {
-                        "type": "string",
-                        "description": "Executable path or command as seen inside that context, for example C:\\Program Files\\R\\R-4.5.2\\bin\\Rscript.exe or /opt/conda/envs/research/bin/python"
-                    }
-                },
-                "required": ["context_id", "language", "executable"]
-            }),
-        )
-    }
-
-    fn preview(&self, args: &serde_json::Value) -> String {
-        let context = args
-            .get("context_id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
-        let language = args
-            .get("language")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
-        let executable = args
-            .get("executable")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
-        format!("[runtime @ {context}] {language} = {executable}")
-    }
-
-    async fn run(&self, args: &serde_json::Value, env: &dyn ToolEnv) -> ToolResult {
-        if self.scope_key != wisp_runtime::MAINLINE_RUNTIME_SCOPE {
-            return ToolResult::fail(
-                "exploration_project_mutation_blocked: runtime interpreter settings cannot be changed inside an exploration",
-            );
-        }
-        let args: SetRuntimeInterpreterArgs = match serde_json::from_value(args.clone()) {
-            Ok(args) => args,
-            Err(error) => {
-                return ToolResult::fail(format!("set_runtime_interpreter args error: {error}"))
-            }
-        };
-        let context_id = args.context_id.trim();
-        let executable = args.executable.trim();
-        if context_id.is_empty() {
-            return ToolResult::fail("set_runtime_interpreter error: 'context_id' is required");
-        }
-        if executable.is_empty() {
-            return ToolResult::fail("set_runtime_interpreter error: 'executable' is required");
-        }
-
-        if let Err(error) = crate::runtime_launcher::save_runtime_interpreter(
-            &self.store,
-            context_id,
-            args.language,
-            executable,
-        )
-        .await
-        {
-            return ToolResult::fail(format!("set_runtime_interpreter error: {error}"));
-        }
-
-        let (language, label) = language_names(args.language);
-        let key = RuntimeKey {
-            project_id: self.project_id.clone(),
-            scope_key: self.scope_key.clone(),
-            session_id: self.session_id.clone(),
-            context_id: context_id.to_string(),
-            language: args.language,
-        };
-        let had_session = self
-            .runtime_manager
-            .list()
-            .iter()
-            .any(|runtime| runtime.key == key);
-        if !had_session {
-            return ToolResult::ok(format!(
-                "Saved the {label} interpreter for context '{context_id}' as '{executable}'. The next {language} call for this context will use it."
-            ));
-        }
-
-        match self
-            .runtime_manager
-            .restart(key, env.project_root().to_path_buf())
+    async fn restart(&self, key: &InterpreterKey, project_root: PathBuf) -> anyhow::Result<()> {
+        self.0
+            .restart(runtime_key(key), project_root)
             .await
-        {
-            Ok(_) => ToolResult::ok(format!(
-                "Saved the {label} interpreter for context '{context_id}' as '{executable}' and restarted this conversation's {label} runtime. Its previous in-memory variables were cleared; other conversations keep the old interpreter until their runtimes restart."
-            )),
-            Err(error) => ToolResult::fail(format!(
-                "Saved the {label} interpreter for context '{context_id}' as '{executable}', but the runtime failed to restart: {error}"
-            )),
-        }
+            .map(drop)
     }
+}
+
+pub fn new_in_session(
+    store: Store,
+    runtime_manager: RuntimeManager,
+    project_id: impl Into<String>,
+    scope_key: impl Into<String>,
+    session_id: impl Into<String>,
+) -> SetRuntimeInterpreterTool {
+    SetRuntimeInterpreterTool::new_in_session(
+        store,
+        Box::new(ManagedRuntimes(runtime_manager)),
+        project_id,
+        scope_key,
+        session_id,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::{Path, PathBuf};
 
-    struct NoEnv(PathBuf);
-
-    #[async_trait::async_trait]
-    impl ToolEnv for NoEnv {
-        fn project_root(&self) -> &Path {
-            &self.0
-        }
-
-        async fn confirm(&self, _message: &str) -> bool {
-            true
-        }
-
-        async fn emit(&self, _event: wisp_tools::ToolEvent) {}
-    }
-
-    fn manager() -> RuntimeManager {
-        RuntimeManager::local(
-            PathBuf::from("unused-app-data"),
-            PathBuf::from("unused-worker.py"),
-            None,
-            vec![],
-        )
-    }
-
-    #[tokio::test]
-    async fn sets_one_context_interpreter_without_changing_the_other_fields() {
-        let db = std::env::temp_dir().join(format!(
-            "wisp_runtime_config_tool_{}.sqlite",
-            uuid::Uuid::new_v4()
-        ));
-        let store = Store::open(&db).await.unwrap();
-        let mut context = wisp_store::ExecutionContext::new("ssh:CPU2", "CPU2").unwrap();
-        context.config_json = serde_json::json!({
-            "alias": "CPU2",
-            "python_executable": "/opt/python/bin/python"
-        })
-        .to_string();
-        store.upsert_execution_context(&context).await.unwrap();
-        let tool = SetRuntimeInterpreterTool::new_in_session(
-            store.clone(),
-            manager(),
-            "project-1",
-            wisp_runtime::MAINLINE_RUNTIME_SCOPE,
-            "frame-1",
-        );
-
-        let result = tool
-            .run(
-                &serde_json::json!({
-                    "context_id": "ssh:CPU2",
-                    "language": "r",
-                    "executable": " /opt/R/4.5/bin/Rscript "
-                }),
-                &NoEnv(std::env::temp_dir()),
-            )
-            .await;
-
-        assert!(result.success, "{}", result.content);
-        assert!(result.content.contains("next r call"));
-        let saved = store
-            .get_execution_context("ssh:CPU2")
-            .await
-            .unwrap()
-            .unwrap();
-        let config: serde_json::Value = serde_json::from_str(&saved.config_json).unwrap();
-        assert_eq!(config["alias"], "CPU2");
-        assert_eq!(config["python_executable"], "/opt/python/bin/python");
-        assert_eq!(config["rscript_executable"], "/opt/R/4.5/bin/Rscript");
-        let _ = std::fs::remove_file(db);
-    }
-
-    #[tokio::test]
-    async fn rejects_unknown_languages_without_changing_the_context() {
-        let db = std::env::temp_dir().join(format!(
-            "wisp_runtime_config_tool_invalid_{}.sqlite",
-            uuid::Uuid::new_v4()
-        ));
-        let store = Store::open(&db).await.unwrap();
-        let context = wisp_store::ExecutionContext::new("local", "Local").unwrap();
-        let original = context.config_json.clone();
-        store.upsert_execution_context(&context).await.unwrap();
-        let tool = SetRuntimeInterpreterTool::new_in_session(
-            store.clone(),
-            manager(),
-            "project-1",
-            wisp_runtime::MAINLINE_RUNTIME_SCOPE,
-            "frame-1",
-        );
-
-        let result = tool
-            .run(
-                &serde_json::json!({
-                    "context_id": "local",
-                    "language": "julia",
-                    "executable": "/opt/julia/bin/julia"
-                }),
-                &NoEnv(std::env::temp_dir()),
-            )
-            .await;
-
-        assert!(!result.success);
-        assert!(result.content.contains("unknown variant"));
-        let saved = store.get_execution_context("local").await.unwrap().unwrap();
-        assert_eq!(saved.config_json, original);
-        let _ = std::fs::remove_file(db);
-    }
-
-    #[tokio::test]
-    async fn schema_and_preview_make_the_scope_explicit() {
-        let db = std::env::temp_dir().join(format!(
-            "wisp_runtime_config_tool_schema_{}.sqlite",
-            uuid::Uuid::new_v4()
-        ));
-        let store = Store::open(&db).await.unwrap();
-        let tool = SetRuntimeInterpreterTool::new_in_session(
-            store,
-            manager(),
-            "project-1",
-            wisp_runtime::MAINLINE_RUNTIME_SCOPE,
-            "frame-1",
-        );
-        assert_eq!(tool.name(), "set_runtime_interpreter");
+    #[test]
+    fn the_shared_tool_keys_the_desktops_runtimes_as_its_repl_does() {
+        // The shared tool tells the mainline by the store's key, the
+        // runtime manager by its own; they must be one.
         assert_eq!(
-            tool.preview(&serde_json::json!({
-                "context_id": "local",
-                "language": "r",
-                "executable": r"C:\Program Files\R\bin\Rscript.exe"
-            })),
-            r"[runtime @ local] r = C:\Program Files\R\bin\Rscript.exe"
+            wisp_store::MAINLINE_SCOPE_KEY,
+            wisp_runtime::MAINLINE_RUNTIME_SCOPE
         );
-        let _ = std::fs::remove_file(db);
+        let key = runtime_key(&InterpreterKey {
+            project_id: "project-1".into(),
+            scope_key: wisp_runtime::MAINLINE_RUNTIME_SCOPE.into(),
+            session_id: "frame-1".into(),
+            context_id: "ssh:CPU2".into(),
+            language: InterpreterLanguage::R,
+        });
+        assert_eq!(
+            key,
+            RuntimeKey {
+                project_id: "project-1".into(),
+                scope_key: wisp_runtime::MAINLINE_RUNTIME_SCOPE.into(),
+                session_id: "frame-1".into(),
+                context_id: "ssh:CPU2".into(),
+                language: RuntimeLanguage::R,
+            }
+        );
     }
 }

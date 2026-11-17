@@ -609,8 +609,8 @@ Limits of this slice:
   GPUs, scheduler and the Python and R it found, which is also what the
   model is told about the host; a check that fails records why, and the
   model is told not to try the host. The check is the WebView's probe
-  (`wisp_runs::context_probe`). WSL, interpreter paths set by hand, and
-  scratch and storage locations are not ported. Removing a host keeps the
+  (`wisp_runs::context_probe`). WSL is not ported; a host's interpreter
+  paths and its storage locations are in the side panel's Environments tab. Removing a host keeps the
   records of runs made on it and puts new work back on this computer if it
   was the default.
 - The first-run guide follows the WebView's: it is shown while the
@@ -652,7 +652,13 @@ Limits of this slice:
   check found; its worker is copied once per checksum to
   `~/.wisp-science/runtime/` there and run over `ssh` with the host's own
   settings, in its working folder. The shell and the file tools stay on
-  this computer, as in the WebView. WSL distros are not offered.
+  this computer, as in the WebView. WSL distros are not offered. The model
+  can keep a host's Python or Rscript path with the WebView's
+  `set_runtime_interpreter` (`wisp_runs::runtime_config_tool`), which
+  restarts the conversation's interpreter there if one is kept; for
+  `local` it is refused with the reason, since this computer's
+  interpreters here start from the managed environment and `PATH` and
+  never read a path kept on `local`.
 - Conversation settings apply to every turn this host runs from the next one
   on, a paired phone's included. Steps per turn replaces the `WISP_MAX_ITER`
   the host was started with once it is saved; at the limit the model is asked
@@ -713,15 +719,31 @@ Limits of this slice:
   lines to scroll back with the wheel) at the size that fits the dock,
   and types into it while it has focus: Return, Backspace, Tab, arrows
   (application mode included), Home, End, Page Up and Down, Delete, F1–F4,
-  Ctrl chords and Alt as Escape; Cmd+V (Ctrl+Shift+V elsewhere) pastes,
-  bracketed when the program asks, and Cmd+C (Ctrl+Shift+C) copies the
-  screen's text. While a terminal has focus it keeps Escape, and off
-  macOS every Ctrl chord, for its shell rather than the window. The host
-  keeps the last 4 MB each wrote, so a terminal shown again is redrawn;
-  closing a tab stops its terminal, and all stop when the app quits. What
-  is typed there is yours: the model does not see it. Not ported: input
-  through the system's input method (Chinese, Japanese) and selecting
-  part of the screen.
+  Ctrl chords, and Alt as Escape off macOS. Text goes through the system's
+  input method, as through xterm.js's hidden text field: the terminal
+  registers itself as the input method's client (a GPUI `InputHandler`),
+  leaves keys that type text to it, shows what it is composing underlined
+  at the cursor, and sends only what it commits; what it lets go of is
+  dropped. Option composes characters on macOS and AltGr on Windows, as in
+  xterm.js. On macOS a held key repeats instead of offering accents. The
+  mouse selects as xterm.js does: drag between cell edges, double-click a
+  word (its separators are xterm.js's), triple-click a line over the rows
+  it wraps onto, Shift+click to extend, and Cmd+A everything kept on
+  macOS. The selection is kept by line so it stays on its text while
+  output scrolls it, and goes when the user types, the screen is resized,
+  the program switches screens or its lines leave the scrollback. Cmd+C
+  (Ctrl+Shift+C elsewhere, where Ctrl+C stays the shell's) copies it as
+  xterm.js does (cells never written at a line's end left out, wrapped
+  rows joined, `\r\n` between lines on Windows), and nothing when nothing
+  is selected; Cmd+V (Ctrl+Shift+V) pastes, bracketed when the program
+  asks. While a terminal has focus it keeps Escape, and off macOS every
+  Ctrl chord, for its shell rather than the window. The host keeps the
+  last 4 MB each wrote, so a terminal shown again is redrawn; closing a tab
+  stops its terminal, and all stop when the app quits. What is typed there
+  is yours: the model does not see it. Not ported: the right-click menu,
+  column selection, Alt+click to move the cursor, scrolling while a drag
+  leaves the screen, mouse reporting to programs, and middle-click paste on
+  Linux.
 - Whole log reads `stdout.log` and `stderr.log` from the run's own
   folder (`~/.wisp-science/runs/<id>`), the last 512 KB of each, when it
   is asked for; it does not follow a run that is still writing, so press
@@ -2140,6 +2162,25 @@ during `sleep 10`: it stops. Open a second one with +: two tabs. Hide the
 dock with Terminals in the top bar and show it again: both are still
 there with what they wrote. Close one with its ×. With the project's
 folder moved away, confirm a message says it is not there.
+In a terminal, switch the system's input source to Pinyin (or Japanese)
+and type `nihao`: the letters show underlined at the cursor and nothing
+reaches the shell; choose 你好 from the candidates, which open under the
+cursor: 你好 is typed once. Type `nihao` again and press Escape: the
+composition goes and nothing is typed. With a dead key (Option+E then E on
+a U.S. layout on macOS) é is typed; on macOS Option+B types ∫, and on
+Linux or Windows Alt+B moves back a word in the shell. Open the emoji
+picker (Ctrl+Cmd+Space on macOS, Win+. on Windows) and choose one: it is
+typed. Hold a letter on macOS: it repeats.
+Run `seq 1 100` there and drag across two lines: they are highlighted;
+press Cmd+C (Ctrl+Shift+C) and paste into the composer: those lines, one
+per line. Double-click a word in `echo (foo.bar) baz`: foo.bar is
+selected; triple-click a line longer than the terminal is wide: all its
+rows are. Shift+click further down: the selection reaches there. Scroll
+back with the wheel: the selection stays on its text; type a letter: it
+goes. Press Cmd+C with nothing selected: the clipboard is unchanged. On
+Linux or Windows press Ctrl+C over a selection during `sleep 10`: it
+stops. On macOS press Cmd+A: everything, scrolled away or not, is
+selected.
 In a conversation open the command palette and choose Python console:
 the console opens over the composer with an interpreter chip. Run
 `x = 41 + 1` and then `x`: it prints 42 and the variables list shows `x`.
@@ -2199,6 +2240,13 @@ variables, and Stop stops it. Press Start on R there: it starts with the
 Rscript the check found (or says why it cannot, such as no Rscript known or
 `jsonlite` missing). Choose This computer in Runs on and run Python again:
 it runs here, and the host's interpreter is untouched.
+Choose the host in Runs on again, run Python there, and ask the model to
+use `/opt/conda/bin/python` there (a path that exists on the host): it
+calls `set_runtime_interpreter`, says it saved the path and restarted the
+conversation's Python, the host's interpreter form shows the path, and the
+runtimes button lists the Python with it. Ask it to set a Python for this
+computer the same way: it says this app does not read a path saved for
+`local`, and nothing is saved.
 Ask the model to download a large file from that host into the project:
 while it moves, a Transfers tray above the composer shows the file, bytes,
 share done, rate and time left; fold it to one line and unfold it. When it
