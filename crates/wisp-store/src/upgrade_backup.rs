@@ -64,6 +64,14 @@ pub(crate) async fn before_migration(pool: &SqlitePool, owner: &SqlitePool, proj
 
 /// The copies kept of one database, newest first. `owner` is the application
 /// database file; `project` as for [`before_migration`].
+/// The folder copies of `owner`'s databases are written to, if it has one.
+pub(crate) fn directory_of(owner: &Path) -> Option<PathBuf> {
+    owner
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(|parent| parent.join(DIRECTORY))
+}
+
 pub(crate) fn copies_of(owner: &Path, database: &Path, project: Option<&str>) -> Vec<PathBuf> {
     let Some(directory) = owner.parent().map(|parent| parent.join(DIRECTORY)) else {
         return Vec::new();

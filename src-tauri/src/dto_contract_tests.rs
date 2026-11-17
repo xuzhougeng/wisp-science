@@ -963,6 +963,63 @@ fn project_memo_contract_keeps_private_fields_and_partial_patches() {
     );
 }
 
+#[tokio::test]
+async fn project_database_recovery_contract_keeps_kind_copy_and_damaged_path() {
+    // Build the payload from a real recovery so the command's shape is the
+    // store's, not a hand-written copy.
+    let root = tempfile::tempdir().unwrap();
+    let store = wisp_store::Store::open_application(&root.path().join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store
+        .set_setting("decentralized_project_storage", "true")
+        .await
+        .unwrap();
+    let workspace = root.path().join("study");
+    store
+        .create_project("p", "P", workspace.to_str().unwrap())
+        .await
+        .unwrap();
+    std::fs::write(
+        workspace.join(wisp_store::PROJECT_DATABASE),
+        b"not a SQLite database",
+    )
+    .unwrap();
+    assert!(store.get_project("p").await.is_err());
+    let backend = store
+        .pending_project_database_recoveries("p")
+        .await
+        .unwrap();
+    let payload = serde_json::to_value(&backend).unwrap();
+    assert_eq!(payload[0]["kind"], "rebuilt");
+    assert!(payload[0]["copy_name"].is_null());
+    let ui: Vec<wisp_dto::ProjectDatabaseRecovery> = serde_json::from_value(payload).unwrap();
+    assert_eq!(ui, backend);
+    assert_eq!(ui[0].kind, wisp_dto::ProjectDatabaseRecoveryKind::Rebuilt);
+    assert!(ui[0].damaged_path.contains(".corrupt-"), "{:?}", ui[0]);
+
+    // A restored outcome as the UI receives it; absent optional fields are
+    // tolerated.
+    let restored: wisp_dto::ProjectDatabaseRecovery = serde_json::from_value(json!({
+        "id": 7,
+        "project_id": "p",
+        "occurred_at": 1_761_267_723,
+        "kind": "restored",
+        "copy_name": "project-p.20261024-010203.daily.sqlite",
+        "damaged_path": "C:\\study\\.wisp\\project.sqlite.corrupt-20261024-010203",
+    }))
+    .unwrap();
+    assert_eq!(
+        restored.kind,
+        wisp_dto::ProjectDatabaseRecoveryKind::Restored
+    );
+    assert_eq!(restored.backup_dir, None);
+    assert_eq!(
+        restored.damaged_path,
+        "C:\\study\\.wisp\\project.sqlite.corrupt-20261024-010203"
+    );
+}
+
 #[test]
 fn research_journey_contract_preserves_version_and_occurrence_time() {
     let backend = wisp_dto::ResearchJourney {

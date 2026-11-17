@@ -6145,6 +6145,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             SERVER_TURNS_MIGRATION.to_string(),
             SESSION_SUBAGENT_MODEL_MIGRATION.to_string(),
             SCHEDULE_HOST_MIGRATION.to_string(),
+            PROJECT_DATABASE_RECOVERIES_MIGRATION.to_string(),
             AGENT_WORKFLOW_EXECUTION_ROUNDS_MIGRATION.to_string(),
         ]
     );

@@ -88,12 +88,32 @@ typically after the app was force-quit or the disk lost power, Wisp:
    beside it, so nothing is lost for a manual salvage;
 2. copies the newest copy from `backups/` that opens into its place, or, when
    no copy exists, creates an empty database that still lists the project;
-3. shows which of the two happened and where the damaged file is, and opens
-   the project on the next attempt.
+3. records which of the two happened in the application database
+   (`wisp.sqlite`), not in the project database it just replaced.
 
 Conversations recorded after the restored copy was taken are not in the
 database. Workspace files, `.wisp/artifacts/` and git history are never
 touched. The damaged file is kept until you delete it.
+
+### The recovery notice
+
+The damage can be found by opening the project, but also by the project list,
+project sync or other background work, which only write to `wisp.sqlite`.
+Whichever found it, the next time you enter the project the desktop opens it
+and shows a notice above the message box:
+
+- **Restored from a backup copy** (amber): names the copy that was put back
+  and when. Conversations and records made after that copy are missing.
+- **Rebuilt empty: history not recovered** (red): no copy opened, so the
+  project now has an empty database. Its conversations, Runs and other records
+  are no longer listed; they may still be salvageable from the damaged file.
+
+Both show where the damaged file was kept and, when known, the `backups/`
+folder, and link to this page. The notice stays, also across restarts, until
+you close it with its close button; once closed it does not come back. A
+project that was damaged more than once shows one notice per recovery.
+Opening a project shows the notice instead of failing once with the old
+"open the project again" error.
 
 ## Restoring a copy by hand
 

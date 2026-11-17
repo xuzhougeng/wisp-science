@@ -537,7 +537,9 @@ impl Store {
     /// and the newest backup copy that opens takes its place; with no copy, an
     /// empty database carrying the project row does. The error returned names
     /// which happened and where the damaged file is (#1610); the project opens
-    /// normally on the next attempt. Workspace files are never touched.
+    /// normally on the next attempt. The same outcome is recorded in the
+    /// application database for the user's notice (#1635). Workspace files
+    /// are never touched.
     async fn recover_project_database(
         registry: &ProjectRegistry,
         id: &str,
@@ -561,6 +563,9 @@ impl Store {
             Ok(Some(owner)) => owner,
             _ => std::path::PathBuf::new(),
         };
+        let backup_dir = super::upgrade_backup::directory_of(&owner);
+        let backup_dir = backup_dir.as_deref().map(|dir| dir.to_string_lossy());
+        let damaged_path = aside.to_string_lossy();
         for copy in super::upgrade_backup::copies_of(&owner, database, Some(id)) {
             let copy_name = copy
                 .file_name()
@@ -573,6 +578,15 @@ impl Store {
                 Ok(pool) => {
                     Self::close_pool(&pool).await;
                     tracing::warn!(project_id = %id, copy = %copy_name, "Project database restored from its backup copy");
+                    Self::record_recovery(
+                        registry,
+                        id,
+                        wisp_dto::ProjectDatabaseRecoveryKind::Restored,
+                        Some(&copy_name),
+                        &damaged_path,
+                        backup_dir.as_deref(),
+                    )
+                    .await;
                     return anyhow::anyhow!(
                         "project_database_restored:{copy_name}:{}",
                         aside.display()
@@ -585,11 +599,48 @@ impl Store {
             }
         }
         match Self::rebuild_project_database(registry, id, database).await {
-            Ok(()) => anyhow::anyhow!("project_database_rebuilt:{}", aside.display()),
+            Ok(()) => {
+                Self::record_recovery(
+                    registry,
+                    id,
+                    wisp_dto::ProjectDatabaseRecoveryKind::Rebuilt,
+                    None,
+                    &damaged_path,
+                    backup_dir.as_deref(),
+                )
+                .await;
+                anyhow::anyhow!("project_database_rebuilt:{}", aside.display())
+            }
             Err(error) => error.context(format!(
                 "Project database is damaged; it was moved to {} and no replacement could be made",
                 aside.display()
             )),
+        }
+    }
+
+    /// Every entry point reaches recovery through `route_project`, so writing
+    /// the outcome here leaves a pending notice whether or not the caller shows
+    /// the returned error (#1635). A failed write is logged; it must not turn a
+    /// completed recovery into a failure.
+    async fn record_recovery(
+        registry: &ProjectRegistry,
+        id: &str,
+        kind: wisp_dto::ProjectDatabaseRecoveryKind,
+        copy_name: Option<&str>,
+        damaged_path: &str,
+        backup_dir: Option<&str>,
+    ) {
+        if let Err(error) = super::project_recoveries::record(
+            &registry.global,
+            id,
+            kind,
+            copy_name,
+            damaged_path,
+            backup_dir,
+        )
+        .await
+        {
+            tracing::error!(project_id = %id, %error, "Failed to record the project database recovery");
         }
     }
 
@@ -2593,6 +2644,18 @@ mod tests {
         Store::close_pool(&store.pool).await;
     }
 
+    /// A path with its parent's links resolved, so `/var` and `/private/var`
+    /// on macOS (and a verbatim prefix on Windows) compare equal. The last
+    /// component need not exist.
+    fn resolved(path: impl AsRef<Path>) -> std::path::PathBuf {
+        let path = path.as_ref();
+        match (path.parent(), path.file_name()) {
+            (Some(parent), Some(name)) => std::fs::canonicalize(parent)
+                .map_or_else(|_| path.to_path_buf(), |parent| parent.join(name)),
+            _ => path.to_path_buf(),
+        }
+    }
+
     fn damaged_files(database: &Path) -> Vec<String> {
         std::fs::read_dir(database.parent().unwrap())
             .unwrap()
@@ -2652,5 +2715,210 @@ mod tests {
         assert_eq!(name, "Study");
         assert!(workspace.ends_with("study"), "{workspace}");
         assert_eq!(store.message_count("frame").await.unwrap(), 0);
+    }
+
+    /// Damage the closed project database so SQLite reports code 11.
+    fn malform(database: &Path) {
+        let mut bytes = std::fs::read(database).unwrap();
+        bytes[100..].fill(0);
+        std::fs::write(database, bytes).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_restore_leaves_one_pending_outcome_across_restarts_until_acknowledged() {
+        let root = tempfile::tempdir().unwrap();
+        let (path, database, backups) = closed_project_with_message(root.path(), true).await;
+        let copies = backup_names(&backups, "project-study.");
+        malform(&database);
+
+        let store = Store::open_application(&path).await.unwrap();
+        assert!(store
+            .pending_project_database_recoveries("study")
+            .await
+            .unwrap()
+            .is_empty());
+        let error = store.get_project("study").await.unwrap_err().to_string();
+        assert!(error.starts_with("project_database_restored:"), "{error}");
+        let damaged = damaged_files(&database);
+        assert_eq!(damaged.len(), 1, "{damaged:?}");
+        let pending = store
+            .pending_project_database_recoveries("study")
+            .await
+            .unwrap();
+        assert_eq!(pending.len(), 1, "{pending:?}");
+        let outcome = &pending[0];
+        assert_eq!(outcome.project_id, "study");
+        assert_eq!(
+            outcome.kind,
+            wisp_dto::ProjectDatabaseRecoveryKind::Restored
+        );
+        assert_eq!(outcome.copy_name.as_deref(), Some(copies[1].as_str()));
+        assert_eq!(
+            Path::new(&outcome.damaged_path),
+            database.with_file_name(&damaged[0])
+        );
+        assert_eq!(
+            outcome.backup_dir.as_deref().map(resolved),
+            Some(resolved(&backups))
+        );
+        assert!(outcome.occurred_at > 0);
+        // The outcome is in the application database, not the replaced one.
+        let project = Store::open_read_only(&database).await.unwrap();
+        let in_project: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM project_database_recoveries")
+                .fetch_one(&project.pool)
+                .await
+                .unwrap();
+        assert_eq!(in_project, 0);
+        Store::close_pool(&project.pool).await;
+        // Opening normally afterwards adds nothing.
+        store.get_project("study").await.unwrap().unwrap();
+        close_everything(store).await;
+
+        // A restart still has it.
+        let store = Store::open_application(&path).await.unwrap();
+        store.get_project("study").await.unwrap().unwrap();
+        assert_eq!(
+            store
+                .pending_project_database_recoveries("study")
+                .await
+                .unwrap(),
+            pending
+        );
+        // Another project cannot acknowledge it.
+        assert!(!store
+            .acknowledge_project_database_recovery("other", outcome.id)
+            .await
+            .unwrap());
+        assert!(store
+            .acknowledge_project_database_recovery("study", outcome.id)
+            .await
+            .unwrap());
+        assert!(!store
+            .acknowledge_project_database_recovery("study", outcome.id)
+            .await
+            .unwrap());
+        assert!(store
+            .pending_project_database_recoveries("study")
+            .await
+            .unwrap()
+            .is_empty());
+        close_everything(store).await;
+
+        let store = Store::open_application(&path).await.unwrap();
+        assert!(store
+            .pending_project_database_recoveries("study")
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_rebuild_is_recorded_as_rebuilt_without_a_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let (path, database, backups) = closed_project_with_message(root.path(), false).await;
+        std::fs::write(&database, b"not a database".repeat(400)).unwrap();
+
+        let store = Store::open_application(&path).await.unwrap();
+        let error = store.get_project("study").await.unwrap_err().to_string();
+        assert!(error.starts_with("project_database_rebuilt:"), "{error}");
+        let damaged = damaged_files(&database);
+        let pending = store
+            .pending_project_database_recoveries("study")
+            .await
+            .unwrap();
+        assert_eq!(pending.len(), 1, "{pending:?}");
+        assert_eq!(
+            pending[0].kind,
+            wisp_dto::ProjectDatabaseRecoveryKind::Rebuilt
+        );
+        assert_eq!(pending[0].copy_name, None);
+        assert_eq!(
+            Path::new(&pending[0].damaged_path),
+            database.with_file_name(&damaged[0])
+        );
+        // Where copies would have been, though there were none.
+        assert_eq!(
+            pending[0].backup_dir.as_deref().map(resolved),
+            Some(resolved(&backups))
+        );
+        close_everything(store).await;
+        let store = Store::open_application(&path).await.unwrap();
+        assert_eq!(
+            store
+                .pending_project_database_recoveries("study")
+                .await
+                .unwrap(),
+            pending
+        );
+    }
+
+    /// The project list only logs the recovery error; the outcome must still
+    /// be waiting when the project is opened afterwards, exactly once.
+    #[tokio::test]
+    async fn a_recovery_found_by_the_project_list_is_still_pending_at_the_next_open() {
+        let root = tempfile::tempdir().unwrap();
+        let (path, database, _) = closed_project_with_message(root.path(), true).await;
+        malform(&database);
+
+        let store = Store::open_application(&path).await.unwrap();
+        store.list_projects().await.unwrap();
+        assert_eq!(damaged_files(&database).len(), 1);
+        // The explicit open that follows finds a healthy database.
+        assert_eq!(
+            store.get_project("study").await.unwrap().unwrap().0,
+            "Study"
+        );
+        assert_eq!(store.message_count("frame").await.unwrap(), 1);
+        let pending = store
+            .pending_project_database_recoveries("study")
+            .await
+            .unwrap();
+        assert_eq!(pending.len(), 1, "{pending:?}");
+        assert_eq!(
+            pending[0].kind,
+            wisp_dto::ProjectDatabaseRecoveryKind::Restored
+        );
+    }
+
+    #[tokio::test]
+    async fn the_recovery_table_migration_is_idempotent_and_keeps_its_rows() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open(&root.path().join("wisp.sqlite")).await.unwrap();
+        let id = crate::project_recoveries::record(
+            &store.pool,
+            "p",
+            wisp_dto::ProjectDatabaseRecoveryKind::Rebuilt,
+            None,
+            "C:\\study\\.wisp\\project.sqlite.corrupt-20261024-010203",
+            None,
+        )
+        .await
+        .unwrap();
+        Store::migrate(&store.pool).await.unwrap();
+        // Forget the record, as a database from before it would have.
+        sqlx::query("DELETE FROM wisp_schema_migrations WHERE version=?")
+            .bind(crate::PROJECT_DATABASE_RECOVERIES_MIGRATION)
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        Store::migrate(&store.pool).await.unwrap();
+        Store::migrate(&store.pool).await.unwrap();
+        assert!(store
+            .schema_migrations()
+            .await
+            .unwrap()
+            .contains(&crate::PROJECT_DATABASE_RECOVERIES_MIGRATION.to_string()));
+        let pending = store
+            .pending_project_database_recoveries("p")
+            .await
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, id);
+        // Windows paths are kept verbatim.
+        assert_eq!(
+            pending[0].damaged_path,
+            "C:\\study\\.wisp\\project.sqlite.corrupt-20261024-010203"
+        );
     }
 }
