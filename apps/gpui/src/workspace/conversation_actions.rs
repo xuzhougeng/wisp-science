@@ -592,17 +592,24 @@ impl Workspace {
             .bg(cx.theme().popover)
             .shadow_md()
             // Finding one's way in it.
-            .child(action(
-                "conversation-outline",
-                "list",
-                tr("Outline: what you asked, in order"),
-                self.state.session.is_some(),
-                |this, _, cx| {
-                    this.layers.open(Layer::Outline);
-                    cx.notify();
-                },
-                cx,
-            ))
+            // A menu item is its short name; what it does is its tooltip.
+            .child(
+                action(
+                    "conversation-outline",
+                    "list",
+                    tr("Outline"),
+                    self.state.session.is_some(),
+                    |this, _, cx| {
+                        this.layers.open(Layer::Outline);
+                        cx.notify();
+                    },
+                    cx,
+                )
+                .tooltip(|window, cx| {
+                    gpui_component::tooltip::Tooltip::new(tr("What you asked, in order"))
+                        .build(window, cx)
+                }),
+            )
             .child(action(
                 "refresh",
                 "refresh",

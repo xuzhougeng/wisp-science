@@ -69,7 +69,11 @@ for text size moves all four together.
   for at most one line per region that must be seen first, used sparingly.
   What is chosen, open or current is said with the ground, ink against
   faded ink, or teal, never with weight. No Semibold or Bold anywhere; a
-  terminal's bold is drawn in Medium. A name with a note: the name in
+  terminal's bold is drawn in Medium. In Markdown (answers, documents,
+  reports) strong text and every heading are Medium, and headings rank by
+  size only: an h1 1.3× body text (no larger than a title), an h2 1.15×,
+  the rest body size (`surfaces::heading_scale`); a table's header row is
+  Regular like its cells. A name with a note: the name in
   ink, the note faded, the same weight. A test in `surfaces.rs` rejects a
   heavier weight anywhere else.
 - Rank is said with colour (`muted_foreground`), not with a smaller size.
@@ -352,6 +356,21 @@ names and never a colour of their own.
   line of them stands between the text and what follows.
 - **The composer** is one white box (`radius_lg`, the `input.border` line,
   the teal ring on focus): the text on top, one line of controls under it.
+  It is attached to the record line (spec §7.3): its left border is on the
+  line, past the 64 px gutter, and its right border is where answers and
+  record rows end (`ENTRY_RIGHT`, 24 px short of the column). Its text,
+  chips and the `+` icon start where an answer's text does (`ENTRY_TEXT`
+  past the line; the `+` button reaches `ICON_INSET` left of it); the send
+  button keeps the box's 8 px inset. The line runs unbroken down to the
+  box's top border (behind a short transcript too, `record_line_behind`)
+  and not beside or below it. The gutter beside the box's first line holds
+  the next entry's number in faded fact text (`present::next_entry_number`),
+  nothing where the conversation cannot be written to. The bars above it
+  and the composer's own strips are cards beside the line with the box's
+  edges. All of it goes through `surfaces::entry_aligned`. In a split
+  beside a document narrower than 420 px (`GUTTER_COLUMN_MIN`) the gutter
+  and the numbers are left out and the line is the column's left edge;
+  the box stays on it.
   - At the left end a `+` icon button opens a menu (`Layer::PlusMenu`) of
     what can be put into the message, each an icon and a word with its key
     in fact text: attach files, add a project file, conversation or skill

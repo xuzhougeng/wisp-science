@@ -799,16 +799,19 @@ pub(super) fn entry_row(
     time: Option<SharedString>,
     dot: EntryDot,
     content: AnyElement,
+    gutter: bool,
     cx: &App,
 ) -> Div {
     let theme = cx.theme();
+    // In a column too narrow for it (`entry_gutter`), no gutter: the line
+    // is the column's left edge, and the number and time are left out.
+    let (number, time) = if gutter { (number, time) } else { (None, None) };
     let gutter = div()
         .flex_none()
-        .w(px(ENTRY_GUTTER))
+        .w(px(if gutter { ENTRY_GUTTER } else { 0. }))
         .v_flex()
         .items_end()
-        .pr_3()
-        .pt(px(ENTRY_FIRST_LINE - 9.))
+        .when(gutter, |gutter| gutter.pr_3().pt(px(ENTRY_FIRST_LINE - 9.)))
         .children(number.map(|number| fact(entry_label(number), cx)))
         .children(time.map(|time| fact(time, cx)));
     const DOT: f32 = 9.;
@@ -839,6 +842,114 @@ pub(super) fn entry_row(
             .child(content)
             .children(dot),
     )
+}
+
+/// How far the content of an entry, and what is laid on the record line
+/// with it, stops short of the reading column's right edge: an answer's
+/// `px_6`, a record row's `pr_6`, the composer's and the bars' right edge.
+pub(super) const ENTRY_RIGHT: f32 = 24.;
+
+/// How far an answer's text stands right of the record line (its `px_6`),
+/// and so the composer's text inside its box.
+pub(super) const ENTRY_TEXT: f32 = 24.;
+
+/// How far a toolbar icon stands inside its icon button (`icon_action`):
+/// half of what the button is wider than the icon.
+pub(super) const ICON_INSET: f32 = (ICON_BUTTON - IconSize::Toolbar.px()) / 2.;
+
+/// The narrowest conversation column that keeps the gutter: in a narrower
+/// one (a split beside a document) the line is the column's left edge.
+pub(super) const GUTTER_COLUMN_MIN: f32 = 420.;
+
+/// Where the composer's first line of text sits below the box's top, for
+/// the gutter's number: the border, the box's `p_2` and the input's own
+/// 8 px, less the fact's slightly shorter line.
+const COMPOSER_FIRST_LINE: f32 = 1. + 8. + 8. + 1.;
+
+/// How something is laid on the record line with the transcript's rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct EntryPlace {
+    /// Whether the column keeps its gutter (`GUTTER_COLUMN_MIN`).
+    pub gutter: bool,
+    /// The number in the gutter, beside the composer's first line.
+    pub number: Option<usize>,
+    /// Whether the record line runs down beside it. The composer's box
+    /// does not: its own left border is where the line ends.
+    pub line: bool,
+}
+
+/// What sits between the transcript and the composer (`surfaces::bar`
+/// items, the composer's strips, the read-only card), and the composer's
+/// box, on the record line: past the gutter, the left edge on the line,
+/// the right edge `ENTRY_RIGHT` short of the column's, as the rows above
+/// are laid. The one place these edges are set, so the line, the box and
+/// the answers' text cannot drift apart.
+pub(super) fn entry_aligned(content: impl IntoElement, place: EntryPlace, cx: &App) -> Div {
+    let gutter = div()
+        .flex_none()
+        .w(px(if place.gutter { ENTRY_GUTTER } else { 0. }))
+        .v_flex()
+        .items_end()
+        .when(place.gutter, |gutter| {
+            gutter.pr_3().pt(px(COMPOSER_FIRST_LINE))
+        })
+        .children(
+            place
+                .number
+                .filter(|_| place.gutter)
+                .map(|number| fact(entry_label(number), cx)),
+        );
+    let line = place.line.then(|| {
+        div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left_0()
+            .w(px(1.))
+            .bg(cx.theme().border)
+    });
+    div().w_full().flex().child(gutter).child(
+        div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .mr(px(ENTRY_RIGHT))
+            .children(line)
+            .child(content),
+    )
+}
+
+/// The record line behind the transcript's list, so it runs on through
+/// the space under a short transcript down to the bars and the composer.
+/// The rows draw their own stretch on the same x.
+pub(super) fn record_line_behind(gutter: bool, cx: &App) -> Div {
+    div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left_0()
+        .right_0()
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .w_full()
+                .max_w(px(READING_WIDTH))
+                .h_full()
+                .flex()
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(if gutter { ENTRY_GUTTER } else { 0. })),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .h_full()
+                        .border_l_1()
+                        .border_color(cx.theme().border),
+                ),
+        )
 }
 
 /// How an entry's number is written in the gutter.
@@ -1103,10 +1214,24 @@ fn room_in(height: f32, cap: Option<f32>, half: bool) -> f32 {
 /// paragraphs read as paragraphs.
 pub(super) const PARAGRAPH_GAP: f32 = 0.55;
 
+/// How much larger than body text a Markdown heading is, by its level: an
+/// h1 no larger than a title (about 1.3×), an h2 1.15×, the rest body size.
+/// Every heading is Medium (the vendored renderer), so size ranks them.
+pub(super) fn heading_scale(level: u8) -> f32 {
+    match level {
+        1 => 1.3,
+        2 => 1.15,
+        _ => 1.0,
+    }
+}
+
 /// The style of Markdown text: the component library's, with the paragraph
-/// gap (`PARAGRAPH_GAP`, in rems).
+/// gap (`PARAGRAPH_GAP`, in rems) and headings sized by `heading_scale`
+/// from the body size the library assumes (14 px).
 pub(super) fn text_style() -> gpui_component::text::TextViewStyle {
-    gpui_component::text::TextViewStyle::default().paragraph_gap(rems(PARAGRAPH_GAP))
+    gpui_component::text::TextViewStyle::default()
+        .paragraph_gap(rems(PARAGRAPH_GAP))
+        .heading_font_size(|level, base| base * heading_scale(level))
 }
 
 /// Markdown text, as answers, documents, reports and previews show it,
@@ -1524,12 +1649,21 @@ pub(super) fn bar(id: impl Into<ElementId>, cx: &App) -> Stateful<Div> {
 }
 
 /// Stacks the bars that sit between the transcript and the composer in the
-/// conversation's reading column. The inset is the composer's own
-/// (`px_4` in `render_composer`), so their edges are the composer box's at
-/// any width.
-pub(super) fn above_composer(bars: Vec<AnyElement>) -> Option<Div> {
+/// conversation's reading column, on the record line (`entry_aligned`),
+/// so their edges are the composer box's at any width.
+pub(super) fn above_composer(bars: Vec<AnyElement>, gutter: bool, cx: &App) -> Option<Div> {
     (!bars.is_empty()).then(|| {
-        reading_column(div().v_flex().gap_2().px_4().pt_2().pb_1().children(bars)).flex_shrink_0()
+        // Cards beside the record line, which runs on past them.
+        reading_column(entry_aligned(
+            div().v_flex().gap_2().pt_2().pb_2().children(bars),
+            EntryPlace {
+                gutter,
+                number: None,
+                line: true,
+            },
+            cx,
+        ))
+        .flex_shrink_0()
     })
 }
 
@@ -2410,6 +2544,51 @@ mod tests {
         }
     }
 
+    /// The composer attaches to the record line: one helper lays the bars,
+    /// the composer's strips and its box on the line, so the line, the
+    /// box's edges and the answers' text cannot drift apart again.
+    #[test]
+    fn the_composer_and_the_bars_are_laid_on_the_record_line() {
+        // The edges, from the column's left, at the full reading width.
+        let line = super::ENTRY_GUTTER;
+        let answer_text = line + 1. + 24.; // an answer's `px_6`
+        let box_text = line + 1. + super::ENTRY_TEXT;
+        assert_eq!(box_text, answer_text);
+        assert_eq!(READING_WIDTH - super::ENTRY_RIGHT, READING_WIDTH - 24.); // `pr_6`
+        // The `+` icon on the text edge, its hit area to the left.
+        assert_eq!(
+            super::ICON_INSET,
+            (ICON_BUTTON - IconSize::Toolbar.px()) / 2.
+        );
+        let squeeze = |text: &str| -> String { text.split_whitespace().collect() };
+        let files = sources();
+        let shell = &files
+            .iter()
+            .find(|(path, _)| path.ends_with("workspace/shell.rs"))
+            .unwrap()
+            .1;
+        let composer = squeeze(method(shell, "render_composer").unwrap());
+        assert_eq!(composer.matches("surfaces::entry_aligned(").count(), 3);
+        assert!(!composer.contains(".px_4()"));
+        assert!(composer.contains(".pl(px(surfaces::ENTRY_TEXT))"));
+        assert!(composer.contains(".px_0()"));
+        assert!(
+            composer.contains("present::next_entry_number(&self.rows,self.earlier_users,true)")
+        );
+        let plus = squeeze(method(shell, "render_composer_plus").unwrap());
+        assert!(plus.contains(".ml(px(-surfaces::ICON_INSET))"));
+        // The bars go through the same helper, and the line runs behind the
+        // transcript down to them.
+        let stacked = squeeze(method(include_str!("surfaces.rs"), "above_composer").unwrap());
+        assert!(stacked.contains("reading_column(entry_aligned("));
+        let conversation = squeeze(method(shell, "render_conversation").unwrap());
+        assert!(conversation.contains("surfaces::record_line_behind(self.entry_gutter(),cx)"));
+        // The rows take the same gutter rule.
+        let row = squeeze(method(shell, "row").unwrap());
+        assert_eq!(row.matches("gutter,cx").count(), 3);
+        assert!(super::GUTTER_COLUMN_MIN < READING_WIDTH);
+    }
+
     #[test]
     fn the_banners_above_the_transcript_keep_its_column() {
         // The error and the notice line up with the transcript and the bars
@@ -3076,6 +3255,46 @@ mod tests {
         );
     }
 
+    /// A menu item is its short name; an explanation goes in its tooltip,
+    /// never after a colon in the item, where the menu's edge cuts it.
+    #[test]
+    fn menu_items_are_short_names_without_a_sentence_after_a_colon() {
+        let mut long = Vec::new();
+        for (path, text) in sources() {
+            let code: String = code(&text).split_whitespace().collect::<Vec<_>>().join(" ");
+            for call in ["menu_item(", "action( \"conversation-"] {
+                for (at, _) in code.match_indices(call) {
+                    let args = &code[at..code.len().min(at + 160)];
+                    if let Some(label) = args.split("tr(\"").nth(1) {
+                        let label = label.split('"').next().unwrap_or_default();
+                        if label.contains(": ") {
+                            long.push(format!("{}: {label}", path.display()));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(long.is_empty(), "{long:#?}");
+        let menu = include_str!("conversation_actions.rs");
+        assert!(menu.contains("tr(\"Outline\")"));
+        assert!(menu.contains("tr(\"What you asked, in order\")"));
+    }
+
+    #[test]
+    fn markdown_headings_rank_by_size_and_never_outgrow_a_title() {
+        assert_eq!(super::heading_scale(1), 1.3);
+        assert_eq!(super::heading_scale(2), 1.15);
+        for level in 3..=6 {
+            assert_eq!(super::heading_scale(level), 1.0);
+        }
+        // An h1 at 14 px body text stays at the title's 18 px or under.
+        assert!(14. * super::heading_scale(1) <= 18.5);
+        let style = super::text_style();
+        let size = style.heading_font_size.as_ref().expect("headings sized");
+        assert_eq!(size(1, gpui::px(14.)), gpui::px(14. * 1.3));
+        assert_eq!(size(4, gpui::px(14.)), gpui::px(14.));
+    }
+
     #[test]
     fn markdown_keeps_its_paragraphs_apart_everywhere() {
         // About 0.6 em of 14 px body text, in rems.
@@ -3604,6 +3823,28 @@ mod tests {
             }
             if code.contains("font_medium()") {
                 found.push(format!("{name} uses font_medium()"));
+            }
+        }
+        // The vendored text renderer draws answers, documents and reports:
+        // strong text and headings are Medium there, nothing heavier
+        // (vendor/gpui-component/WISP-PATCH.md).
+        // Outside comments, which may name what was there before.
+        let renderer: String = code(include_str!(
+            "../../../../vendor/gpui-component/src/text/node.rs"
+        ))
+        .lines()
+        .map(|line| line.split("//").next().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n");
+        for heavy in [
+            "FontWeight::BOLD",
+            "FontWeight::SEMIBOLD",
+            "FontWeight::EXTRA_BOLD",
+        ] {
+            if renderer.contains(heavy) {
+                found.push(format!(
+                    "vendor/gpui-component/src/text/node.rs uses {heavy}"
+                ));
             }
         }
         assert!(found.is_empty(), "{found:#?}");

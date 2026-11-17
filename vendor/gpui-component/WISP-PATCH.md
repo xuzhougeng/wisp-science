@@ -14,7 +14,7 @@ selected through the `[patch.crates-io]` section of `apps/gpui/Cargo.toml`.
 
 ## Local change
 
-Only `src/text/node.rs` is changed, at the two places marked `WISP PATCH`:
+Only `src/text/node.rs` is changed, at the places marked `WISP PATCH`:
 
 - `Node::render_block`, `Node::Root`: a text view that does not scroll draws
   its root with `is_last: true` and passed that to every top-level block, so
@@ -23,6 +23,16 @@ Only `src/text/node.rs` is changed, at the two places marked `WISP PATCH`:
   it is the root's last.
 - `Node::render_table`: the gap after a table is `paragraph_gap`, not a fixed
   `1rem`.
+- Inline strong text (`TextMark::bold`, also from HTML `<b>`/`<strong>`) is
+  `FontWeight::MEDIUM`, not `BOLD`.
+- `Node::Heading`: every level is `FontWeight::MEDIUM` (was Bold for h1,
+  Semibold for h2–h5, Medium for h6). Sizes are left to the library's
+  `TextViewStyle::heading_font_size` hook, which Wisp sets from its side
+  (`surfaces::text_style`).
+
+These follow Wisp's weight rule (no Semibold or Bold); a test in
+`apps/gpui/src/workspace/surfaces.rs` rejects `FontWeight::BOLD` or
+`SEMIBOLD` in `src/text/node.rs` outside comments.
 
 ## Removal
 

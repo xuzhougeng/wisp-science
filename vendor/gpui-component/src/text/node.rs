@@ -636,7 +636,8 @@ impl Paragraph {
 
                     let mut highlight = HighlightStyle::default();
                     if style.bold {
-                        highlight.font_weight = Some(FontWeight::BOLD);
+                        // WISP PATCH: strong text is Medium, never heavier.
+                        highlight.font_weight = Some(FontWeight::MEDIUM);
                     }
                     if style.italic {
                         highlight.font_style = Some(FontStyle::Italic);
@@ -1166,14 +1167,16 @@ impl Node {
                 .child(paragraph.render(node_cx, window, cx))
                 .into_any_element(),
             Node::Heading { level, children } => {
+                // WISP PATCH: every heading is Medium, never heavier; size
+                // ranks them (`TextViewStyle::heading_font_size`).
                 let (text_size, font_weight) = match level {
-                    1 => (rems(2.), FontWeight::BOLD),
-                    2 => (rems(1.5), FontWeight::SEMIBOLD),
-                    3 => (rems(1.25), FontWeight::SEMIBOLD),
-                    4 => (rems(1.125), FontWeight::SEMIBOLD),
-                    5 => (rems(1.), FontWeight::SEMIBOLD),
+                    1 => (rems(2.), FontWeight::MEDIUM),
+                    2 => (rems(1.5), FontWeight::MEDIUM),
+                    3 => (rems(1.25), FontWeight::MEDIUM),
+                    4 => (rems(1.125), FontWeight::MEDIUM),
+                    5 => (rems(1.), FontWeight::MEDIUM),
                     6 => (rems(1.), FontWeight::MEDIUM),
-                    _ => (rems(1.), FontWeight::NORMAL),
+                    _ => (rems(1.), FontWeight::MEDIUM),
                 };
 
                 let mut text_size = text_size.to_pixels(node_cx.style.heading_base_font_size);

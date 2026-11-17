@@ -944,6 +944,7 @@ impl Workspace {
             return div().into_any_element();
         }
         let body = self.row_body(index, window, cx);
+        let gutter = self.entry_gutter();
         let number = present::entry_number(&self.rows, index, self.earlier_users);
         let time = number
             .and_then(|_| self.rows.get(index)?.timestamp)
@@ -959,7 +960,7 @@ impl Workspace {
             Some(_) => surfaces::EntryDot::Open,
         };
         if !self.own_run_cards.contains_key(&index) {
-            return surfaces::entry_row(number, time, dot, body, cx).into_any_element();
+            return surfaces::entry_row(number, time, dot, body, gutter, cx).into_any_element();
         }
         let (above, below) = self.own_run_cards_at(index, window, cx);
         let above = (!above.is_empty()).then(|| {
@@ -968,6 +969,7 @@ impl Workspace {
                 None,
                 surfaces::EntryDot::None,
                 div().w_full().v_flex().children(above).into_any_element(),
+                gutter,
                 cx,
             )
         });
@@ -985,9 +987,23 @@ impl Workspace {
                     .child(body)
                     .children(below)
                     .into_any_element(),
+                gutter,
                 cx,
             ))
             .into_any_element()
+    }
+
+    /// Whether the conversation's column keeps the gutter for entry numbers:
+    /// always, but in a split beside a document narrower than
+    /// `surfaces::GUTTER_COLUMN_MIN`, where the line is the column's edge.
+    pub(super) fn entry_gutter(&self) -> bool {
+        if !self.centre.split_shown(self.state.session.as_deref()) {
+            return true;
+        }
+        self.centre_width.get().is_none_or(|width| {
+            crate::centre::split_widths(width, self.centre.chat_width).1
+                >= surfaces::GUTTER_COLUMN_MIN
+        })
     }
 
     /// Whether row `index` is drawn as a record row: a tool call (not a
@@ -2207,22 +2223,27 @@ impl Workspace {
         // it leads to (quick actions, the `/` list, also opened by typing
         // `/`) open above it.
         let plus_open = self.layers.contains(Layer::PlusMenu);
-        let mut plus = div().relative().flex_none().child(
-            surfaces::icon_action(
-                "composer-plus",
-                "plus",
-                tr("Put something into the message, or switch a mode on"),
-                if plus_open {
-                    surfaces::IconTone::Ink
-                } else {
-                    surfaces::IconTone::Faded
-                },
-                cx,
-            )
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.toggle_composer_menu(Layer::PlusMenu, window, cx)
-            })),
-        );
+        // Its icon on the box's text edge; its hit area reaches left of it.
+        let mut plus = div()
+            .relative()
+            .flex_none()
+            .ml(px(-surfaces::ICON_INSET))
+            .child(
+                surfaces::icon_action(
+                    "composer-plus",
+                    "plus",
+                    tr("Put something into the message, or switch a mode on"),
+                    if plus_open {
+                        surfaces::IconTone::Ink
+                    } else {
+                        surfaces::IconTone::Faded
+                    },
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.toggle_composer_menu(Layer::PlusMenu, window, cx)
+                })),
+            );
         if plus_open {
             // Painted after everything else: a parent's border is drawn over
             // its own children, and the composer box has one.
@@ -2568,9 +2589,19 @@ impl Workspace {
             .as_ref()
             .and_then(|status| status.usage.as_ref());
 
-        // `px_4` is the inset `surfaces::above_composer` shares, so the bars
-        // there line up with the box below.
-        let mut area = div().v_flex().flex_shrink_0().gap_2().px_4().pb_4().pt_1();
+        // The composer's strips (console, usage, thinking, plan, the
+        // read-only card) and its box are laid on the record line
+        // (`surfaces::entry_aligned`): the strips beside the line, the box
+        // with its left border on it and the next entry's number in the
+        // gutter beside its first line.
+        let gutter = self.entry_gutter();
+        // No line before the first entry: nothing is on the record yet.
+        let strips = surfaces::EntryPlace {
+            gutter,
+            number: None,
+            line: !self.rows.is_empty(),
+        };
+        let mut area = div().v_flex().gap_2().pt_2().pb_2();
         if let Some(console) = self.render_console(cx) {
             area = area.child(console);
         }
@@ -2719,7 +2750,15 @@ impl Workspace {
         // A conversation that cannot be written to says why in place of
         // the box, so nothing looks typed into and refused.
         if let Some(why) = self.read_only() {
-            return area.child(self.read_only_card(&why, cx));
+            return div()
+                .v_flex()
+                .flex_shrink_0()
+                .pb_4()
+                .child(surfaces::entry_aligned(
+                    area.child(self.read_only_card(&why, cx)),
+                    strips,
+                    cx,
+                ));
         }
         if self.layers.contains(Layer::ConfirmFullAccess) {
             area = area.child(
@@ -2750,10 +2789,15 @@ impl Workspace {
                     ),
             );
         }
+        // The text, the chips and the `+` icon start where an answer's
+        // text does (`ENTRY_TEXT` past the line); the send button keeps
+        // the box's own inset on the right.
         let mut editor = div()
             .v_flex()
             .gap_1()
-            .p_2()
+            .py_2()
+            .pl(px(surfaces::ENTRY_TEXT))
+            .pr_2()
             .rounded(cx.theme().radius_lg)
             .border_1()
             .border_color(cx.theme().input)
@@ -2776,7 +2820,8 @@ impl Workspace {
             }
             editor = editor.child(chips);
         }
-        area.child(
+        let next = present::next_entry_number(&self.rows, self.earlier_users, true);
+        let editor =
             editor
                 .child(
                     // Return sends here when that is the chosen key: the
@@ -2790,6 +2835,8 @@ impl Workspace {
                         .child(
                             super::surfaces::input(&self.composer, cx)
                                 .appearance(false)
+                                // Its text on the box's text edge.
+                                .px_0()
                                 .disabled(self.pending),
                         ),
                 )
@@ -2815,8 +2862,21 @@ impl Workspace {
                                 .children(conditions),
                         )
                         .child(actions),
-                ),
-        )
+                );
+        div()
+            .v_flex()
+            .flex_shrink_0()
+            .pb_4()
+            .child(surfaces::entry_aligned(area, strips, cx))
+            .child(surfaces::entry_aligned(
+                editor,
+                surfaces::EntryPlace {
+                    gutter,
+                    number: next,
+                    line: false,
+                },
+                cx,
+            ))
     }
 
     /// The composer's `+` menu: first what can be put into the message
@@ -3156,27 +3216,33 @@ impl Workspace {
         } else {
             px(0.)
         };
-        content = content.child(
-            div()
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .flex_col()
-                .pr(margin)
-                .child(
-                    // Every row keeps the reading column, centred in what the
-                    // sidebar and the side panel leave.
-                    list(self.list.clone(), move |index, window, cx| {
-                        weak.update(cx, |this, cx| this.found_row(index, window, cx))
-                            .map(|row| surfaces::reading_column(row).into_any_element())
-                            .unwrap_or_else(|_| div().into_any_element())
-                    })
+        content =
+            content.child(
+                div()
+                    .relative()
                     .flex_1()
-                    .min_h_0(),
-                )
-                .children(pet),
-        );
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .pr(margin)
+                    // The record line under a short transcript too, down to
+                    // the bars and the composer.
+                    .children((!self.rows.is_empty()).then(|| {
+                        surfaces::record_line_behind(self.entry_gutter(), cx).right(margin)
+                    }))
+                    .child(
+                        // Every row keeps the reading column, centred in what the
+                        // sidebar and the side panel leave.
+                        list(self.list.clone(), move |index, window, cx| {
+                            weak.update(cx, |this, cx| this.found_row(index, window, cx))
+                                .map(|row| surfaces::reading_column(row).into_any_element())
+                                .unwrap_or_else(|_| div().into_any_element())
+                        })
+                        .flex_1()
+                        .min_h_0(),
+                    )
+                    .children(pet),
+            );
         // What waits on the user between the transcript and the composer
         // keeps the composer's column, with its edges on the composer box's.
         let bars = [
@@ -3203,6 +3269,8 @@ impl Workspace {
         let content = content
             .children(surfaces::above_composer(
                 bars.into_iter().flatten().collect(),
+                self.entry_gutter(),
+                cx,
             ))
             .child(surfaces::reading_column(self.render_composer(running, cx)).flex_shrink_0());
         // A document opened in the centre takes the conversation's place,
