@@ -44,9 +44,20 @@ async function enterProject(page: Page, which: "default" | "other") {
   await expect(page.locator("#composer-input")).toBeVisible();
 }
 
+// Arguments reach the mock as a Map, which does not survive the trip out of
+// the page; turn them into plain objects there.
 function invokes(page: Page, cmd: string) {
-  return page.evaluate((name) =>
-    ((window as any).__skillInvokeLog ?? []).filter((call: any) => call.cmd === name), cmd);
+  return page.evaluate((name) => {
+    const plain = (value: any): any => {
+      if (value instanceof Map) return Object.fromEntries([...value].map(([k, v]) => [k, plain(v)]));
+      if (Array.isArray(value)) return value.map(plain);
+      if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, plain(v)]));
+      return value;
+    };
+    return ((window as any).__skillInvokeLog ?? [])
+      .filter((call: any) => call.cmd === name)
+      .map((call: any) => ({ cmd: call.cmd, args: plain(call.args) }));
+  }, cmd);
 }
 
 test("a restored copy is announced once per entry until dismissed, then never again", async ({ page }) => {
@@ -72,7 +83,7 @@ test("a restored copy is announced once per entry until dismissed, then never ag
   await notice.getByRole("button", { name: /Recovery guide|恢复说明/ }).click();
   await expect.poll(async () => (await invokes(page, "open_external_url")).length).toBe(1);
   const [guide] = await invokes(page, "open_external_url");
-  const url = guide.args instanceof Map ? guide.args.get("url") : guide.args?.url;
+  const url = guide.args?.url;
   expect(String(url)).toMatch(/\/docs\/upgrade-backups(\.zh-CN)?\.md#/);
 
   // Not acknowledged yet: a restart shows it again.
@@ -84,7 +95,7 @@ test("a restored copy is announced once per entry until dismissed, then never ag
   await expect(page.getByTestId("database-recovery-notice")).toHaveCount(0);
   await expect.poll(async () => (await invokes(page, "acknowledge_project_database_recovery")).length).toBe(1);
   const [ack] = await invokes(page, "acknowledge_project_database_recovery");
-  const id = ack.args instanceof Map ? ack.args.get("id") : ack.args?.id;
+  const id = ack.args?.id;
   expect(Number(id)).toBe(restored.id);
 
   // Acknowledged: neither a restart nor a later entry brings it back.
