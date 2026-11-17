@@ -605,24 +605,37 @@ pub async fn build(
         runs.clone(),
         scope.clone(),
     )));
+    let runner = runs.runner();
     agent.add_tool(Box::new(HarvestRunTool::new_in_scope(
         store.clone(),
         runs,
         scope,
     )));
     let (worker, r_worker) = workers();
-    let runtime = session_runtimes(config, session, service_keys.to_vec());
+    let runtime = session_runtimes(config, store, runner, session, service_keys.to_vec());
+    // A call that names no `context_id` goes to the conversation's
+    // environment, and one on a host it has not attached is refused, as in
+    // the WebView (`SessionExecutionContextTool`).
+    let in_conversation = |tool: Box<dyn wisp_tools::Tool>| -> Box<dyn wisp_tools::Tool> {
+        Box::new(
+            wisp_runs::session_context_tool::SessionExecutionContextTool::new(
+                tool,
+                store.clone(),
+                frame,
+            ),
+        )
+    };
     if worker.is_file() {
-        agent.add_tool(Box::new(wisp_runtime::ReplTool::new(
+        agent.add_tool(in_conversation(Box::new(wisp_runtime::ReplTool::new(
             runtime.clone(),
             root.to_string_lossy(),
-        )));
+        ))));
     }
     if r_worker.is_file() {
-        agent.add_tool(Box::new(wisp_runtime::RTool::new(
+        agent.add_tool(in_conversation(Box::new(wisp_runtime::RTool::new(
             runtime,
             root.to_string_lossy(),
-        )));
+        ))));
     }
     Ok(agent)
 }
@@ -646,8 +659,14 @@ pub(crate) fn workers() -> (PathBuf, PathBuf) {
 /// `envs` are the service keys and credentials the interpreters are
 /// started with, as the WebView starts its kernels; an interpreter already
 /// running keeps the ones it started with.
+///
+/// They start on this computer, or on a saved SSH host named by the call
+/// (or by the conversation's environment); `runner` copies the worker to a
+/// host, as the conversation's runs reach it.
 pub(crate) fn session_runtimes(
     config: &Config,
+    store: &Store,
+    runner: Arc<dyn wisp_runs::RunCommandRunner>,
     session: &Session,
     envs: Vec<(String, String)>,
 ) -> wisp_runtime::RuntimeManager {
@@ -661,15 +680,24 @@ pub(crate) fn session_runtimes(
             // is looked for first, as in the WebView desktop; and the R it
             // installed, looked for each time R starts.
             let data = config.data.clone();
-            wisp_runtime::RuntimeManager::local_with_rscript(
+            let local = wisp_runtime::RuntimeManager::local_launcher(
                 config.data.clone(),
-                worker,
-                Some(r_worker),
+                worker.clone(),
+                Some(r_worker.clone()),
                 envs,
                 Some(Arc::new(move || {
                     crate::toolchain::Layout::new(&data).rscript()
                 })),
-            )
+            );
+            wisp_runtime::RuntimeManager::new(Arc::new(
+                crate::context_runtime::ContextRuntimeLauncher::new(
+                    local,
+                    store.clone(),
+                    worker,
+                    r_worker,
+                    runner,
+                ),
+            ))
         })
         .clone()
 }
@@ -941,11 +969,14 @@ async fn reference_context(
                         "Unknown runtime language '{language}'."
                     );
                     let context = environment(context_id).await?;
-                    // This host keeps its interpreters on this computer.
+                    // This host starts interpreters here and on SSH hosts.
                     anyhow::ensure!(
-                        context.kind == ExecutionContextKind::Local,
+                        matches!(
+                            context.kind,
+                            ExecutionContextKind::Local | ExecutionContextKind::Ssh
+                        ),
                         "The {language} runtime on '{}' cannot be used here: Python and R run on \
-                         this computer.",
+                         this computer or a saved SSH host.",
                         label(&context)
                     );
                     runtime_lines.push(format!(
@@ -953,6 +984,8 @@ async fn reference_context(
                          `{language}` tool with this context_id.",
                         label(&context)
                     ));
+                    // As the WebView's `enable_referenced_contexts`.
+                    attach.push(context);
                 }
             }
             Reference::Workflow { id } => {

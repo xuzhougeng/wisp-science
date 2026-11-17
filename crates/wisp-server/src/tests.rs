@@ -6822,9 +6822,9 @@ async fn a_message_can_carry_artifacts_environments_runtimes_and_workflows() {
         Reference::Context {
             id: "ssh:absent".into(),
         },
-        // Interpreters are kept on this computer only.
+        // An interpreter on a host that is not saved.
         Reference::Runtime {
-            context_id: "ssh:gpu".into(),
+            context_id: "ssh:absent".into(),
             language: "python".into(),
         },
         Reference::Runtime {
@@ -6867,6 +6867,10 @@ async fn a_message_can_carry_artifacts_environments_runtimes_and_workflows() {
         Reference::Runtime {
             context_id: "local".into(),
             language: "python".into(),
+        },
+        Reference::Runtime {
+            context_id: "ssh:gpu".into(),
+            language: "r".into(),
         },
         Reference::Workflow {
             id: workflow.id.clone(),
@@ -6915,6 +6919,11 @@ async fn a_message_can_carry_artifacts_environments_runtimes_and_workflows() {
         .unwrap());
     assert!(
         turn.contains("- python runtime on Local (context_id: local): call the `python` tool"),
+        "{turn}"
+    );
+    // An interpreter on a saved host is told the same way.
+    assert!(
+        turn.contains("- r runtime on gpu (context_id: ssh:gpu): call the `r` tool"),
         "{turn}"
     );
     assert!(
@@ -19563,5 +19572,213 @@ async fn a_hosts_files_and_runs_are_listed_and_only_unused_files_deleted() {
         "{script}"
     );
     assert_eq!(script.matches("rm -rf \"$path\"").count(), 1);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_hosts_interpreter_paths_are_kept_and_its_conversations_python_starts_there() {
+    use desktop::{HostInterpreters, SshHostRow};
+    use wisp_tools::ToolEnv;
+
+    /// Keeps where each interpreter was asked to start; starts nothing.
+    struct Launcher(Arc<std::sync::Mutex<Vec<String>>>);
+    struct Idle;
+    #[async_trait]
+    impl wisp_runtime::RuntimeKernel for Idle {
+        async fn execute(
+            &mut self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: &[String],
+            _: &wisp_runtime::RuntimeOutput,
+        ) -> anyhow::Result<wisp_runtime::KernelResp> {
+            Ok(Default::default())
+        }
+        async fn inspect(&mut self, _: &str) -> anyhow::Result<wisp_runtime::RuntimeObjectList> {
+            Ok(Default::default())
+        }
+        async fn shutdown(&mut self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+    #[async_trait]
+    impl wisp_runtime::RuntimeLauncher for Launcher {
+        async fn launch(
+            &self,
+            key: &wisp_runtime::RuntimeKey,
+            _: &Path,
+        ) -> anyhow::Result<wisp_runtime::LaunchedRuntime> {
+            self.0.lock().unwrap().push(key.context_id.clone());
+            Ok(wisp_runtime::LaunchedRuntime::new(
+                Box::new(Idle),
+                Default::default(),
+            ))
+        }
+    }
+    struct Env(std::path::PathBuf);
+    #[async_trait]
+    impl ToolEnv for Env {
+        fn project_root(&self) -> &Path {
+            &self.0
+        }
+        async fn confirm(&self, _: &str) -> bool {
+            true
+        }
+        async fn emit(&self, _: wisp_tools::ToolEvent) {}
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let key = temp.path().join("id_lab");
+    std::fs::write(&key, b"test-key\n").unwrap();
+    let host = SshHostRow {
+        alias: "interp-gpu".into(),
+        host_name: "10.0.0.7".into(),
+        user: "lab".into(),
+        identity_file: key.to_string_lossy().into_owned(),
+        ..Default::default()
+    };
+    server.save_ssh_host(host.clone()).await.unwrap();
+    let store = &server.0.store;
+
+    // Nothing kept yet, and nothing found until a check says.
+    assert_eq!(
+        server.host_interpreters("interp-gpu").await.unwrap(),
+        HostInterpreters::default()
+    );
+    let mut context = store
+        .get_execution_context("ssh:interp-gpu")
+        .await
+        .unwrap()
+        .unwrap();
+    context.capabilities_json = json!({
+        "python_executable": "/usr/bin/python3",
+        "rscript_executable": "/usr/bin/Rscript"
+    })
+    .to_string();
+    store.upsert_execution_context(&context).await.unwrap();
+
+    // A path kept for Python; R stays with what the check found.
+    let kept = server
+        .set_host_interpreters("interp-gpu", " /opt/conda/bin/python ", "  ")
+        .await
+        .unwrap();
+    assert_eq!(
+        kept,
+        HostInterpreters {
+            python: "/opt/conda/bin/python".into(),
+            rscript: String::new(),
+            found_python: Some("/usr/bin/python3".into()),
+            found_rscript: Some("/usr/bin/Rscript".into()),
+        }
+    );
+    // Changing the host keeps it; a path over two lines and a host that
+    // is not saved are refused.
+    server.save_ssh_host(host).await.unwrap();
+    assert_eq!(server.host_interpreters("interp-gpu").await.unwrap(), kept);
+    assert!(server
+        .set_host_interpreters("interp-gpu", "/opt/python\n--version", "")
+        .await
+        .is_err());
+    assert!(server.host_interpreters("ghost").await.is_err());
+    assert_eq!(server.host_interpreters("interp-gpu").await.unwrap(), kept);
+
+    // A conversation whose work goes to the host: the model's `python`
+    // with no `context_id` starts there, and the host is attached for it.
+    let session = create(&server).await;
+    let mut options = server
+        .conversation_status(PROJECT, &session)
+        .await
+        .unwrap()
+        .options;
+    options.runs_on = "interp-gpu".into();
+    server
+        .set_conversation_options(PROJECT, &session, options.clone())
+        .await
+        .unwrap();
+    let started: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    *server.session(&session).runtime.lock().unwrap() = Some(wisp_runtime::RuntimeManager::new(
+        Arc::new(Launcher(started.clone())),
+    ));
+    let root = server.project_root(PROJECT).await.unwrap();
+    let model = server.0.model.read().unwrap().pick(&options.model).unwrap();
+    let request = wisp_dto::native_conversations::SendRequest {
+        session_id: session.clone(),
+        request_id: "turn-1".into(),
+        message: "hello".into(),
+        resume: false,
+        resume_after: None,
+        attachments: Vec::new(),
+        references: Vec::new(),
+        acp_agent_id: None,
+    };
+    let agent = server
+        .wisp_agent(
+            PROJECT,
+            &root,
+            &request,
+            &server.session(&session),
+            &options,
+            &model,
+            false,
+            Vec::new(),
+            None,
+        )
+        .await
+        .unwrap();
+    let python = agent
+        .tools
+        .get("python")
+        .expect("the python tool is offered");
+    let env = Env(root.clone().into());
+    let ran = python.run(&json!({"code": "1"}), &env).await;
+    assert!(ran.success, "{}", ran.content);
+    // Asked for this computer by name, it starts here.
+    let ran = python
+        .run(&json!({"code": "1", "context_id": "local"}), &env)
+        .await;
+    assert!(ran.success, "{}", ran.content);
+    assert_eq!(
+        *started.lock().unwrap(),
+        ["ssh:interp-gpu".to_owned(), "local".to_owned()]
+    );
+    assert!(server
+        .conversation_hosts(PROJECT, &session)
+        .await
+        .unwrap()
+        .contains(&"interp-gpu".to_owned()));
+    // The rows above the composer say where each one runs.
+    let mut places: Vec<String> = server
+        .conversation_status(PROJECT, &session)
+        .await
+        .unwrap()
+        .runtimes
+        .into_iter()
+        .map(|row| row.context)
+        .collect();
+    places.sort();
+    assert_eq!(places, ["local", "ssh:interp-gpu"]);
+
+    // Started from the host's card, R starts there too, once.
+    let id = server
+        .start_host_runtime(PROJECT, &session, "interp-gpu", desktop::RuntimeLanguage::R)
+        .await
+        .unwrap();
+    assert_eq!(
+        server
+            .start_host_runtime(PROJECT, &session, "interp-gpu", desktop::RuntimeLanguage::R)
+            .await
+            .unwrap(),
+        id
+    );
+    assert_eq!(started.lock().unwrap().len(), 3);
+    assert_eq!(started.lock().unwrap()[2], "ssh:interp-gpu");
+    assert!(server
+        .start_host_runtime(PROJECT, &session, "ghost", desktop::RuntimeLanguage::R)
+        .await
+        .is_err());
     server.shutdown().await;
 }

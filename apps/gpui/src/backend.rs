@@ -925,6 +925,26 @@ impl Backend {
         )
     }
 
+    /// The Python and Rscript paths kept on a saved SSH host, and what its
+    /// last check found.
+    pub fn host_interpreters(
+        &self,
+        alias: String,
+    ) -> Reply<wisp_server::desktop::HostInterpreters> {
+        self.local(move |host| async move { host.host_interpreters(&alias).await })
+    }
+
+    pub fn set_host_interpreters(
+        &self,
+        alias: String,
+        python: String,
+        rscript: String,
+    ) -> Reply<wisp_server::desktop::HostInterpreters> {
+        self.local(move |host| async move {
+            host.set_host_interpreters(&alias, &python, &rscript).await
+        })
+    }
+
     /// The SSH hosts a conversation's work may run on, by alias.
     pub fn conversation_hosts(&self, project: String, session: String) -> Reply<Vec<String>> {
         self.local(move |host| async move { host.conversation_hosts(&project, &session).await })
@@ -2477,6 +2497,20 @@ impl Backend {
         self.local(
             move |host| async move { host.start_runtime(&project, &session, language).await },
         )
+    }
+
+    /// Starts the conversation's Python or R on a saved SSH host.
+    pub fn start_host_runtime(
+        &self,
+        project: String,
+        session: String,
+        alias: String,
+        language: wisp_server::desktop::RuntimeLanguage,
+    ) -> Reply<String> {
+        self.local(move |host| async move {
+            host.start_host_runtime(&project, &session, &alias, language)
+                .await
+        })
     }
 
     pub fn runtime_objects(

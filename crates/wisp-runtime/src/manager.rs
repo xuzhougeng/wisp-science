@@ -417,13 +417,32 @@ impl RuntimeManager {
         envs: Vec<(String, String)>,
         rscript: Option<RscriptResolver>,
     ) -> Self {
-        Self::new(Arc::new(LocalRuntimeLauncher {
+        Self::new(Self::local_launcher(
             app_data,
             python_worker,
             r_worker,
             envs,
             rscript,
-        }))
+        ))
+    }
+
+    /// The launcher [`Self::local_with_rscript`] uses, for a host that
+    /// starts interpreters on this computer through it and elsewhere
+    /// through a launcher of its own.
+    pub fn local_launcher(
+        app_data: PathBuf,
+        python_worker: PathBuf,
+        r_worker: Option<PathBuf>,
+        envs: Vec<(String, String)>,
+        rscript: Option<RscriptResolver>,
+    ) -> Arc<dyn RuntimeLauncher> {
+        Arc::new(LocalRuntimeLauncher {
+            app_data,
+            python_worker,
+            r_worker,
+            envs,
+            rscript,
+        })
     }
 
     /// Compatibility constructor for callers that only wire local Python.

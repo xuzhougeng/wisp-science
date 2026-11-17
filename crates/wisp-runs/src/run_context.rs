@@ -643,6 +643,12 @@ impl RunManager {
         self.runner.as_ref()
     }
 
+    /// The runner itself, for work that keeps it beyond one call, such
+    /// as copying an interpreter's worker to a host before it starts.
+    pub fn runner(&self) -> Arc<dyn RunCommandRunner> {
+        self.runner.clone()
+    }
+
     pub fn with_runner(runner: Arc<dyn RunCommandRunner>) -> Self {
         Self {
             runner,

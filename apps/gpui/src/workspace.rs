@@ -996,6 +996,8 @@ pub struct Workspace {
     storage_host: Option<(String, bool)>,
     /// Data folder, run folders, results folder.
     storage_fields: [Entity<InputState>; 3],
+    /// The Python and Rscript paths kept on a host, in its interpreter form.
+    interpreter_fields: [Entity<InputState>; 2],
     /// One host's runs, or the files the project placed there, under its
     /// card in the Environments tab.
     host_detail: Option<hosts_view::HostDetail>,
@@ -1351,6 +1353,10 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx).placeholder("~/wisp/project/data")),
             cx.new(|cx| InputState::new(window, cx).placeholder(".wisp-science/runs")),
             cx.new(|cx| InputState::new(window, cx).placeholder("remote/host")),
+        ];
+        let interpreter_fields = [
+            cx.new(|cx| InputState::new(window, cx).placeholder("/opt/conda/bin/python")),
+            cx.new(|cx| InputState::new(window, cx).placeholder("/usr/bin/Rscript")),
         ];
         let font_fields = [
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("Wisp's own"))),
@@ -2136,6 +2142,7 @@ impl Workspace {
             host_detail: None,
             staged_removing: None,
             storage_fields,
+            interpreter_fields,
             artifacts: vec![],
             artifacts_all: false,
             artifacts_by_folder: false,

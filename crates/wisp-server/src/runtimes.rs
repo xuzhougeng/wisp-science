@@ -3,8 +3,8 @@
 //! variables it holds, restart it, and run code in it from a console with
 //! its printed output and plots. They are the same interpreters the
 //! model's `python` and `r` tools use in that conversation, keyed the same
-//! way, so what one defines the other sees. Only interpreters on this
-//! computer are started here.
+//! way, so what one defines the other sees. They start on this computer
+//! or, from a host's card, on a saved SSH host.
 
 use anyhow::{bail, ensure, Context as _, Result};
 use wisp_runtime::{RuntimeEvent, RuntimeInfo, RuntimeKey, RuntimeManager, LOCAL_CONTEXT_ID};
@@ -46,6 +46,8 @@ impl Server {
         };
         let manager = crate::runtime::session_runtimes(
             &self.0.config,
+            &self.0.store,
+            self.0.runs.runner(),
             &self.session(session),
             self.service_keys().await,
         );
@@ -75,16 +77,29 @@ impl Server {
         session: &str,
         language: RuntimeLanguage,
     ) -> Result<String> {
+        self.start_runtime_in(project, session, LOCAL_CONTEXT_ID, language)
+            .await
+    }
+
+    /// Starts the conversation's Python or R in `context`: this computer
+    /// or a saved SSH host.
+    pub(crate) async fn start_runtime_in(
+        &self,
+        project: &str,
+        session: &str,
+        context: &str,
+        language: RuntimeLanguage,
+    ) -> Result<String> {
         let (manager, root) = self.conversation_runtimes(project, session).await?;
         let (worker, r_worker) = crate::runtime::workers();
         let key = match language {
             RuntimeLanguage::Python => {
                 ensure!(worker.is_file(), "Python is not set up for this app");
-                RuntimeKey::python(root.clone(), LOCAL_CONTEXT_ID)
+                RuntimeKey::python(root.clone(), context)
             }
             RuntimeLanguage::R => {
                 ensure!(r_worker.is_file(), "R is not set up for this app");
-                RuntimeKey::r(root.clone(), LOCAL_CONTEXT_ID)
+                RuntimeKey::r(root.clone(), context)
             }
         };
         match manager.list().into_iter().find(|info| info.key == key) {
@@ -130,7 +145,8 @@ impl Server {
             wisp_runtime::MAX_CODE_BYTES
         );
         let (manager, info, root) = self.conversation_runtime(project, session, id).await?;
-        self.check_runnable(session, code).await?;
+        self.check_runnable(session, &info.key.context_id, code)
+            .await?;
         let execution = manager
             .execute(&info.key, std::path::Path::new(&root), code.to_owned())
             .await?;
@@ -171,7 +187,8 @@ impl Server {
             .await?
             .map_err(anyhow::Error::msg)?
         };
-        self.check_runnable(session, &script.code).await?;
+        self.check_runnable(session, &info.key.context_id, &script.code)
+            .await?;
         let execution = manager
             .execute_with_options(
                 &info.key,
@@ -191,8 +208,9 @@ impl Server {
     }
 
     /// Refuses code while the project is frozen for an exploration, and
-    /// code an exploration's boundary does not let reach this computer.
-    async fn check_runnable(&self, session: &str, code: &str) -> Result<()> {
+    /// code an exploration's boundary does not let reach this computer; an
+    /// interpreter on an SSH host is not this computer, as in the WebView.
+    async fn check_runnable(&self, session: &str, context: &str, code: &str) -> Result<()> {
         let store = &self.0.store;
         let (_, scope) =
             crate::explorations::service::working_project_in(store, &self.0.config.data, session)
@@ -208,6 +226,9 @@ impl Server {
             .map_err(anyhow::Error::msg)?,
             "The project is frozen while an exploration runs"
         );
+        if !wisp_runs::exploration_isolation::is_host_local_context(context) {
+            return Ok(());
+        }
         if let Some(boundary) = wisp_runs::exploration_isolation::boundary_for_scope(store, &scope)
             .await
             .map_err(anyhow::Error::msg)?

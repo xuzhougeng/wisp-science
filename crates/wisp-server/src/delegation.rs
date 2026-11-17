@@ -2387,6 +2387,8 @@ impl Server {
         let store = &self.0.store;
         crate::runtime::session_runtimes(
             &self.0.config,
+            store,
+            self.0.runs.runner(),
             &self.session(child),
             self.service_keys().await,
         )

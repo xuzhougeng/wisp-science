@@ -3687,6 +3687,51 @@ impl Server {
             .collect())
     }
 
+    /// The Python and Rscript paths kept on a saved SSH host, which the
+    /// conversation's interpreters there start with, and what its last
+    /// check found, which they start with when none is kept: the WebView's
+    /// interpreter form of a server.
+    pub async fn host_interpreters(&self, alias: &str) -> Result<HostInterpreters> {
+        Ok(HostInterpreters::of(&self.saved_host(alias).await?))
+    }
+
+    /// Keeps these paths on a saved SSH host, as the WebView's interpreter
+    /// form does (`update_execution_context_interpreters`); an empty one
+    /// goes back to what the check found. An interpreter already running
+    /// keeps the one it started with until it is restarted.
+    pub async fn set_host_interpreters(
+        &self,
+        alias: &str,
+        python: &str,
+        rscript: &str,
+    ) -> Result<HostInterpreters> {
+        let context = self.saved_host(alias).await?;
+        let _admission = self.0.admission.read().await;
+        let saved = wisp_runs::runtime_launch::save_interpreter_config(
+            &self.0.store,
+            &context.id,
+            python,
+            rscript,
+        )
+        .await?;
+        Ok(HostInterpreters::of(&saved))
+    }
+
+    /// Starts the conversation's Python or R on a saved SSH host, the one
+    /// the model's tool uses there, unless it is already running: the
+    /// WebView's Start on a server's runtime card. Answers its id.
+    pub async fn start_host_runtime(
+        &self,
+        project: &str,
+        session: &str,
+        alias: &str,
+        language: RuntimeLanguage,
+    ) -> Result<String> {
+        let context = self.saved_host(alias).await?;
+        self.start_runtime_in(project, session, &context.id, language)
+            .await
+    }
+
     /// A saved SSH host by its alias.
     async fn saved_host(&self, alias: &str) -> Result<wisp_store::ExecutionContext> {
         let context = self
@@ -7291,6 +7336,8 @@ pub struct RuntimeRow {
     /// Names this one interpreter, to stop it.
     pub id: String,
     pub language: RuntimeLanguage,
+    /// Where it runs: `local` for this computer, `ssh:<alias>` for a host.
+    pub context: String,
     pub state: RuntimeState,
     /// The interpreter's path and version, once it has started.
     pub interpreter: Option<String>,
@@ -7332,6 +7379,7 @@ impl From<wisp_runtime::RuntimeInfo> for RuntimeRow {
     fn from(info: wisp_runtime::RuntimeInfo) -> Self {
         Self {
             id: info.runtime_id,
+            context: info.key.context_id.clone(),
             language: match info.key.language {
                 wisp_runtime::RuntimeLanguage::Python => RuntimeLanguage::Python,
                 wisp_runtime::RuntimeLanguage::R => RuntimeLanguage::R,
@@ -8079,6 +8127,41 @@ pub struct HostRun {
     pub created_at: i64,
     pub ended_at: Option<i64>,
     pub exit_code: Option<i64>,
+}
+
+/// The interpreters a saved SSH host's Python and R start with.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HostInterpreters {
+    /// The paths kept on the host; empty uses what its check found.
+    pub python: String,
+    pub rscript: String,
+    /// What its last check found there, if anything.
+    pub found_python: Option<String>,
+    pub found_rscript: Option<String>,
+}
+
+impl HostInterpreters {
+    fn of(context: &wisp_store::ExecutionContext) -> Self {
+        let read = |json: &str, keys: &[&str]| {
+            let value: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+            keys.iter()
+                .filter_map(|key| value.get(*key).and_then(serde_json::Value::as_str))
+                .map(str::trim)
+                .find(|path| !path.is_empty())
+                .map(str::to_owned)
+        };
+        Self {
+            python: read(&context.config_json, &["python_executable", "python_path"])
+                .unwrap_or_default(),
+            rscript: read(
+                &context.config_json,
+                &["rscript_executable", "rscript_path"],
+            )
+            .unwrap_or_default(),
+            found_python: read(&context.capabilities_json, &["python_executable"]),
+            found_rscript: read(&context.capabilities_json, &["rscript_executable"]),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

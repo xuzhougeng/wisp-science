@@ -644,8 +644,13 @@ pub fn environment_entries(hosts: &[SshHostRow]) -> Vec<Entry> {
 /// The interpreters a turn can be pointed at: they run on this computer,
 /// Python always (as the WebView offers it there) and R once the
 /// conversation has one, each with how the one above the composer is.
+/// One on an SSH host is not this computer's.
 pub fn runtime_entries(rows: &[RuntimeRow]) -> Vec<Entry> {
-    let row_of = |language: RuntimeLanguage| rows.iter().rev().find(|row| row.language == language);
+    let row_of = |language: RuntimeLanguage| {
+        rows.iter()
+            .rev()
+            .find(|row| row.language == language && row.context == "local")
+    };
     [
         ("python", RuntimeLanguage::Python),
         ("r", RuntimeLanguage::R),
@@ -1296,6 +1301,7 @@ mod tests {
         RuntimeRow {
             id: "rt".into(),
             language,
+            context: "local".into(),
             state: wisp_server::desktop::RuntimeState::Ready,
             interpreter: None,
             version: Some("4.4".into()),
@@ -1365,6 +1371,10 @@ mod tests {
             matches!(&with_r[1], Entry::Runtime { language, title, detail, .. }
             if language == "r" && title == "R runtime" && detail.contains("R 4.4"))
         );
+        // An R on a host is not offered as this computer's.
+        let mut remote = interpreter(RuntimeLanguage::R);
+        remote.context = "ssh:gpu".into();
+        assert_eq!(runtime_entries(&[remote]).len(), 1);
         // Pinned memos first; an empty one has nothing to put in.
         let memo = |title: &str, body: &str, pinned: bool| ProjectMemo {
             title: title.into(),

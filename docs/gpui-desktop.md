@@ -203,7 +203,7 @@ desktop can hold them as they are.
 | Agent cards | A call that hands work to other agents is a card in its place: `explore` with its question, status and folded findings; `dispatch_subagent` with the subagent conversation's title, status and task, and a button that opens it; `delegate_tasks` with the batch's goal, status, task counts and a line per task (status, instruction, its conversation), Show in Agents and Stop while it runs. `subagent_status`, `stop_subagent`, `get_delegated_result` and a background batch's result coming back are one folded line naming the subagent or batch. Until the batches or the conversation list are read the call stays a tool row |
 | Runs | A Runs tab: runs started by the conversation with kind, status, exit code, command and output tails; a run that has not ended can be cancelled, and one already stopping whose stop never came back can be force-cancelled (marked cancelled, as the WebView's Force cancel), and is followed until it ends. One that has ended and kept a workspace where it ran can have it deleted after a question (its logs are saved into the project first, and outputs never brought back are not lost without a second question); a cleaned run, or one whose cleanup failed, says so. A run that moves files between machines shows its phase, file, bytes, rate and time left on its card, and while it moves (and a few seconds after) in a Transfers tray above the composer that folds to one line. A finished run on an SSH host has a folder button: a dialog lists what it left there a folder at a time, with a name filter and More… for long folders, and the files and folders chosen (across folders) are brought into the project as the conversation's results, a folder as one archive, or deleted there after a question; the whole workspace can be deleted from it too. In the transcript each run has one card, under the call that waits on it while it goes on (a `run_in_context` still waiting on its run included) and under the call that submitted it once it has ended, so an explicit `monitor_run` leaves no second card: its state as an icon and a word, where and how long it ran, a transfer's meter, and, with the call opened, its remote folder, command and output tails; Ask, Move to background (a turn waiting on the run stops waiting with `wait_backgrounded` and finishes its reply while the run goes on; the conversation gets one message when the run ends, even after a restart), Cancel (Force cancel once it is stopping), the review dialog for a finished run on an SSH host, and Show in Runs for its whole output, log and clean-up. A run of the conversation that no loaded call names, going or ended within the last minute, has a card of its own placed as the WebView places its standalone cards (above the first message of yours sent after the run was made, else below the last row) that shows its folder, command and output and, once ended, can be dismissed while the window is open |
 | Artifacts | Files a turn wrote are recorded when it ends; an Artifacts tab lists them for the conversation or the project and opens them, and lists each one's versions, any of which can be saved as a copy from its snapshot (checked against its checksum, up to 512 MB); By folder puts them under their folders, and each one's trail button says which tool call wrote it, with the code and Open the conversation |
-| Side panel | Tabs: Files, Runs, Environments (this computer and the saved SSH hosts: attach one to the conversation so its runs may go there, take it away, check it, open a terminal or its folders, see the Python and R its last check found, list the project's runs there, list the files the project placed there and delete one no run needs after a question, and set where the project keeps things there: uploaded data, run folders and the results folder), Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside, each named in words, the open one in ink with a short teal line under it. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
+| Side panel | Tabs: Files, Runs, Environments (this computer and the saved SSH hosts: attach one to the conversation so its runs may go there, take it away, check it, open a terminal or its folders, see the Python and R its last check found, see, start, stop and open the console of the conversation's Python and R there, keep the Python and Rscript paths its interpreters start with, list the project's runs there, list the files the project placed there and delete one no run needs after a question, and set where the project keeps things there: uploaded data, run folders and the results folder), Artifacts, Notebook, Provenance (the loaded part's tool calls with how each went, opening to what each was given and returned, with Show in the conversation), Agents, Highlights, Memos, Memory, Aside, each named in words, the open one in ink with a short teal line under it. − beside the open tab takes it away and + adds one back; the tabs kept are remembered, and opening a tab from elsewhere brings it back |
 | Agents | The Agents tab lists the helpers the conversation sent off to explore: what each was asked, how it went, and what it found; the transcript draws those calls, and the subagents and batches the agent started, as cards |
 | Aside | The Aside tab (or the command palette) asks the conversation's model a question about the open conversation; the answer shows beside it and nothing is added to the conversation. As in the WebView's side chat, the model first says what kind of question it is (about the conversation as a whole, a comparison of earlier and later, or a lookup of something said in it) and which phrases to look for; the answer is then told that scope. The latest turns are quoted whole; passages from before them that hold those phrases (or, for a lookup or comparison the model gave none for, the question's words) go along labelled [E1]… and are listed under the answer, with who said them and the words they matched. Ask aside under a message opens it with that message quoted in the question; with text selected in a file's text in the preview (plain text, a script, a table shown as text), the preview's Ask aside about the selected text quotes that passage under the file's name into the next question, as a chip with its × until it is asked |
 | Quoting | Quote under a message puts it in the message box as a quotation after what you were writing, ready to answer; a selected passage is copied with Cmd/Ctrl+C |
@@ -643,10 +643,16 @@ Limits of this slice:
   carried into a branch and a copy, and is dropped when the host is removed.
   It decides which host the prompt names as the one work goes to, and so
   where the model starts runs; it is not a restriction, and the model may
-  still name another saved host. The Python and R sessions and the shell
-  stay on this computer whatever is chosen, because this host has no remote
-  interpreter. Attaching hosts to one conversation only, the terminal, and
-  the right panel's Environments tab are not ported.
+  still name another saved host. The model's `python` and `r` start there
+  too when a call names no `context_id`, as in the WebView: the choice is
+  attached to the conversation on its first use, and a call naming a host
+  the conversation has not attached is refused. On a host the interpreter
+  starts only after a passed check, with the path kept on the host (its
+  interpreter form in the side panel's Environments tab) or the one the
+  check found; its worker is copied once per checksum to
+  `~/.wisp-science/runtime/` there and run over `ssh` with the host's own
+  settings, in its working folder. The shell and the file tools stay on
+  this computer, as in the WebView. WSL distros are not offered.
 - Conversation settings apply to every turn this host runs from the next one
   on, a paired phone's included. Steps per turn replaces the `WISP_MAX_ITER`
   the host was started with once it is saved; at the limit the model is asked
@@ -1851,8 +1857,8 @@ Limits of this slice:
   reads a memo only when it is sent that way. All of it is for that turn
   only: none is saved with the message, so the chips a message shows for
   them last while the window that sent it is open, as in the WebView. A
-  runtime on an SSH host is refused, because the embedded host keeps Python
-  and R on this computer; a conversation is not read by the WebView's
+  runtime named on a saved SSH host is told the same way and attaches that
+  host (the picker itself offers this computer's); a conversation is not read by the WebView's
   reader agent, and `#project` is not offered. Paste,
   drag and drop work, and typing `@` or `#` where a word starts opens the
   add-context picker (the character is taken back out). A slash command
@@ -2179,6 +2185,20 @@ Escape and only the form closes. Open it again, type `../x` as the results
 folder and Save: it is refused and the form stays. Type `/scratch/lab` as
 the data folder and Save: the form says it is saved; open another project
 and the same host shows the defaults again.
+Press the host's pencil button (The Python and Rscript used there): the
+form shows the paths kept on it, empty at first with what its check found
+as the hint; type a Python path that exists there and Save, and the notice
+says they are saved; change the host in Settings and open the form again:
+the path is still there. Press Escape: only the form closes. With the host
+chosen in Runs on, ask the model to run `import platform;
+print(platform.node())` with the `python` tool without naming a host: it
+prints the host's name, the chip above the composer reads `Python … · on`
+the host, and the host's runtimes button (This conversation's Python and R
+there) lists it with its path, version and PID; Console opens its
+variables, and Stop stops it. Press Start on R there: it starts with the
+Rscript the check found (or says why it cannot, such as no Rscript known or
+`jsonlite` missing). Choose This computer in Runs on and run Python again:
+it runs here, and the host's interpreter is untouched.
 Ask the model to download a large file from that host into the project:
 while it moves, a Transfers tray above the composer shows the file, bytes,
 share done, rate and time left; fold it to one line and unfold it. When it
