@@ -1355,6 +1355,119 @@ async fn a_merged_or_orphaned_branch_is_read_only_history_and_its_source_is_not(
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn a_branch_is_not_branched_again_and_a_frozen_one_is_not_handed_off_reviewed_or_moved() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(tmp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let main = create(&server).await;
+    let branch = create(&server).await;
+    let store = &server.0.store;
+    // Both hold the same two turns; the branch split before the second.
+    for id in [&main, &branch] {
+        store
+            .append_message(id, 1, &Message::user("Look at the counts"))
+            .await
+            .unwrap();
+        store
+            .append_message(id, 2, &Message::assistant("They look fine."))
+            .await
+            .unwrap();
+        store
+            .append_message(id, 3, &Message::user("Now plot them"))
+            .await
+            .unwrap();
+    }
+    store
+        .set_session_branch_point(&branch, &main, 1, "before_user")
+        .await
+        .unwrap();
+    let says = |result: anyhow::Result<String>, words: &str| {
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains(words), "{error}");
+    };
+
+    // An active branch takes messages but is not branched again, in the
+    // WebView's words.
+    assert!(!store.session_branch_frozen(&branch).await.unwrap());
+    says(
+        server.branch_conversation(PROJECT, &branch, None).await,
+        wisp_store::BRANCH_AGAIN_REFUSAL,
+    );
+
+    // Its source loses the turn it split before: it is frozen history.
+    store.truncate_messages(&main, 2).await.unwrap();
+    assert!(store.session_branch_frozen(&branch).await.unwrap());
+    says(
+        server.branch_conversation(PROJECT, &branch, None).await,
+        wisp_store::BRANCH_AGAIN_REFUSAL,
+    );
+    // It is not handed off, reviewed or moved away, in the words the Tauri
+    // desktop gives its native clients.
+    let refused = wisp_store::FROZEN_BRANCH_CHANGE_REFUSAL;
+    says(
+        server
+            .draft_handoff(
+                PROJECT,
+                dto::HandoffRequest {
+                    session_id: branch.clone(),
+                    instruction: None,
+                },
+            )
+            .await
+            .map(|response| response.note),
+        refused,
+    );
+    says(
+        server
+            .review_conversation(PROJECT, &branch)
+            .await
+            .map(|review| review.summary),
+        refused,
+    );
+    let turn = desktop::TurnRef {
+        from_end: 0,
+        text: "Now plot them".into(),
+    };
+    says(
+        server
+            .review_turn(PROJECT, &branch, &turn)
+            .await
+            .map(|review| review.summary),
+        refused,
+    );
+    let folder = tmp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    says(
+        server
+            .transfer_conversation(PROJECT, &branch, &lab, false)
+            .await,
+        refused,
+    );
+    says(
+        server
+            .preview_move_with_artifacts(PROJECT, &branch, &lab)
+            .await
+            .map(|preview| preview.fingerprint),
+        refused,
+    );
+    // A copy of it can still be taken elsewhere, and it is still there.
+    server
+        .transfer_conversation(PROJECT, &branch, &lab, true)
+        .await
+        .unwrap();
+    assert!(store.session_branch_frozen(&branch).await.unwrap());
+
+    // The conversation it came from is no branch and is branched as before.
+    server
+        .branch_conversation(PROJECT, &main, None)
+        .await
+        .unwrap();
+    server.shutdown().await;
+}
+
 /// Proposes a fresh plan, then answers whatever the plan tool said.
 struct Planner;
 #[async_trait]
@@ -4984,6 +5097,8 @@ async fn a_users_mcp_server_gives_turns_its_tools_and_each_asks_before_it_runs()
         .await
         .unwrap();
     assert_eq!(saved.headers, ["X-Lab-Key"]);
+    // Its value is saved, so nothing waits to be entered.
+    assert!(server.mcp_servers().await.unwrap()[0].unset.is_empty());
     assert!(!crate::mcp::load(&server.0.store)
         .await
         .iter()
@@ -7090,6 +7205,73 @@ async fn files_a_turn_writes_become_artifacts_of_its_conversation() {
 }
 
 #[tokio::test]
+async fn a_stopping_run_is_forced_only_by_the_button_meant_for_it() {
+    use wisp_store::RunStatus;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let store = &server.0.store;
+    // A transfer whose stop never came back, and one still going. Both are
+    // held, so the run manager does not recover them meanwhile.
+    for (id, state) in [
+        ("stuck", RunStatus::Cancelling),
+        ("going", RunStatus::Running),
+    ] {
+        let mut run =
+            wisp_store::RunRecord::new(id, PROJECT, "local", "Copy reads", "file_transfer");
+        run.status = state;
+        store.create_run(&run).await.unwrap();
+        assert!(store.claim_run_lifecycle(id, "test", 600).await.unwrap());
+    }
+    // A Cancel drawn before it began to stop does not force it.
+    let refused = server
+        .cancel_run_as_meant(PROJECT, "stuck", false)
+        .await
+        .unwrap_err();
+    assert!(
+        refused.to_string().contains("refresh before cancelling"),
+        "{refused}"
+    );
+    assert_eq!(
+        store.get_run("stuck").await.unwrap().unwrap().status,
+        RunStatus::Cancelling
+    );
+    // Unknown runs and other projects are refused.
+    assert!(server
+        .cancel_run_as_meant(PROJECT, "ghost", true)
+        .await
+        .is_err());
+    assert!(server
+        .cancel_run_as_meant("missing", "stuck", true)
+        .await
+        .is_err());
+    // Force cancel finishes it as cancelled.
+    server
+        .cancel_run_as_meant(PROJECT, "stuck", true)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_run("stuck").await.unwrap().unwrap().status,
+        RunStatus::Cancelled
+    );
+    // A run that is going is asked to stop, never forced.
+    let refused = server
+        .cancel_run_as_meant(PROJECT, "going", true)
+        .await
+        .unwrap_err();
+    assert!(
+        refused.to_string().contains("refresh before cancelling"),
+        "{refused}"
+    );
+    assert_eq!(
+        store.get_run("going").await.unwrap().unwrap().status,
+        RunStatus::Running
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_finished_runs_workspace_is_cleaned_only_when_nothing_would_be_lost() {
     let temp = tempfile::tempdir().unwrap();
     let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
@@ -8828,8 +9010,19 @@ async fn a_question_asked_aside_is_answered_without_touching_the_conversation() 
         ) -> wisp_llm::Result<Completion> {
             assert!(tools.is_empty(), "a side question has no tools");
             self.asked.lock().unwrap().push(messages.to_vec());
+            // Asked what kind of question it is, it says, except about the
+            // header, which it cannot classify.
+            let classifying =
+                messages[0].content.as_text() == wisp_app::side_question::INTENT_SYSTEM_PROMPT;
+            let content = if !classifying {
+                " Because the file has 400 lines. "
+            } else if messages[1].content.as_text().contains("header") {
+                "I cannot tell."
+            } else {
+                r#"{"scope":"lookup","prefer_recent":false,"query_terms":["reads"]}"#
+            };
             Ok(Completion {
-                content: " Because the file has 400 lines. ".into(),
+                content: content.into(),
                 finish_reason: Some("stop".into()),
                 ..Default::default()
             })
@@ -8887,8 +9080,26 @@ async fn a_question_asked_aside_is_answered_without_touching_the_conversation() 
     assert!(answer.sources.is_empty());
     {
         let asked = asked.lock().unwrap();
-        assert_eq!(asked.len(), 1);
-        let sent: Vec<_> = asked[0]
+        // First the model says what kind of question it is, the question
+        // tagged as data, as the WebView's side chat asks it.
+        assert_eq!(asked.len(), 2);
+        assert_eq!(
+            asked[0][0].content.as_text(),
+            wisp_app::side_question::INTENT_SYSTEM_PROMPT
+        );
+        assert!(asked[0][1]
+            .content
+            .as_text()
+            .starts_with("<side_question>\nwhy 100?\n</side_question>"));
+        // Then it answers, told the scope it gave.
+        let system = asked[1][0].content.as_text();
+        assert!(
+            system.ends_with(wisp_app::side_question::scope_instruction(
+                wisp_app::side_question::Scope::Lookup
+            )),
+            "{system}"
+        );
+        let sent: Vec<_> = asked[1]
             .iter()
             .map(|message| message.content.as_text())
             .collect();
@@ -8920,7 +9131,23 @@ async fn a_question_asked_aside_is_answered_without_touching_the_conversation() 
         .ask_aside(PROJECT, "missing", &[], "why?")
         .await
         .is_err());
-    assert_eq!(asked.lock().unwrap().len(), 1);
+    // A refused question asked the model nothing.
+    assert_eq!(asked.lock().unwrap().len(), 2);
+
+    // A question the model cannot classify is still answered, told so.
+    server
+        .ask_aside(PROJECT, &session, &[], "what about the header?")
+        .await
+        .unwrap();
+    {
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 4);
+        let system = asked[3][0].content.as_text();
+        assert!(
+            system.contains("Intent classification was unavailable"),
+            "{system}"
+        );
+    }
 
     // About one of the project's runs: its live snapshot goes along.
     let mut run =
@@ -8934,6 +9161,9 @@ async fn a_question_asked_aside_is_answered_without_touching_the_conversation() 
         .unwrap();
     {
         let asked = asked.lock().unwrap();
+        // The run card chose the scope: nothing is classified.
+        assert_eq!(asked.len(), 5);
+        assert!(!asked[4][0].content.as_text().contains("Classified scope"));
         let sent = asked.last().unwrap()[1].content.as_text();
         assert!(
             sent.contains("<run>\nRun run-aside \"Align reads\""),
@@ -9421,6 +9651,189 @@ async fn the_model_view_is_what_the_next_turn_would_be_sent() {
 
     assert!(server.model_view("missing", &session).await.is_err());
     assert!(server.model_view(PROJECT, "missing").await.is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_model_view_keeps_what_the_latest_request_was_made_of_tools_included() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    // No turn has run here: only the saved working set can be shown.
+    assert_eq!(
+        server.model_view(PROJECT, &session).await.unwrap().sent,
+        None
+    );
+
+    send(&server, &session, "count the reads").await.unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let view = server.model_view(PROJECT, &session).await.unwrap();
+    let sent = view.sent.expect("the turn's request is kept");
+    // The saved working set still leaves tool definitions out; the request
+    // counted them, by where each tool comes from.
+    assert_eq!(view.breakdown.tool_definitions, 0);
+    assert!(sent.usage.tool_definitions > 0, "{:?}", sent.usage);
+    assert!(sent.usage.system_prompt > 0 && sent.usage.conversation > 0);
+    let names = |tools: &[desktop::ContextToolDetail]| -> Vec<String> {
+        tools.iter().map(|tool| tool.name.clone()).collect()
+    };
+    let built_in = names(&sent.details.tool_definitions);
+    let delegating = names(&sent.details.subagent_definitions);
+    let dynamic = names(&sent.details.mcp_dynamic_tools);
+    for tool in ["read", "shell", "write"] {
+        assert!(
+            built_in.iter().any(|name| name == tool),
+            "{tool}: {built_in:?}"
+        );
+    }
+    // A top-level conversation can hand work on; those tools count apart.
+    assert!(
+        delegating.iter().any(|name| name == "dispatch_subagent"),
+        "{delegating:?}"
+    );
+    for name in &built_in {
+        assert!(
+            !delegating.contains(name) && !dynamic.contains(name),
+            "{name}"
+        );
+    }
+    // Each tool is listed with what the model reads about it.
+    assert!(sent
+        .details
+        .tool_definitions
+        .iter()
+        .all(|tool| !tool.description.is_empty()));
+    assert!(!sent.details.system_prompt.trim().is_empty());
+
+    // An undone turn takes back what the latest request was made of.
+    let latest = desktop::TurnRef {
+        from_end: 0,
+        text: "count the reads".into(),
+    };
+    server.undo_turn(PROJECT, &session, &latest).await.unwrap();
+    assert_eq!(
+        server.model_view(PROJECT, &session).await.unwrap().sent,
+        None
+    );
+    server.shutdown().await;
+}
+
+/// Cuts its answer to "count the reads" off once, half-way, then answers
+/// whole when asked again, after the test lets it.
+struct CutOnce {
+    asked: Arc<AtomicUsize>,
+    gate: Arc<tokio::sync::Semaphore>,
+}
+
+#[async_trait]
+impl Provider for CutOnce {
+    fn name(&self) -> &str {
+        "offline"
+    }
+    fn model(&self) -> &str {
+        "offline"
+    }
+    async fn complete(&self, _: &[Message], _: &[ToolSchema]) -> wisp_llm::Result<Completion> {
+        Ok(Completion {
+            content: "noted".into(),
+            finish_reason: Some("stop".into()),
+            ..Default::default()
+        })
+    }
+    async fn stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> wisp_llm::Result<Completion> {
+        let asked = messages.last().is_some_and(|message| {
+            message.role == wisp_llm::Role::User && message.content.as_text() == "count the reads"
+        });
+        if !asked {
+            return self.complete(messages, tools).await;
+        }
+        match self.asked.fetch_add(1, Ordering::SeqCst) {
+            0 => {
+                sink.on_text("Half an ans");
+                Err(wisp_llm::LlmError::Incomplete)
+            }
+            _ => {
+                self.gate.acquire().await.unwrap().forget();
+                sink.on_text("The whole answer");
+                Ok(Completion {
+                    content: "The whole answer".into(),
+                    finish_reason: Some("stop".into()),
+                    ..Default::default()
+                })
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_cut_answer_is_retried_in_the_turn_and_shown_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let asked = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let factory: ModelFactory = {
+        let (asked, gate) = (asked.clone(), gate.clone());
+        Arc::new(move |_| {
+            Box::new(CutOnce {
+                asked: asked.clone(),
+                gate: gate.clone(),
+            })
+        })
+    };
+    let server = Server::open_with_models(config(temp.path()), factory)
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    send(&server, &session, "count the reads").await.unwrap();
+    // The request is sent again and held there, so the state is read while
+    // it stands.
+    let retrying = wait_for(&server, &session, |s| {
+        s.stream_recovery
+            .as_ref()
+            .is_some_and(|r| r.phase == dto::StreamRecoveryPhase::Reconnecting)
+    })
+    .await;
+    assert!(retrying.running);
+    let recovery = retrying.stream_recovery.unwrap();
+    assert_eq!(recovery.cause, dto::StreamRecoveryCause::Stream);
+    assert_eq!((recovery.attempt, recovery.retry_in_ms), (1, 0));
+    assert!(recovery.max_attempts >= 1);
+    assert!(!recovery.error.is_empty());
+    // What the cut attempt had streamed is gone, not left for the retry
+    // to be added to.
+    assert!(retrying
+        .items
+        .iter()
+        .all(|item| !item.text.contains("Half an ans")));
+
+    gate.add_permits(1);
+    let ended = wait_for(&server, &session, |s| !s.running).await;
+    assert_eq!(ended.stream_recovery, None);
+    assert_eq!(ended.error, None);
+    let answers: Vec<_> = ended
+        .items
+        .iter()
+        .filter(|item| item.role == "assistant")
+        .map(|item| item.text.as_str())
+        .collect();
+    assert_eq!(answers, ["The whole answer"]);
+    assert_eq!(asked.load(Ordering::SeqCst), 2);
+    // A snapshot without one says nothing about it, for older clients.
+    let sent = call(
+        &server,
+        "native_conversation_snapshot",
+        PROJECT,
+        json!({"session_id": session}),
+    )
+    .await
+    .unwrap();
+    assert!(sent.get("stream_recovery").is_none());
     server.shutdown().await;
 }
 
@@ -10943,6 +11356,579 @@ async fn a_paper_version_is_checked_waived_finalized_and_continued() {
         .new_paper_version(&lab, &paper.id, &version, "")
         .await
         .is_err());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_passage_of_a_conversation_is_evidence_with_its_text_kept() {
+    use desktop::{PaperInput, PaperItemInput, PaperItemKind, PaperSourceKind};
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let paper = server
+        .create_paper(
+            PROJECT,
+            PaperInput {
+                title: "Copy number".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let version = paper.shown.clone();
+    server
+        .save_paper_item(
+            PROJECT,
+            &version,
+            PaperItemInput {
+                id: String::new(),
+                kind: PaperItemKind::Claim,
+                title: "Copy number doubles".into(),
+                note: String::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let claim = server.paper(PROJECT, &paper.id, None).await.unwrap().items[0]
+        .id
+        .clone();
+
+    // What was said in the project's conversation is offered, with its
+    // text to pick a passage from.
+    let session = create(&server).await;
+    send(
+        &server,
+        &session,
+        "the copy number doubled in strain 水稻 🌱",
+    )
+    .await
+    .unwrap();
+    wait_for(&server, &session, |s| !s.running).await;
+    let (said, more) = server
+        .paper_source_choices(PROJECT, PaperSourceKind::Passage, "COPY NUMBER DOUBLED", 0)
+        .await
+        .unwrap();
+    assert!(!more);
+    assert!(said
+        .iter()
+        .all(|choice| choice.kind == PaperSourceKind::Passage));
+    let choice = said
+        .iter()
+        .find(|choice| choice.detail == "user")
+        .unwrap_or_else(|| panic!("{said:?}"));
+    let message = choice.message.clone().unwrap();
+    let text = message.text.clone().unwrap();
+    assert!(message.frame_id.is_some() && message.message_seq.is_some());
+    // Results and runs carry no message.
+    let (runs, _) = server
+        .paper_source_choices(PROJECT, PaperSourceKind::Run, "", 0)
+        .await
+        .unwrap();
+    assert!(runs.iter().all(|choice| choice.message.is_none()));
+
+    // A passage chosen within it is bound with its text.
+    let start = text.find("strain").unwrap();
+    let end = start + "strain 水稻".len();
+    let exact =
+        wisp_dto::publication_sources::message_span_locator(&message, Some((start, end))).unwrap();
+    server
+        .bind_paper_source(
+            PROJECT,
+            &version,
+            &claim,
+            PaperSourceKind::Passage,
+            &exact,
+            " the strain we kept ",
+        )
+        .await
+        .unwrap();
+    // A range that splits a character, or a locator not in canonical
+    // form, is refused.
+    let split =
+        wisp_dto::publication_sources::message_span_locator(&message, Some((start, end - 1)))
+            .unwrap();
+    let loose = exact.replace("{\"byte_end\"", "{ \"byte_end\"");
+    for refused in [split, loose] {
+        assert!(server
+            .bind_paper_source(
+                PROJECT,
+                &version,
+                &claim,
+                PaperSourceKind::Passage,
+                &refused,
+                ""
+            )
+            .await
+            .is_err());
+    }
+    let shown = server.paper(PROJECT, &paper.id, None).await.unwrap();
+    let sources = &shown.items[0].sources;
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].kind, PaperSourceKind::Passage);
+    assert_eq!(sources[0].name, "strain 水稻");
+    assert_eq!(sources[0].purpose, "the strain we kept");
+    assert_eq!(sources[0].run, None);
+
+    // Another project's conversation is not offered, and its passage is
+    // refused.
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    assert!(server
+        .paper_source_choices(&lab, PaperSourceKind::Passage, "", 0)
+        .await
+        .unwrap()
+        .0
+        .is_empty());
+    let other = server
+        .create_paper(
+            &lab,
+            PaperInput {
+                title: "Elsewhere".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    server
+        .save_paper_item(
+            &lab,
+            &other.shown,
+            PaperItemInput {
+                id: String::new(),
+                kind: PaperItemKind::Claim,
+                title: "Claim".into(),
+                note: String::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let other_item = server.paper(&lab, &other.id, None).await.unwrap().items[0]
+        .id
+        .clone();
+    assert!(server
+        .bind_paper_source(
+            &lab,
+            &other.shown,
+            &other_item,
+            PaperSourceKind::Passage,
+            &exact,
+            ""
+        )
+        .await
+        .is_err());
+    server.shutdown().await;
+}
+
+/// A finalized paper whose figure rests on a local run with a declared
+/// input, its code, its output and its environment, as the WebView
+/// host's reproduction fixture builds it.
+async fn finalized_paper_with_a_run(server: &Server, workspace: &Path) -> (String, String) {
+    use desktop::{PaperInput, PaperItemInput, PaperItemKind, PaperPolicy, PaperSourceKind};
+    use sha2::Digest;
+    use wisp_runs::snapshot_store::{capture_file, SnapshotPolicy};
+    use wisp_store::{
+        ArtifactCaptureTiming, ArtifactMaterialization, ArtifactVersionDraft, LineageBasis,
+        LineageConfidence, RunCodeSnapshot, RunInput, RunOutput, RunRecord, RunStatus,
+    };
+    let store = &server.0.store;
+    std::fs::create_dir_all(workspace.join("data")).unwrap();
+    std::fs::create_dir_all(workspace.join("results")).unwrap();
+    std::fs::write(workspace.join("data/input.txt"), b"declared input\n").unwrap();
+    std::fs::write(workspace.join("results/out.txt"), b"42\n").unwrap();
+    std::fs::write(workspace.join("undeclared.txt"), b"stays outside\n").unwrap();
+    store
+        .create_frame("paper-frame", PROJECT, "OPERON", "model")
+        .await
+        .unwrap();
+    let mut run = RunRecord::new("run-fit", PROJECT, "local", "fit", "command");
+    run.frame_id = Some("paper-frame".into());
+    run.command = Some("python analysis.py".into());
+    run.status = RunStatus::Succeeded;
+    run.exit_code = Some(0);
+    run.ended_at = Some(chrono::Utc::now().timestamp());
+    store.create_run(&run).await.unwrap();
+    let version_of = |file: &str| {
+        let captured =
+            capture_file(workspace, &workspace.join(file), SnapshotPolicy::Always).unwrap();
+        (
+            captured.storage_path,
+            captured.size_bytes,
+            captured.checksum,
+        )
+    };
+    let (input_path, input_size, input_sum) = version_of("data/input.txt");
+    let (output_path, output_size, output_sum) = version_of("results/out.txt");
+    let draft =
+        |id: &str, name: &str, path, size: u64, sum, run: Option<&str>| ArtifactVersionDraft {
+            version_id: Some(format!("{id}-version")),
+            artifact_id: format!("{id}-artifact"),
+            project_id: PROJECT.into(),
+            root_frame_id: "paper-frame".into(),
+            filename: name.into(),
+            content_type: "text/plain".into(),
+            storage_path: path,
+            logical_key: Some(format!("result:{id}")),
+            size_bytes: Some(size as i64),
+            checksum: Some(sum),
+            producing_run_id: run.map(str::to_owned),
+            env_snapshot_hash: None,
+            materialization: ArtifactMaterialization::Snapshot,
+            capture_timing: ArtifactCaptureTiming::AtCreation,
+        };
+    let input = store
+        .save_artifact_version(&draft(
+            "input",
+            "input.txt",
+            input_path,
+            input_size,
+            input_sum,
+            None,
+        ))
+        .await
+        .unwrap();
+    let output = store
+        .save_artifact_version(&draft(
+            "output",
+            "out.txt",
+            output_path,
+            output_size,
+            output_sum,
+            Some("run-fit"),
+        ))
+        .await
+        .unwrap();
+    store
+        .save_run_input(&RunInput {
+            id: "run-fit-input".into(),
+            run_id: "run-fit".into(),
+            artifact_version_id: Some(input),
+            external_resource_id: None,
+            source_ref: "data/input.txt".into(),
+            role: "data".into(),
+            required: true,
+            basis: LineageBasis::Declared,
+            confidence: LineageConfidence::Exact,
+            created_at: 1,
+        })
+        .await
+        .unwrap();
+    store
+        .save_run_output(&RunOutput {
+            id: "run-fit-output".into(),
+            run_id: "run-fit".into(),
+            artifact_version_id: output,
+            role: "result".into(),
+            logical_output_key: "result:output".into(),
+            source_path: "results/out.txt".into(),
+            created_at: 1,
+        })
+        .await
+        .unwrap();
+    let code = "print('fixture')\n";
+    store
+        .save_run_code_snapshot(&RunCodeSnapshot {
+            id: "run-fit-code".into(),
+            run_id: "run-fit".into(),
+            source_kind: "script".into(),
+            source_path: Some("analysis.py".into()),
+            source_text: code.into(),
+            checksum: hex::encode(sha2::Sha256::digest(code.as_bytes())),
+            storage_path: None,
+            git_commit: None,
+            dirty_patch: None,
+            created_at: 1,
+        })
+        .await
+        .unwrap();
+    let context = store.get_execution_context("local").await.unwrap().unwrap();
+    let (environment, _) = wisp_runs::publication_reproduction::reproduction_environment(&context);
+    store
+        .record_run_environment_snapshot(
+            "run-fit",
+            Some("local"),
+            &serde_json::from_str(&environment).unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let paper = server
+        .create_paper(
+            PROJECT,
+            PaperInput {
+                title: "Copy number: a study".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let version = paper.shown.clone();
+    server
+        .save_paper_item(
+            PROJECT,
+            &version,
+            PaperItemInput {
+                id: String::new(),
+                kind: PaperItemKind::Methods,
+                title: "Analysis".into(),
+                note: String::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let item = server.paper(PROJECT, &paper.id, None).await.unwrap().items[0]
+        .id
+        .clone();
+    server
+        .bind_paper_source(
+            PROJECT,
+            &version,
+            &item,
+            PaperSourceKind::Run,
+            "run-fit",
+            "the analysis",
+        )
+        .await
+        .unwrap();
+    let policy = PaperPolicy {
+        keep_restricted: true,
+        ..PaperPolicy::default()
+    };
+    let check = server.check_paper(PROJECT, &version, policy).await.unwrap();
+    for finding in check.blockers.iter().filter(|found| found.waived.is_none()) {
+        server
+            .waive_paper_finding(PROJECT, &version, &finding.code, "fixture")
+            .await
+            .unwrap();
+    }
+    let done = server
+        .finalize_paper(PROJECT, &version, policy)
+        .await
+        .unwrap();
+    assert!(done.finalized, "{:?}", done.blockers);
+    (paper.id, version)
+}
+
+/// Stands in for the host's run runner: checks it was handed a clean
+/// folder with only the frozen input and code, and writes `output`.
+struct CleanRerun {
+    output: &'static [u8],
+    seen: std::sync::Mutex<Vec<wisp_runs::RunCommand>>,
+}
+
+#[async_trait]
+impl wisp_runs::RunCommandRunner for CleanRerun {
+    async fn run(
+        &self,
+        command: wisp_runs::RunCommand,
+        _: std::time::Duration,
+    ) -> Result<wisp_runs::RunCommandOutput, String> {
+        let folder = command.cwd.clone().expect("a rerun has its own folder");
+        assert_eq!(
+            std::fs::read(folder.join("data/input.txt")).unwrap(),
+            b"declared input\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(folder.join("analysis.py")).unwrap(),
+            "print('fixture')\n"
+        );
+        assert!(!folder.join("undeclared.txt").exists());
+        assert!(!folder.join("results/out.txt").exists());
+        std::fs::create_dir_all(folder.join("results")).unwrap();
+        std::fs::write(folder.join("results/out.txt"), self.output).unwrap();
+        self.seen.lock().unwrap().push(command);
+        Ok(wisp_runs::RunCommandOutput {
+            exit_code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_finalized_paper_run_is_rerun_in_a_clean_folder_and_compared() {
+    use desktop::{PaperLevel, PaperRerunStatus};
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let (paper, version) =
+        finalized_paper_with_a_run(&server, &temp.path().join("workspace")).await;
+    let shown = server.paper(PROJECT, &paper, Some(&version)).await.unwrap();
+    assert_eq!(shown.items[0].sources[0].run.as_deref(), Some("run-fit"));
+    assert_eq!(shown.level, Some(PaperLevel::Rerunnable));
+    assert!(shown.reruns.is_empty());
+
+    // An output that comes out different is recorded, and the version is
+    // not reproduced.
+    let wrong = CleanRerun {
+        output: b"41\n",
+        seen: Default::default(),
+    };
+    server
+        .verify_paper_run_with(PROJECT, &version, "run-fit", &wrong)
+        .await
+        .unwrap();
+    {
+        let seen = wrong.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(
+            seen[0].context_id,
+            wisp_runs::PUBLICATION_REPRODUCTION_CONTEXT_ID
+        );
+        // The rerun's folder is gone afterwards.
+        assert!(!seen[0].cwd.as_ref().unwrap().exists());
+    }
+    let shown = server.paper(PROJECT, &paper, Some(&version)).await.unwrap();
+    assert_eq!(shown.reruns.len(), 1);
+    assert_eq!(shown.reruns[0].status, PaperRerunStatus::Completed);
+    assert!(!shown.reruns[0].outputs[0].passed);
+    assert_eq!(shown.level, Some(PaperLevel::Rerunnable));
+
+    // The same output, under the same environment, reproduces it.
+    let right = CleanRerun {
+        output: b"42\n",
+        seen: Default::default(),
+    };
+    server
+        .verify_paper_run_with(PROJECT, &version, "run-fit", &right)
+        .await
+        .unwrap();
+    let shown = server.paper(PROJECT, &paper, Some(&version)).await.unwrap();
+    assert_eq!(shown.reruns.len(), 2);
+    let passed = shown
+        .reruns
+        .iter()
+        .find(|rerun| rerun.outputs.iter().all(|output| output.passed))
+        .unwrap();
+    assert_eq!(passed.run, "run-fit");
+    assert!(passed.environment_matched);
+    assert_eq!(passed.exit_code, Some(0));
+    assert_eq!(passed.level, PaperLevel::Reproduced);
+    assert_eq!(passed.outputs[0].path, "results/out.txt");
+    assert_eq!(passed.outputs[0].comparator, "sha256");
+    assert_eq!(shown.level, Some(PaperLevel::Reproduced));
+    // The finalized version itself is unchanged.
+    assert!(!shown.editable);
+    assert_eq!(shown.versions[0].fingerprint.len(), 64);
+
+    // A run the version does not name, a draft, and another project's
+    // paper are refused without running anything.
+    let refused = CleanRerun {
+        output: b"42\n",
+        seen: Default::default(),
+    };
+    assert!(server
+        .verify_paper_run_with(PROJECT, &version, "run-absent", &refused)
+        .await
+        .is_err());
+    let draft = server
+        .new_paper_version(PROJECT, &paper, &version, "")
+        .await
+        .unwrap();
+    assert_eq!(draft.level, None);
+    assert!(server
+        .verify_paper_run_with(PROJECT, &draft.shown, "run-fit", &refused)
+        .await
+        .is_err());
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    assert!(server
+        .verify_paper_run_with(&lab, &version, "run-fit", &refused)
+        .await
+        .is_err());
+    assert!(refused.seen.lock().unwrap().is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_finalized_paper_is_saved_as_a_capsule_where_chosen() {
+    use desktop::{PaperAudience, PaperCapsuleStatus};
+    use std::io::Read;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let (paper, version) =
+        finalized_paper_with_a_run(&server, &temp.path().join("workspace")).await;
+    assert_eq!(
+        desktop::paper_capsule_file_name("Copy number: a study", "v 1"),
+        "wisp-publication-Copy-number-a-study-v-1.zip"
+    );
+
+    // Only a .zip at a full path is written.
+    let saved = temp.path().join("saved");
+    std::fs::create_dir(&saved).unwrap();
+    for wrong in [
+        std::path::PathBuf::from("capsule.zip"),
+        saved.join("capsule.txt"),
+    ] {
+        assert!(server
+            .build_paper_capsule(PROJECT, &version, &wrong)
+            .await
+            .is_err());
+    }
+    let first = saved.join("first.zip");
+    server
+        .build_paper_capsule(PROJECT, &version, &first)
+        .await
+        .unwrap();
+    let second = saved.join("second.zip");
+    server
+        .build_paper_capsule(PROJECT, &version, &second)
+        .await
+        .unwrap();
+    // The same version gives the same bytes.
+    assert_eq!(
+        std::fs::read(&first).unwrap(),
+        std::fs::read(&second).unwrap()
+    );
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&first).unwrap()).unwrap();
+    let mut index = String::new();
+    archive
+        .by_name("capsule.json")
+        .unwrap()
+        .read_to_string(&mut index)
+        .unwrap();
+    assert!(index.contains("wisp.publication_evidence_capsule"));
+    assert!(archive.by_name("REPRODUCE.md").is_ok());
+    // An existing file is not overwritten.
+    assert!(server
+        .build_paper_capsule(PROJECT, &version, &first)
+        .await
+        .is_err());
+
+    let shown = server.paper(PROJECT, &paper, Some(&version)).await.unwrap();
+    assert_eq!(shown.capsules.len(), 2);
+    let built = shown
+        .capsules
+        .iter()
+        .find(|capsule| capsule.path == first.to_string_lossy())
+        .unwrap();
+    assert_eq!(built.status, PaperCapsuleStatus::Succeeded);
+    assert_eq!(built.audience, PaperAudience::Private);
+    assert_eq!(built.archive.as_ref().map(String::len), Some(64));
+    assert_eq!(built.error, None);
+
+    // A draft has no capsule, and another project's paper is refused.
+    let draft = server
+        .new_paper_version(PROJECT, &paper, &version, "")
+        .await
+        .unwrap();
+    assert!(server
+        .build_paper_capsule(PROJECT, &draft.shown, &saved.join("draft.zip"))
+        .await
+        .is_err());
+    let folder = temp.path().join("lab");
+    std::fs::create_dir(&folder).unwrap();
+    let lab = server.register_local_project(&folder).await.unwrap();
+    assert!(server
+        .build_paper_capsule(&lab, &version, &saved.join("lab.zip"))
+        .await
+        .is_err());
+    assert!(!saved.join("draft.zip").exists() && !saved.join("lab.zip").exists());
     server.shutdown().await;
 }
 
@@ -15820,6 +16806,39 @@ async fn the_browser_tools_are_offered_only_while_the_bridge_is_switched_on() {
     let start = server.browser_settings().await.unwrap();
     assert!(!start.enabled && !start.listening && start.problem.is_none());
     assert_eq!(start.status, desktop::BrowserStatus::default());
+    // The two settings of the WebView's Browser page, under its keys and
+    // with its defaults: a browser is started, tabs are not closed.
+    assert!(start.auto_launch && !start.auto_close_tabs);
+    let changed = server.set_browser_auto_launch(false).await.unwrap();
+    assert!(!changed.auto_launch);
+    let changed = server.set_browser_auto_close_tabs(true).await.unwrap();
+    assert!(changed.auto_close_tabs);
+    assert_eq!(
+        server
+            .0
+            .store
+            .get_setting("browser_auto_close_tabs")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("true")
+    );
+    assert!(
+        !server
+            .set_browser_auto_close_tabs(false)
+            .await
+            .unwrap()
+            .auto_close_tabs
+    );
+    // Off, there is nothing to tell the app about the browser.
+    assert_eq!(
+        server.browser_alerts(PROJECT).await.unwrap(),
+        desktop::BrowserAlerts::default()
+    );
+    assert!(server
+        .confirm_browser_tab_cleanup("t", Vec::new())
+        .await
+        .is_err());
 
     let offered = |seen: &Arc<std::sync::Mutex<Vec<String>>>| {
         let mut seen = seen.lock().unwrap();
@@ -15828,6 +16847,7 @@ async fn the_browser_tools_are_offered_only_while_the_bridge_is_switched_on() {
             "web_open_tab",
             "web_scan",
             "web_execute_js",
+            "web_screenshot",
         ]
         .into_iter()
         .filter(|name| {
@@ -15852,7 +16872,97 @@ async fn the_browser_tools_are_offered_only_while_the_bridge_is_switched_on() {
     assert!(!on.status.connected);
     send(&server, &session, "and today?").await.unwrap();
     wait_for(&server, &session, |s| !s.running).await;
-    assert_eq!(offered(&seen), 4);
+    assert_eq!(offered(&seen), 5);
+    // On, the folder to load is the managed copy in the data folder.
+    if let Some(folder) = &on.extension_path {
+        assert!(std::path::Path::new(folder).starts_with(dunce::canonicalize(temp.path()).unwrap()));
+    }
+    // Nothing waits for the user while no turn opened a tab.
+    assert_eq!(
+        server.browser_alerts(PROJECT).await.unwrap(),
+        desktop::BrowserAlerts::default()
+    );
+    // A turn's tabs are asked about over its conversation's project only.
+    {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message as Frame};
+        let bridge = server.0.browser.bridge().unwrap();
+        let mut request = format!("ws://{}", bridge.addr())
+            .into_client_request()
+            .unwrap();
+        request.headers_mut().insert(
+            "origin",
+            wisp_runs::browser::EXTENSION_ORIGIN.parse().unwrap(),
+        );
+        let (mut extension, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+        let hello = json!({"type": "ext_ready", "protocol_version": 2,
+            "extension_version": "0.5.0", "tabs": [], "capabilities": ["tab_scope"]});
+        extension
+            .send(Frame::Text(hello.to_string().into()))
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while server
+                .browser_settings()
+                .await
+                .unwrap()
+                .status
+                .extension_version
+                != "0.5.0"
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let opening = {
+            let (bridge, session) = (bridge.clone(), session.clone());
+            tokio::spawn(async move {
+                bridge
+                    .open_tab(
+                        &session,
+                        "turn-1",
+                        "https://example.org/",
+                        false,
+                        &Default::default(),
+                    )
+                    .await
+            })
+        };
+        let asked: Value = loop {
+            if let Some(Ok(Frame::Text(text))) = extension.next().await {
+                let value: Value = serde_json::from_str(&text).unwrap();
+                if value.get("id").is_some() {
+                    break value;
+                }
+            }
+        };
+        let reply = json!({"type": "result", "id": asked["id"],
+            "result": {"id": 21, "url": "https://example.org/", "title": "Example"}});
+        extension
+            .send(Frame::Text(reply.to_string().into()))
+            .await
+            .unwrap();
+        opening.await.unwrap().unwrap();
+        bridge.complete_turn("turn-1").await;
+        let alerts = server.browser_alerts(PROJECT).await.unwrap();
+        assert_eq!(alerts.cleanups.len(), 1);
+        assert_eq!(alerts.cleanups[0].frame_id, session);
+        assert!(server
+            .browser_alerts("another-project")
+            .await
+            .unwrap()
+            .cleanups
+            .is_empty());
+        // Keep all: the question is gone.
+        server.dismiss_browser_tab_cleanup("turn-1").await.unwrap();
+        assert!(server
+            .browser_alerts(PROJECT)
+            .await
+            .unwrap()
+            .cleanups
+            .is_empty());
+    }
 
     // The lists are kept with it.
     let rule = |host: &str| desktop::BrowserHostRule {
@@ -15948,6 +17058,14 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
         wait_for(&server, &session, |s| !s.running).await;
     }
     let shown_before = snapshot(&server, &session).await.items.len();
+    // What the last turn's request was made of is kept until the
+    // compaction changes what is sent.
+    assert!(server
+        .model_view(PROJECT, &session)
+        .await
+        .unwrap()
+        .sent
+        .is_some());
     let done = server
         .compact_conversation(PROJECT, &session, desktop::CompactKind::Regular)
         .await
@@ -15982,6 +17100,7 @@ async fn a_conversation_is_compacted_on_request_and_its_history_archived() {
     // that was looked at, and only once.
     let compacted = server.model_view(PROJECT, &session).await.unwrap();
     assert!(compacted.epoch > 0);
+    assert_eq!(compacted.sent, None);
     let whole_before = compacted.chars;
     assert!(server
         .undo_compaction(PROJECT, &session, compacted.epoch + 1)
@@ -17466,6 +18585,554 @@ async fn the_webview_desktops_saved_models_come_with_their_keys() {
     server.shutdown().await;
 }
 
+/// Folds a WebView database's write-ahead log into the file, so reading
+/// it afterwards can be checked against the file's bytes.
+async fn settle_webview_database(path: &Path) {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(path))
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+}
+
+/// Every file under `folder` that holds `secret` anywhere in its bytes.
+fn files_holding(folder: &Path, secret: &str) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    let mut folders = vec![folder.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                folders.push(path);
+            } else if std::fs::read(&path)
+                .unwrap_or_default()
+                .windows(secret.len())
+                .any(|window| window == secret.as_bytes())
+            {
+                found.push(path);
+            }
+        }
+    }
+    found
+}
+
+#[tokio::test]
+async fn the_webview_desktops_lists_come_as_they_are_only_while_none_are_here() {
+    use desktop::{SecretStore, WebViewHold};
+    let temp = tempfile::tempdir().unwrap();
+    let webview_dir = temp.path().join("webview");
+    let database = webview_dir.join("wisp.sqlite");
+    let kept = temp.path().join("kept");
+    std::fs::create_dir(&kept).unwrap();
+    let workflow = |id: &str, name: &str, tasks: serde_json::Value| {
+        json!({"id": id, "name": name, "description": "Shown in the WebView",
+               "proposal": {"goal": format!("Goal of {name}"), "context": "",
+                            "approval_policy": "auto_safe", "tasks": tasks},
+               "builtin": false})
+    };
+    let action = |id: &str, name: &str, template: &str, enabled: bool, order: i64| {
+        json!({"id": id, "name": name, "description": "", "icon": "search",
+               "context": "selection", "workflow_template_id": template,
+               "enabled": enabled, "sort_order": order, "builtin": false})
+    };
+    {
+        let webview = wisp_store::Store::open_application(&database)
+            .await
+            .unwrap();
+        webview
+            .create_project("kept", "Kept study", kept.to_str().unwrap())
+            .await
+            .unwrap();
+        webview
+            .create_frame("kept-1", "kept", "agent", "model")
+            .await
+            .unwrap();
+        webview
+            .append_message("kept-1", 1, &Message::user("saved conversation"))
+            .await
+            .unwrap();
+        let servers = json!([
+            {"id": "lab", "name": "Lab tools", "enabled": true, "proxy_url": "",
+             "transport": {"kind": "stdio", "command": "/opt/lab/bin/serve",
+                           "args": ["--stdio"],
+                           "env": [{"name": "API_KEY", "has_value": true},
+                                   // From before values moved to the keychain.
+                                   {"name": "REGION", "value": "made-up-plain-region"}]}},
+            {"id": "papers", "name": "Papers", "enabled": false, "proxy_url": "none",
+             "transport": {"kind": "http", "url": "https://mcp.example.invalid/",
+                           "headers": [{"name": "Authorization", "has_value": true}],
+                           "auth": "none"}},
+            {"id": "own-folder", "name": "Own folder", "enabled": true,
+             "transport": {"kind": "stdio", "command": "serve", "cwd": "/opt/lab"}},
+            {"id": "signed-in", "name": "Signed in", "enabled": true,
+             "transport": {"kind": "http", "url": "https://oauth.example.invalid/",
+                           "auth": "oauth"}},
+            {"id": 5},
+        ]);
+        let templates = json!([
+            // Listed with the later task first.
+            workflow(
+                "workflow-claims",
+                "Claim check",
+                json!([
+                    {"id": "write_report", "instruction": "Write it up.",
+                     "depends_on": ["find_papers"], "capabilities": ["project_write"],
+                     "model_tier": "fast", "budget": {"max_tokens": 5000},
+                     "timeout_secs": 600, "isolated": true},
+                    {"id": "find_papers", "instruction": "Find the papers.",
+                     "capabilities": ["project_read"],
+                     "specialist_id": "scientific_illustrator",
+                     "executor": {"kind": "native"}},
+                ])
+            ),
+            workflow(
+                "workflow-skills",
+                "Method search",
+                json!([
+                    {"id": "search", "instruction": "Search.", "skill_ids": ["pubmed"]},
+                ])
+            ),
+            workflow(
+                "workflow-remote",
+                "Remote",
+                json!([
+                    {"id": "remote", "instruction": "Elsewhere.",
+                     "executor": {"kind": "acp", "profile_id": "codex"}},
+                ])
+            ),
+            workflow(
+                "workflow-expert",
+                "Expert one",
+                json!([
+                    {"id": "judge", "instruction": "Judge.", "specialist_id": "nobody"},
+                ])
+            ),
+            json!({"id": "roundtable", "name": "Roundtable", "builtin": true,
+                   "proposal": {"goal": "g", "approval_policy": "review_all", "tasks": []}}),
+        ]);
+        let actions = json!([
+            action("check", "Check it", "workflow-claims", true, 2),
+            action("off", "Off one", "workflow-claims", false, 1),
+            action("theirs", "Built in", "literature_evidence_review", true, 3),
+            action("skills", "Needs skills", "workflow-skills", true, 4),
+            {"id": "literature_research", "name": "Research literature", "context": "selection",
+             "workflow_template_id": "literature_evidence_review", "builtin": true},
+        ]);
+        let decision = json!({"enabled": true, "preset": "startlux_bamboo",
+                              "base_url": "https://api.bamboonode.dev/", "model": "decider",
+                              "think_mode": "Auto", "timeout_secs": 45,
+                              "stored_keys": ["startlux_bamboo"]});
+        for (key, value) in [
+            ("mcp_connections", servers.to_string()),
+            ("workflow_templates", templates.to_string()),
+            ("quick_actions", actions.to_string()),
+            ("decision_model", decision.to_string()),
+        ] {
+            webview.set_setting(key, &value).await.unwrap();
+        }
+    }
+    // Its favorites: code saved from a conversation that comes along and
+    // edited twice, a figure from one that does not, and a passage.
+    let (code_id, figure_id) = {
+        let library = wisp_store::LibraryStore::open(&webview_dir.join("library.sqlite"))
+            .await
+            .unwrap();
+        let item = |kind: &str, session: &str, project: &str| wisp_store::NewLibraryItem {
+            kind: kind.into(),
+            title: format!("A {kind}"),
+            language: (kind == "code").then(|| "python".into()),
+            code: if kind == "figure" {
+                String::new()
+            } else {
+                format!("print('{kind}')")
+            },
+            content_type: (kind == "figure").then(|| "image/png".into()),
+            content: (kind == "figure").then(|| vec![137, 80, 78, 71]),
+            source_project_id: project.into(),
+            source_project_name: "Study".into(),
+            source_session_id: session.into(),
+            source_session_title: "Analysis".into(),
+            source_path: (kind == "figure").then(|| "figures/plot.png".into()),
+        };
+        let code = library
+            .insert(item("code", "kept-1", "kept"))
+            .await
+            .unwrap();
+        library
+            .edit_code(&code.id, None, "print(2)".into())
+            .await
+            .unwrap();
+        library
+            .edit_code(&code.id, None, "print(3)".into())
+            .await
+            .unwrap();
+        let figure = library
+            .insert(item("figure", "gone-1", "gone"))
+            .await
+            .unwrap();
+        library
+            .insert(item("text", "gone-2", "gone"))
+            .await
+            .unwrap();
+        (code.id, figure.id)
+    };
+    settle_webview_database(&database).await;
+    settle_webview_database(&webview_dir.join("library.sqlite")).await;
+    let webview_bytes = |name: &str| std::fs::read(webview_dir.join(name)).unwrap();
+    let (database_before, library_before) = (
+        webview_bytes("wisp.sqlite"),
+        webview_bytes("library.sqlite"),
+    );
+
+    let secrets = Arc::new(desktop::MemorySecrets::default());
+    for (name, value) in [
+        ("mcp_env:lab:API_KEY", "made-up-env-secret"),
+        ("decision_api_key:startlux_bamboo", "made-up-decision-key"),
+        ("typesafe_api_key", "made-up-typesafe-key"),
+    ] {
+        secrets.set(name, value).unwrap();
+    }
+    let server = Server::open_with(
+        config(temp.path()),
+        models(Arc::default(), false),
+        secrets.clone(),
+    )
+    .await
+    .unwrap();
+
+    let data = server.webview_data(&database).await.unwrap();
+    let group = |groups: &[desktop::WebViewGroup], name: &str| {
+        groups
+            .iter()
+            .find(|group| group.group == name)
+            .unwrap_or_else(|| panic!("no {name} in {groups:?}"))
+            .clone()
+    };
+    let names: Vec<&str> = data
+        .groups
+        .iter()
+        .map(|group| group.group.as_str())
+        .collect();
+    assert_eq!(names, desktop::WEBVIEW_LIST_GROUPS);
+    let servers = group(&data.groups, "mcp_servers");
+    assert_eq!(servers.items, ["Lab tools", "Papers"]);
+    assert_eq!(servers.without_secret, ["Papers"]);
+    assert_eq!(
+        servers.held,
+        [
+            ("Own folder".to_owned(), WebViewHold::OwnFolder),
+            ("Signed in".to_owned(), WebViewHold::OAuth),
+            (String::new(), WebViewHold::Unreadable),
+        ]
+    );
+    let decision = group(&data.groups, "decision_model");
+    assert_eq!(decision.items, ["startlux_bamboo"]);
+    assert!(decision.without_secret.is_empty());
+    let workflows = group(&data.groups, "workflows");
+    assert_eq!(workflows.items, ["Claim check"]);
+    assert_eq!(
+        workflows.held,
+        [
+            ("Method search".to_owned(), WebViewHold::Skills),
+            ("Remote".to_owned(), WebViewHold::Executor),
+            (
+                "Expert one".to_owned(),
+                WebViewHold::Expert("nobody".into())
+            ),
+        ]
+    );
+    let actions = group(&data.groups, "quick_actions");
+    assert_eq!(actions.items, ["Check it"]);
+    assert_eq!(
+        actions.held,
+        [
+            ("Off one".to_owned(), WebViewHold::Off),
+            ("Built in".to_owned(), WebViewHold::BuiltInWorkflow),
+            ("Needs skills".to_owned(), WebViewHold::NoWorkflow),
+        ]
+    );
+    let favorites = group(&data.groups, "favorites");
+    assert_eq!(favorites.items, ["A code", "A figure", "A text"]);
+    // None of their conversations is here yet.
+    assert_eq!(favorites.unlinked, 3);
+
+    let chosen: Vec<String> = desktop::WEBVIEW_LIST_GROUPS
+        .iter()
+        .map(|group| (*group).to_owned())
+        .collect();
+    let outcome = server
+        .import_webview(&database, &["kept".to_owned()], &chosen, &[])
+        .await
+        .unwrap();
+    assert!(
+        outcome.projects[0].error.is_none(),
+        "{:?}",
+        outcome.projects
+    );
+    assert_eq!(
+        group(&outcome.groups, "mcp_servers").without_secret,
+        ["Papers"]
+    );
+    // The conversation came first, so only the other two lost their link.
+    assert_eq!(group(&outcome.groups, "favorites").unlinked, 2);
+
+    // The servers, as the WebView had them, their values in the keychain.
+    let rows = server.mcp_servers().await.unwrap();
+    let listed: Vec<(&str, bool, &[String], &[String], &str)> = rows
+        .iter()
+        .map(|row| {
+            (
+                row.server.id.as_str(),
+                row.server.enabled,
+                row.server.env.as_slice(),
+                row.unset.as_slice(),
+                row.server.proxy.as_str(),
+            )
+        })
+        .collect();
+    let (api, region, authorization) = (
+        "API_KEY".to_owned(),
+        "REGION".to_owned(),
+        "Authorization".to_owned(),
+    );
+    assert_eq!(
+        listed,
+        [
+            ("lab", true, &[api.clone(), region.clone()][..], &[][..], ""),
+            (
+                "papers",
+                false,
+                &[][..],
+                &[authorization.clone()][..],
+                "none"
+            ),
+        ]
+    );
+    assert_eq!(
+        rows[0].server.transport,
+        crate::mcp::McpTransport::Stdio {
+            command: "/opt/lab/bin/serve".into(),
+            args: vec!["--stdio".into()],
+        }
+    );
+    assert_eq!(rows[1].server.headers, [authorization]);
+    let credentials = server.mcp_credentials(&rows[0].server).await;
+    assert_eq!(
+        credentials.env,
+        [
+            (api, "made-up-env-secret".to_owned()),
+            (region, "made-up-plain-region".to_owned())
+        ]
+    );
+
+    // The decision model, its keys under this desktop's names.
+    let decision = server.decision_model().await.unwrap();
+    assert_eq!(
+        (
+            decision.enabled,
+            decision.preset.as_str(),
+            decision.base_url.as_str(),
+            decision.model.as_str(),
+            decision.think_mode.as_str(),
+            decision.timeout_secs
+        ),
+        (
+            true,
+            "startlux_bamboo",
+            "https://api.bamboonode.dev",
+            "decider",
+            "auto",
+            45
+        )
+    );
+    assert_eq!(decision.stored_keys, ["typesafe", "startlux_bamboo"]);
+    assert!(server.decision_model_in_use().await.is_some());
+
+    // The workflow, its tasks in an order each can run in, beside the
+    // starters; the quick action that starts it.
+    let library = crate::workflows::list(&server.0.store).await;
+    let claims = library
+        .iter()
+        .find(|workflow| workflow.id == "workflow-claims")
+        .unwrap();
+    assert_eq!(library.len(), crate::workflows::starters().len() + 1);
+    assert_eq!(
+        claims.approval,
+        crate::workflows::WorkflowApproval::AutoSafe
+    );
+    let titles: Vec<&str> = claims
+        .tasks
+        .iter()
+        .map(|task| task.title.as_str())
+        .collect();
+    assert_eq!(titles, ["Find papers", "Write report"]);
+    assert_eq!(claims.tasks[1].after, [0]);
+    assert_eq!(claims.tasks[1].capabilities, ["project_write"]);
+    let agent = &claims.tasks[1].agent;
+    assert_eq!(
+        (
+            agent.model,
+            agent.max_tokens,
+            agent.timeout_secs,
+            agent.isolated
+        ),
+        (
+            Some(wisp_core::ModelTier::Fast),
+            Some(5000),
+            Some(600),
+            true
+        )
+    );
+    assert_eq!(
+        claims.tasks[0].agent.expert.as_deref(),
+        Some("scientific_illustrator")
+    );
+    let actions = crate::quick_actions::list(&server.0.store).await;
+    let check = actions.iter().find(|action| action.id == "check").unwrap();
+    assert_eq!(
+        (
+            check.name.as_str(),
+            check.prompt.as_str(),
+            check.workflow.as_str()
+        ),
+        ("Check it", "", "workflow-claims")
+    );
+    assert_eq!(actions.len(), crate::quick_actions::starters().len() + 1);
+
+    // The favorites, with their ids, versions in order and pictures; a
+    // link only to the conversation that is here.
+    let saved = server.favorites("", None).await.unwrap();
+    assert_eq!(saved.len(), 3);
+    let code = saved.iter().find(|item| item.id == code_id).unwrap();
+    assert_eq!(
+        (
+            code.source_project_id.as_str(),
+            code.source_session_id.as_str()
+        ),
+        ("kept", "kept-1")
+    );
+    for item in saved.iter().filter(|item| item.id != code_id) {
+        assert!(item.source_project_id.is_empty() && item.source_session_id.is_empty());
+        assert_eq!(item.source_session_title, "Analysis");
+    }
+    let versions: Vec<(i64, String)> = server
+        .favorite_versions(&code_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|version| (version.version_number, version.code))
+        .collect();
+    assert_eq!(
+        versions,
+        [
+            (1, "print('code')".to_owned()),
+            (2, "print(2)".to_owned()),
+            (3, "print(3)".to_owned())
+        ]
+    );
+    assert_eq!(
+        server.favorite(&figure_id).await.unwrap().image,
+        Some(vec![137, 80, 78, 71])
+    );
+
+    // Bringing over again finds nothing to bring and changes nothing.
+    let again = server.webview_data(&database).await.unwrap();
+    assert!(again.groups.is_empty(), "{:?}", again.groups);
+    let twice = server
+        .import_webview(&database, &[], &chosen, &[])
+        .await
+        .unwrap();
+    assert!(twice.groups.is_empty());
+    assert_eq!(server.mcp_servers().await.unwrap().len(), 2);
+    assert_eq!(crate::workflows::list(&server.0.store).await, library);
+    assert_eq!(crate::quick_actions::list(&server.0.store).await, actions);
+    assert_eq!(server.favorites("", None).await.unwrap().len(), 3);
+    server.shutdown().await;
+
+    // No secret is in this desktop's files, only in the keychain.
+    for secret in [
+        "made-up-env-secret",
+        "made-up-plain-region",
+        "made-up-decision-key",
+        "made-up-typesafe-key",
+    ] {
+        assert_eq!(
+            files_holding(&temp.path().join("data"), secret),
+            Vec::<std::path::PathBuf>::new(),
+            "{secret}"
+        );
+    }
+    // The WebView's own files are as they were.
+    assert!(webview_bytes("wisp.sqlite") == database_before);
+    assert!(webview_bytes("library.sqlite") == library_before);
+
+    // A desktop that has its own of each takes none of the WebView's.
+    let other = tempfile::tempdir().unwrap();
+    let mine = Server::open_with(config(other.path()), models(Arc::default(), false), secrets)
+        .await
+        .unwrap();
+    let store = &mine.0.store;
+    let own = crate::mcp::McpServer {
+        id: "mine".into(),
+        name: "Mine".into(),
+        enabled: true,
+        transport: crate::mcp::McpTransport::Http {
+            url: "https://mine.example.invalid".into(),
+        },
+        env: Vec::new(),
+        headers: Vec::new(),
+        proxy: String::new(),
+    };
+    crate::mcp::save(store, std::slice::from_ref(&own))
+        .await
+        .unwrap();
+    store
+        .set_setting("decision_model", r#"{"preset":"custom"}"#)
+        .await
+        .unwrap();
+    crate::workflows::save(store, &[]).await.unwrap();
+    crate::quick_actions::save(store, &[]).await.unwrap();
+    mine.library()
+        .await
+        .unwrap()
+        .insert(wisp_store::NewLibraryItem {
+            kind: "text".into(),
+            title: "Mine".into(),
+            language: None,
+            code: "my passage".into(),
+            content_type: None,
+            content: None,
+            source_project_id: String::new(),
+            source_project_name: String::new(),
+            source_session_id: String::new(),
+            source_session_title: String::new(),
+            source_path: None,
+        })
+        .await
+        .unwrap();
+    assert!(mine
+        .webview_data(&database)
+        .await
+        .unwrap()
+        .groups
+        .is_empty());
+    let none = mine
+        .import_webview(&database, &[], &chosen, &[])
+        .await
+        .unwrap();
+    assert!(none.groups.is_empty());
+    assert_eq!(crate::mcp::load(store).await, [own]);
+    assert!(crate::workflows::list(store).await.is_empty());
+    assert!(crate::quick_actions::list(store).await.is_empty());
+    assert_eq!(mine.favorites("", None).await.unwrap().len(), 1);
+    mine.shutdown().await;
+}
+
 #[tokio::test]
 async fn the_sidebar_pages_through_more_conversations_than_one_list_holds() {
     let temp = tempfile::tempdir().unwrap();
@@ -17714,6 +19381,60 @@ async fn a_run_moved_to_the_background_frees_the_turn_and_reports_its_end() {
         .await
         .unwrap()
         .is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_end_of_a_run_moved_to_the_background_is_told_to_the_desktop_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let session = create(&server).await;
+    let store = &server.0.store;
+    let mut run =
+        wisp_store::RunRecord::new("align", PROJECT, "local", "Align reads", "local_detached");
+    run.frame_id = Some(session.clone());
+    run.status = wisp_store::RunStatus::Running;
+    store.create_run(&run).await.unwrap();
+    // Held, so the run manager does not recover it meanwhile.
+    assert!(store
+        .claim_run_lifecycle("align", "test", 600)
+        .await
+        .unwrap());
+    // Moved to the background without a watcher of its own: the report is
+    // made here, in order, so nothing waits on the host's own tasks.
+    wisp_runs::background::request(store, &run).await.unwrap();
+    let mut endings = server.background_run_endings();
+    assert!(store
+        .finish_active_run_owned("align", "test", wisp_store::RunStatus::Failed, Some(1))
+        .await
+        .unwrap());
+    server.report_background_run("align", false).await.unwrap();
+    let conversation = store
+        .session_title(&session)
+        .await
+        .unwrap()
+        .unwrap_or_default();
+    assert_eq!(
+        endings.try_recv().unwrap(),
+        desktop::BackgroundRunEnded {
+            project: PROJECT.into(),
+            session: session.clone(),
+            conversation,
+            run: "align".into(),
+            title: "Align reads".into(),
+            status: "failed".into(),
+        }
+    );
+    // Its conversation has the message, and a second report tells nothing.
+    assert!(snapshot(&server, &session)
+        .await
+        .items
+        .iter()
+        .any(|item| item.role == "assistant" && item.text.contains("Align reads")));
+    server.report_background_run("align", false).await.unwrap();
+    assert!(endings.try_recv().is_err());
     server.shutdown().await;
 }
 

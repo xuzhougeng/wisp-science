@@ -6,3 +6,4 @@
 
 pub mod mandates;
 pub mod projects;
+pub mod side_question;

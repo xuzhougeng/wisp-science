@@ -52,21 +52,38 @@ with the same placement: under the call that waits on the Run while it goes
 on (`monitor_run`, or a `run_in_context` still waiting with
 `wait_for_completion`), and under its submission row once it has ended, with
 no second card for an explicit `monitor_run`. It offers Ask, Move to
-background (bell), Cancel (stop), the Run review dialog for a finished SSH
-Run whose workspace is still there (folder) and Show in Runs. Moving a Run
+background (bell), Cancel (stop), Force cancel once it is cancelling, the
+Run review dialog for a finished SSH Run whose workspace is still there
+(folder) and Show in Runs. Moving a Run
 uses the same shared code (`wisp_runs::background`) through the embedded
 host's `background_run`; the completion message is the WebView's, written in
 the window's language, or after a restart in the saved Language setting
-(else English). It differs from the WebView in these ways:
+(else English). The details, and where it differs from the WebView:
 
 - Tool rows fold one by one rather than into a **Processed** group, so the
   card sits under its call row; the command, remote folder and output tails
   show when that row is opened.
-- A card always belongs to a row, so there is no dismiss. A Run no call
-  names (a scheduler job followed through `shell`) has no card in the
-  transcript, only in the Runs tab.
-- No force-cancel of a Run already cancelling, no environment snapshot, and
-  no desktop notification when a backgrounded Run ends.
+- A Run of the conversation that no loaded call names (a scheduler job
+  followed through `shell`, a second Run started while one waits) has a
+  card of its own while it goes on and for a minute after it ends, placed
+  as the WebView places its standalone cards: above the first message of
+  yours sent after the Run was created, else after the last row. It shows
+  the remote folder, command and output tails at once, and once the Run
+  has ended it has a close button that dismisses it while the window is
+  open. Cards under a call have no dismiss, as the WebView's cards folded
+  into **Processed** have none.
+- A Run already cancelling has Force cancel (a struck circle) on its card
+  and in the Runs tab, as the WebView's second cancel: it marks the Run
+  cancelled without waiting for its host. It goes through the shared
+  `RunManager::cancel_with_intent` with the button's intent, as the Tauri
+  desktop's native clients do, so a Cancel drawn before the Run began to
+  stop never forces it. A method search is never forced.
+- When a backgrounded Run ends and its conversation has the message, the
+  desktop is told and posts one notification for the app (Task completed
+  or Task failed, the conversation and the Run), through the notification
+  and sound chosen in Settings, unless that conversation is on screen in
+  the focused window. The WebView's in-window status line is not shown.
+- No environment snapshot on the card.
 - Moving a Run to the background is a desktop command, not a remote-access
   command, so the phone and web clients do not offer it.
 

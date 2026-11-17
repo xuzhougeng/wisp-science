@@ -25,6 +25,15 @@ pub fn branch_state_is_frozen(state: Option<&str>) -> bool {
 pub const FROZEN_BRANCH_REFUSAL: &str =
     "This conversation branch is frozen and cannot accept new messages.";
 
+/// What a host answers when a frozen branch is to be handed off, reviewed
+/// or moved to another project: the Tauri desktop's wording for its native
+/// clients, shared so both hosts say the same.
+pub const FROZEN_BRANCH_CHANGE_REFUSAL: &str = "Frozen conversation branches cannot be changed";
+
+/// What a host answers when a branch, frozen or not, is to be branched
+/// again: the WebView desktop's wording, shared so both hosts say the same.
+pub const BRANCH_AGAIN_REFUSAL: &str = "Conversation branches cannot be branched again.";
+
 /// Synthetic model-context checkpoints are not user-authored questions.
 /// Keep both markers for archives written before semantic compaction existed.
 pub fn is_compaction_checkpoint(text: &str) -> bool {
@@ -3561,6 +3570,14 @@ impl Store {
         Ok(branch_state_is_frozen(
             self.session_branch_state(frame_id).await?,
         ))
+    }
+
+    /// Whether `frame_id` is a conversation branch in any state: active,
+    /// merged or orphaned. Both desktops refuse to branch one again
+    /// ([`BRANCH_AGAIN_REFUSAL`]). A conversation only copied from another,
+    /// with no turn it split after, is no branch.
+    pub async fn session_is_branch(&self, frame_id: &str) -> Result<bool> {
+        Ok(self.session_branch_state(frame_id).await?.is_some())
     }
 
     pub async fn preview_session_branch_merge(

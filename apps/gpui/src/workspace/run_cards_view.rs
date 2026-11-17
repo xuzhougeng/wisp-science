@@ -3,8 +3,11 @@
 //! and how long it ran, and what can be done with it now (ask aside, move
 //! it to the background, cancel it, look through what it left on its SSH
 //! host, open it in the Runs tab). Opening the call shows the run's command,
-//! its remote folder and the last of its output. A card is inline, not a
-//! layer, so it is not on the Escape stack.
+//! its remote folder and the last of its output. A run of the conversation
+//! that no loaded call names, going or just ended, has a card of its own
+//! placed by when it was made, as the WebView's standalone cards, which
+//! shows all of that and can be dismissed once the run has ended. A card is
+//! inline, not a layer, so it is not on the Escape stack.
 use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
@@ -45,6 +48,25 @@ impl Workspace {
                     (index, (id, shape))
                 })
                 .collect();
+        // Runs no row names: a card of their own, by when they were made.
+        let mut own: std::collections::HashMap<usize, Vec<(run_cards::Anchor, String, u64)>> =
+            std::collections::HashMap::new();
+        for (anchor, id) in run_cards::standalone(
+            &self.rows,
+            runs,
+            placed.values().map(|(id, _)| id),
+            &self.dismissed_runs,
+            super::shell::unix_now(),
+        ) {
+            let record = runs.iter().find(|run| run.id == id);
+            let backgrounded = record.is_some_and(|run| {
+                run_cards::backgrounded(run, self.backgrounded_runs.contains(&id))
+            });
+            let shape = run_cards::shape(record, backgrounded);
+            own.entry(anchor.row())
+                .or_default()
+                .push((anchor, id, shape));
+        }
         let changed: Vec<usize> = placed
             .iter()
             .filter(|(index, card)| self.run_card_rows.get(index) != Some(card))
@@ -55,8 +77,22 @@ impl Workspace {
                     .filter(|index| !placed.contains_key(index))
                     .copied(),
             )
+            .chain(
+                own.iter()
+                    .filter(|(index, cards)| self.own_run_cards.get(index) != Some(cards))
+                    .map(|(index, _)| *index),
+            )
+            .chain(
+                self.own_run_cards
+                    .keys()
+                    .filter(|index| !own.contains_key(index))
+                    .copied(),
+            )
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
             .collect();
         self.run_card_rows = placed;
+        self.own_run_cards = own;
         for index in changed {
             if index < self.rows.len() {
                 self.list.splice(index..index + 1, 1);
@@ -64,16 +100,59 @@ impl Workspace {
         }
     }
 
-    /// The card of the run `id` under the tool row at `index`; `open` when
-    /// that row is unfolded.
-    pub(super) fn run_card(
+    /// The cards of runs no row names that are drawn with the row at
+    /// `index`: those above it and those below it.
+    pub(super) fn own_run_cards_at(
         &self,
         index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Vec<AnyElement>, Vec<AnyElement>) {
+        let (mut above, mut below) = (Vec::new(), Vec::new());
+        for (anchor, id, _) in self.own_run_cards.get(&index).into_iter().flatten() {
+            let card = div()
+                .w_full()
+                .px_6()
+                .py_1()
+                .child(
+                    div()
+                        .v_flex()
+                        .pt_2()
+                        .rounded(cx.theme().radius)
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        // Nothing to open: what the call would show is shown.
+                        .child(self.run_card(None, id, true, window, cx)),
+                )
+                .into_any_element();
+            match anchor {
+                run_cards::Anchor::Before(_) => above.push(card),
+                run_cards::Anchor::After(_) => below.push(card),
+            }
+        }
+        (above, below)
+    }
+
+    /// Puts away the card of its own of a run that has ended, while the
+    /// window is open, as the WebView's dismiss does.
+    fn dismiss_run_card(&mut self, run: String, cx: &mut Context<Self>) {
+        self.dismissed_runs.insert(run);
+        self.place_run_cards();
+        cx.notify();
+    }
+
+    /// The card of the run `id`: under the tool row at `index`, `open` when
+    /// that row is unfolded, or with no row (`None`), a card of its own.
+    pub(super) fn run_card(
+        &self,
+        index: Option<usize>,
         id: &str,
         open: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        // What tells this card's controls apart from those of another.
+        let key = index.map_or_else(|| format!("own-{id}"), |index| index.to_string());
         let muted = cx.theme().muted_foreground;
         let record = self
             .state
@@ -83,7 +162,7 @@ impl Workspace {
         // The state the row was saved with, when the record is not there.
         let status = record.map(|run| run.status.clone()).or_else(|| {
             self.rows
-                .get(index)
+                .get(index?)
                 .and_then(|row| row.run.as_ref())
                 .map(|run| run.status.clone())
         });
@@ -112,7 +191,7 @@ impl Workspace {
             let title = record.map(|run| run.title.clone()).unwrap_or_default();
             head = head.child(match action {
                 Action::Ask => icon_button(
-                    SharedString::from(format!("run-card-ask-{index}")),
+                    SharedString::from(format!("run-card-ask-{key}")),
                     "chat",
                     "Ask aside about this run, with its live state",
                 )
@@ -121,7 +200,7 @@ impl Workspace {
                     this.open_aside_about_run(wanted.clone(), title.clone(), window, cx)
                 })),
                 Action::Background => icon_button(
-                    SharedString::from(format!("run-card-background-{index}")),
+                    SharedString::from(format!("run-card-background-{key}")),
                     "bell",
                     "Move to background and get a message when it ends",
                 )
@@ -130,16 +209,25 @@ impl Workspace {
                     this.background_run(wanted.clone(), window, cx)
                 })),
                 Action::Cancel => icon_button(
-                    SharedString::from(format!("run-card-cancel-{index}")),
+                    SharedString::from(format!("run-card-cancel-{key}")),
                     "stop",
                     "Cancel run",
                 )
                 .xsmall()
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    this.cancel_run(wanted.clone(), window, cx)
+                    this.cancel_run(wanted.clone(), false, window, cx)
+                })),
+                Action::ForceCancel => icon_button(
+                    SharedString::from(format!("run-card-force-cancel-{key}")),
+                    "ban",
+                    "Force cancel: mark it cancelled without waiting for the host to confirm the stop",
+                )
+                .xsmall()
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.cancel_run(wanted.clone(), true, window, cx)
                 })),
                 Action::Review => icon_button(
-                    SharedString::from(format!("run-card-review-{index}")),
+                    SharedString::from(format!("run-card-review-{key}")),
                     "folder",
                     "Look through what it left on its host",
                 )
@@ -152,7 +240,7 @@ impl Workspace {
         {
             let wanted = id.to_owned();
             head = head.child(
-                Button::new(SharedString::from(format!("show-run-{index}")))
+                Button::new(SharedString::from(format!("show-run-{key}")))
                     .label(tr("Show in Runs"))
                     .xsmall()
                     .ghost()
@@ -163,6 +251,21 @@ impl Workspace {
                         this.expanded_run = Some(wanted.clone());
                         this.show_panel_tab(PanelTab::Runs, window, cx);
                     })),
+            );
+        }
+        // A card of its own goes once its run has ended and it is put away.
+        if index.is_none() && run_cards::ended(&status) {
+            let wanted = id.to_owned();
+            head = head.child(
+                icon_button(
+                    SharedString::from(format!("run-card-dismiss-{key}")),
+                    "close",
+                    "Dismiss completed run card",
+                )
+                .xsmall()
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.dismiss_run_card(wanted.clone(), cx)),
+                ),
             );
         }
         let mut card = div().v_flex().gap_1().px_3().pb_2().child(head);
@@ -225,7 +328,7 @@ impl Workspace {
             }
             card = card.child(
                 TextView::markdown(
-                    SharedString::from(format!("run-card-output-{index}")),
+                    SharedString::from(format!("run-card-output-{key}")),
                     present::run_output(run),
                     window,
                     cx,

@@ -176,6 +176,14 @@ pub struct Live {
     /// What the running turn's tool calls reported doing, to be kept in
     /// the execution log when it ends.
     pub provenance: Vec<wisp_core::provenance::ProvenanceRecord>,
+    /// A model request of the running turn that failed and is being sent
+    /// again, until the model says or does something or the turn ends.
+    pub recovery: Option<wisp_dto::native_conversations::StreamRecoveryState>,
+    /// What the latest Wisp turn sent the model, kind by kind with tool
+    /// definitions, as the core counted it. Kept in memory only, as the
+    /// WebView keeps its agent: gone with a restart, a new turn's start, a
+    /// compaction or its undo, and an undone turn.
+    pub context: Option<crate::model_view::SentContext>,
 }
 
 pub struct Session {
@@ -293,10 +301,54 @@ impl Output for ServerOutput {
         }
     }
     fn assistant_text(&self, delta: &str) {
-        self.session.live.lock().unwrap().draft.push_str(delta);
+        let mut live = self.session.live.lock().unwrap();
+        // The model answers again: the request it was retrying went through.
+        live.recovery = None;
+        live.draft.push_str(delta);
     }
     fn reasoning(&self, delta: &str) {
-        self.session.live.lock().unwrap().reasoning.push_str(delta);
+        let mut live = self.session.live.lock().unwrap();
+        live.recovery = None;
+        live.reasoning.push_str(delta);
+    }
+    fn tool_call(&self, _: &str, _: &str) {
+        self.session.live.lock().unwrap().recovery = None;
+    }
+    fn compaction_started(&self, _: &str) {
+        self.session.live.lock().unwrap().recovery = None;
+    }
+    fn stream_recovery(&self, recovery: &wisp_core::StreamRecovery) {
+        use wisp_dto::native_conversations::{StreamRecoveryCause, StreamRecoveryPhase};
+        let mut live = self.session.live.lock().unwrap();
+        let phase = match recovery.phase {
+            wisp_core::StreamRecoveryPhase::Recovered => {
+                live.recovery = None;
+                return;
+            }
+            wisp_core::StreamRecoveryPhase::Waiting => {
+                // What the failed attempt streamed was never an answer and
+                // never enters the context: the retry must not be spliced
+                // onto it.
+                let keep = wisp_core::kept_draft_len(&live.draft, recovery.discarded_text_bytes);
+                live.draft.truncate(keep);
+                let keep =
+                    wisp_core::kept_draft_len(&live.reasoning, recovery.discarded_reasoning_bytes);
+                live.reasoning.truncate(keep);
+                StreamRecoveryPhase::Waiting
+            }
+            wisp_core::StreamRecoveryPhase::Reconnecting => StreamRecoveryPhase::Reconnecting,
+        };
+        live.recovery = Some(wisp_dto::native_conversations::StreamRecoveryState {
+            phase,
+            cause: match recovery.kind {
+                wisp_core::StreamRecoveryKind::Request => StreamRecoveryCause::Request,
+                wisp_core::StreamRecoveryKind::Stream => StreamRecoveryCause::Stream,
+            },
+            attempt: recovery.attempt as u64,
+            max_attempts: recovery.max_attempts as u64,
+            retry_in_ms: u64::try_from(recovery.retry_in.as_millis()).unwrap_or(u64::MAX),
+            error: recovery.error.clone(),
+        });
     }
     fn plan_mode(&self) -> bool {
         self.plan_mode
@@ -323,9 +375,14 @@ impl Output for ServerOutput {
         cached: u64,
         ctx_tokens: usize,
         max_context: usize,
-        _: wisp_core::ContextUsage,
+        context_usage: wisp_core::ContextUsage,
     ) {
         let mut live = self.session.live.lock().unwrap();
+        // What this request was made of; what each kind holds is read
+        // from the agent when the turn ends.
+        let sent = live.context.get_or_insert_with(Default::default);
+        sent.usage = context_usage;
+        sent.max_context = max_context;
         live.calls.push(UsageCall {
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -348,6 +405,7 @@ impl Output for ServerOutput {
     }
     fn on_message(&self, msg: &Message) {
         let mut live = self.session.live.lock().unwrap();
+        live.recovery = None;
         if msg.role == wisp_llm::Role::Assistant {
             live.draft.clear();
             // The thought belonged to the request this message answers.
@@ -688,6 +746,92 @@ mod tests {
                 max_context: 64_000,
             })
         );
+        // The latest request's split is kept, with the window it fills.
+        let split = wisp_core::ContextUsage {
+            system_prompt: 300,
+            tool_definitions: 500,
+            conversation: 400,
+            ..Default::default()
+        };
+        out.usage(3, 10, 1, 0, 0, 1_200, 64_000, split);
+        let kept = session.live.lock().unwrap().context.clone().unwrap();
+        assert_eq!((kept.usage, kept.max_context), (split, 64_000));
+    }
+
+    #[test]
+    fn a_retried_request_drops_what_it_streamed_and_says_so_until_the_model_answers() {
+        use wisp_core::{StreamRecovery, StreamRecoveryKind, StreamRecoveryPhase};
+        use wisp_dto::native_conversations::{StreamRecoveryCause, StreamRecoveryPhase as Shown};
+        let session = Arc::new(Session::default());
+        let out = output(&session, false);
+        out.assistant_text("Kept. ");
+        out.reasoning("weighing it");
+        // The attempt that is cut streamed more of both.
+        out.assistant_text("Half an ans");
+        out.reasoning(" and");
+        let mut recovery = StreamRecovery {
+            phase: StreamRecoveryPhase::Waiting,
+            kind: StreamRecoveryKind::Stream,
+            attempt: 1,
+            max_attempts: 5,
+            retry_in: std::time::Duration::from_millis(1_000),
+            error: "stream ended without completion".into(),
+            discarded_text_bytes: "Half an ans".len(),
+            discarded_reasoning_bytes: " and".len(),
+        };
+        out.stream_recovery(&recovery);
+        {
+            let live = session.live.lock().unwrap();
+            assert_eq!(
+                (live.draft.as_str(), live.reasoning.as_str()),
+                ("Kept. ", "weighing it")
+            );
+            let shown = live.recovery.clone().unwrap();
+            assert_eq!(shown.phase, Shown::Waiting);
+            assert_eq!(shown.cause, StreamRecoveryCause::Stream);
+            assert_eq!(
+                (shown.attempt, shown.max_attempts, shown.retry_in_ms),
+                (1, 5, 1_000)
+            );
+            assert_eq!(shown.error, "stream ended without completion");
+        }
+        recovery.phase = StreamRecoveryPhase::Reconnecting;
+        recovery.retry_in = std::time::Duration::ZERO;
+        recovery.discarded_text_bytes = 0;
+        out.stream_recovery(&recovery);
+        assert_eq!(
+            session
+                .live
+                .lock()
+                .unwrap()
+                .recovery
+                .as_ref()
+                .map(|r| r.phase),
+            Some(Shown::Reconnecting)
+        );
+        // Reconnecting takes nothing more off the draft.
+        assert_eq!(session.live.lock().unwrap().draft, "Kept. ");
+        // The model says something again: the state goes.
+        out.assistant_text("The whole answer");
+        assert!(session.live.lock().unwrap().recovery.is_none());
+        assert_eq!(session.live.lock().unwrap().draft, "Kept. The whole answer");
+        // A request refused and then let through says so until it is.
+        recovery.kind = StreamRecoveryKind::Request;
+        recovery.phase = StreamRecoveryPhase::Waiting;
+        out.stream_recovery(&recovery);
+        assert_eq!(
+            session
+                .live
+                .lock()
+                .unwrap()
+                .recovery
+                .as_ref()
+                .map(|r| r.cause),
+            Some(StreamRecoveryCause::Request)
+        );
+        recovery.phase = StreamRecoveryPhase::Recovered;
+        out.stream_recovery(&recovery);
+        assert!(session.live.lock().unwrap().recovery.is_none());
     }
 
     #[test]

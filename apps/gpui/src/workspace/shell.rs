@@ -574,6 +574,9 @@ impl Workspace {
         };
         let archived = self.current_row().is_none_or(|row| row.shelved);
         let idle = !running && !self.pending;
+        // A read-only conversation's messages are not edited, a branch is
+        // not branched again, and a frozen one is not reviewed.
+        let offered = self.offered();
         // What the turn cost, after its last answer.
         let actions = match controls::turn_tokens_at(&self.rows, index, &self.turn_tokens) {
             Some(tokens) => {
@@ -597,29 +600,33 @@ impl Workspace {
             None => actions,
         };
         match self.rows.get(index).map(|row| row.role.as_str()) {
-            Some("user") if !archived => actions.child(
+            Some("user") if !archived && offered.edit => actions.child(
                 icon_button(("edit-row", index), "edit", tr("Edit and send again"))
                     .xsmall()
                     .disabled(!idle)
                     .on_click(cx.listener(move |this, _, _, cx| this.ask_rewind(index, cx))),
             ),
             Some("assistant") if controls::turn_of(&self.rows, index).is_some() => actions
-                .child(
-                    icon_button(("branch-row", index), "branch", tr("Branch from here"))
-                        .xsmall()
-                        .disabled(!idle)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.branch_from(index, window, cx)
-                        })),
-                )
-                .child(
-                    icon_button(("review-row", index), "review", tr("Review this turn"))
-                        .xsmall()
-                        .disabled(!idle)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_review_of(index, window, cx)
-                        })),
-                )
+                .when(offered.branch, |actions| {
+                    actions.child(
+                        icon_button(("branch-row", index), "branch", tr("Branch from here"))
+                            .xsmall()
+                            .disabled(!idle)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.branch_from(index, window, cx)
+                            })),
+                    )
+                })
+                .when(offered.review, |actions| {
+                    actions.child(
+                        icon_button(("review-row", index), "review", tr("Review this turn"))
+                            .xsmall()
+                            .disabled(!idle)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_review_of(index, window, cx)
+                            })),
+                    )
+                })
                 .when(self.can_explore(), |actions| {
                     actions.child(
                         icon_button(
@@ -859,14 +866,32 @@ impl Workspace {
         div().w_full().px_6().py_2().child(card).into_any_element()
     }
 
-    /// One transcript row. Your messages sit in a bubble on the right, Wisp's
-    /// answers are plain text, and tool calls fold into one line each.
+    /// One transcript row, with the cards of runs no row names that are
+    /// placed with it: above a message of yours sent after the run was
+    /// made, or below the last row.
     pub(super) fn row(
         &self,
         index: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let body = self.row_body(index, window, cx);
+        if !self.own_run_cards.contains_key(&index) {
+            return body;
+        }
+        let (above, below) = self.own_run_cards_at(index, window, cx);
+        div()
+            .w_full()
+            .v_flex()
+            .children(above)
+            .child(body)
+            .children(below)
+            .into_any_element()
+    }
+
+    /// One transcript row. Your messages sit in a bubble on the right, Wisp's
+    /// answers are plain text, and tool calls fold into one line each.
+    fn row_body(&self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(item) = self.rows.get(index) else {
             return div().into_any_element();
         };
@@ -991,7 +1016,7 @@ impl Workspace {
                 // one card per run, under the call that waits on it while
                 // it goes on and under the call that submitted it after.
                 if let Some((run, _)) = self.run_card_rows.get(&index) {
-                    card = card.child(self.run_card(index, run, open, window, cx));
+                    card = card.child(self.run_card(Some(index), run, open, window, cx));
                 }
                 if open {
                     card = card.child(div().px_3().pb_3().child(
@@ -1898,7 +1923,7 @@ impl Workspace {
     }
 
     /// The small rounded box a file or reference is shown in.
-    fn chip_box(cx: &App) -> Div {
+    pub(super) fn chip_box(cx: &App) -> Div {
         div()
             .h_flex()
             .gap_1()
@@ -2557,10 +2582,12 @@ impl Workspace {
     }
 
     /// Everything to the right of the sidebar.
-    pub(super) fn render_conversation(&self, cx: &mut Context<Self>) -> Div {
+    pub(super) fn render_conversation(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
         let drop_tint = cx.theme().primary.opacity(0.06);
-        let mut content = div()
+        // The tabs and the conversation's header stay over a document
+        // shown in the centre; what follows them is the conversation.
+        let page = div()
             .v_flex()
             .flex_1()
             .min_w(px(300.))
@@ -2573,6 +2600,7 @@ impl Workspace {
             }))
             .children(self.render_tabs(cx))
             .child(self.render_topbar(cx));
+        let mut content = div().v_flex().flex_1().min_w_0().min_h_0();
         if let Some(bar) = self.render_conversation_bar(cx) {
             content = content.child(bar);
         }
@@ -2628,33 +2656,35 @@ impl Workspace {
         }
         if self.state.session.is_none() {
             let can_start = !self.pending && self.state.project.is_some();
-            return content.child(
-                div()
-                    .v_flex()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
-                    .p_8()
-                    .child(surfaces::display(tr(
-                        "What would you like to research today?",
-                    )))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(tr("Start a conversation, or pick one on the left.")),
-                    )
-                    .child(
-                        Button::new("empty-new-chat")
-                            .icon(glyph("plus"))
-                            .label(tr("New conversation"))
-                            .primary()
-                            .disabled(!can_start)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.create_session(window, cx)),
-                            ),
-                    ),
+            return page.child(
+                content.child(
+                    div()
+                        .v_flex()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .gap_3()
+                        .p_8()
+                        .child(surfaces::display(tr(
+                            "What would you like to research today?",
+                        )))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(tr("Start a conversation, or pick one on the left.")),
+                        )
+                        .child(
+                            Button::new("empty-new-chat")
+                                .icon(glyph("plus"))
+                                .label(tr("New conversation"))
+                                .primary()
+                                .disabled(!can_start)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.create_session(window, cx)
+                                })),
+                        ),
+                ),
             );
         }
         if self.before.is_some() {
@@ -2716,6 +2746,10 @@ impl Workspace {
         // What waits on the user between the transcript and the composer
         // keeps the composer's column, with its edges on the composer box's.
         let bars = [
+            self.render_browser_extension_bar(cx)
+                .map(IntoElement::into_any_element),
+            self.render_stream_recovery(cx)
+                .map(IntoElement::into_any_element),
             self.render_context_recovery(cx)
                 .map(IntoElement::into_any_element),
             self.render_approvals(cx).map(IntoElement::into_any_element),
@@ -2732,11 +2766,14 @@ impl Workspace {
                 .map(IntoElement::into_any_element),
         ];
         // The composer sits in the same column as what it answers.
-        content
+        let content = content
             .children(surfaces::above_composer(
                 bars.into_iter().flatten().collect(),
             ))
-            .child(surfaces::reading_column(self.render_composer(running, cx)).flex_shrink_0())
+            .child(surfaces::reading_column(self.render_composer(running, cx)).flex_shrink_0());
+        // A document opened in the centre takes the conversation's place,
+        // or sits beside it; the terminals stay at the foot of the page.
+        self.render_centre(page, content, window, cx)
             .children(self.render_terminal_dock(cx))
     }
 }

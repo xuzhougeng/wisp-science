@@ -27,6 +27,9 @@ pub struct FileOrigin {
     pub source: String,
     /// Project files the call read, as far as it said.
     pub read: Vec<String>,
+    /// What the call printed, as much as is kept: the WebView's Log of the
+    /// file's provenance.
+    pub output: String,
 }
 
 /// A path a tool reported, as the project names it: relative to the
@@ -126,6 +129,7 @@ pub(crate) async fn find(
                 language: found.language,
                 source: found.source,
                 read: found.files_read,
+                output: found.stdout,
             }));
         }
     }

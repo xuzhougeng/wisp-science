@@ -1,5 +1,6 @@
 //! The strip of conversation tabs above the conversation: the ones opened
-//! in this window, to go back to with a click.
+//! in this window, to go back to with a click. The open conversation's
+//! documents in the centre follow its tab (`centre_view`).
 use gpui::{prelude::*, *};
 use gpui_component::{ActiveTheme, Sizable, StyledExt};
 
@@ -21,9 +22,16 @@ impl Workspace {
     }
 
     pub(super) fn render_tabs(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !self.tabs.shown() {
+        // One conversation is just the window, unless it has documents
+        // open in the centre to go between.
+        let documents = self.centre_tabs(cx);
+        if !self.tabs.shown() && documents.is_empty() {
             return None;
         }
+        let mut documents = Some(documents);
+        // While a document is shown the conversation's own tab is not the
+        // one in view, and a click on it brings the conversation back.
+        let document_shown = self.centre_document().is_some();
         let muted = cx.theme().muted_foreground;
         let mut strip = div()
             .id("conversation-tabs")
@@ -36,7 +44,8 @@ impl Workspace {
             .border_color(cx.theme().border)
             .overflow_x_scroll();
         for tab in self.tabs.open() {
-            let selected = self.state.session.as_deref() == Some(tab.session.as_str());
+            let current = self.state.session.as_deref() == Some(tab.session.as_str());
+            let selected = current && !document_shown;
             // The sidebar knows the current name of the conversations it lists.
             let label = match self.known.get(&tab.session) {
                 Some(row) if !row.title.trim().is_empty() => crate::present::one_line(&row.title),
@@ -62,7 +71,11 @@ impl Workspace {
                             .cursor_pointer()
                             .hover(|tab| tab.bg(cx.theme().accent.opacity(0.5)))
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_session(project.clone(), session.clone(), window, cx)
+                                if current {
+                                    this.show_centre(None, window, cx)
+                                } else {
+                                    this.open_session(project.clone(), session.clone(), window, cx)
+                                }
                             }))
                     })
                     .child(div().min_w_0().truncate().child(label))
@@ -82,7 +95,10 @@ impl Workspace {
                         )),
                     ),
             );
+            if current {
+                strip = strip.children(documents.take().unwrap_or_default());
+            }
         }
-        Some(strip)
+        Some(strip.children(documents.unwrap_or_default()))
     }
 }

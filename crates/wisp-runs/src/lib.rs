@@ -5,11 +5,14 @@
 //! and a [`RunManager`]. Waiting is model-free: do not poll with `shell` sleep.
 
 pub mod background;
+pub mod browser;
 pub mod context_probe;
 pub mod exploration_isolation;
 pub mod harvest;
 pub mod mime;
 pub mod openssh;
+pub mod publication_capsule;
+pub mod publication_reproduction;
 pub mod remote_file;
 pub mod snapshot_store;
 pub mod ssh_guard;

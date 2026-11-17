@@ -34,7 +34,10 @@ impl Workspace {
     ) {
         self.layers.close(Layer::FilePreview);
         self.layers.close(Layer::PanelTabMenu);
-        self.files.close_preview();
+        // The panel's preview, not a document shown in the centre.
+        if !self.preview_in_centre() {
+            self.files.close_preview();
+        }
         // What a tab showed in place of its list is not left open, out of
         // sight, for Escape to close.
         if tab != PanelTab::Files {
@@ -177,13 +180,21 @@ impl Workspace {
         }
     }
 
-    pub(super) fn cancel_run(&mut self, run: String, window: &mut Window, cx: &mut Context<Self>) {
+    /// Asks a run to stop, or with `force` finishes one already stopping
+    /// whose stop never came back, as the WebView's Force cancel does.
+    pub(super) fn cancel_run(
+        &mut self,
+        run: String,
+        force: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let selection = self.state.selection();
         let Some(project) = selection.project.clone() else {
             return;
         };
         self.error = None;
-        let reply = self.backend.cancel_run(project, run);
+        let reply = self.backend.cancel_run(project, run, force);
         cx.spawn_in(window, async move |this, cx| {
             let result = receive(reply).await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -801,7 +812,22 @@ impl Workspace {
                         .label(tr("Cancel"))
                         .xsmall()
                         .on_click(cx.listener(move |this, _, window, cx| {
-                            this.cancel_run(cancel.clone(), window, cx)
+                            this.cancel_run(cancel.clone(), false, window, cx)
+                        })),
+                );
+            } else if panel::can_force_cancel(run) {
+                // Its stop never came back: finished here as cancelled.
+                let cancel = id.clone();
+                actions = actions.child(
+                    Button::new(SharedString::from(format!("run-force-cancel-{id}")))
+                        .icon(glyph("ban"))
+                        .label(tr("Force cancel"))
+                        .xsmall()
+                        .tooltip(tr(
+                            "Mark it cancelled without waiting for the host to confirm the stop",
+                        ))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.cancel_run(cancel.clone(), true, window, cx)
                         })),
                 );
             }
@@ -1234,6 +1260,20 @@ impl Workspace {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.star_artifact(session.clone(), path.clone(), window, cx)
                     })),
+                );
+            }
+            // As the WebView's Open in center on an artifact's tile.
+            if let Some(path) = artifact
+                .path
+                .clone()
+                .filter(|_| self.state.session.is_some())
+            {
+                row = row.child(
+                    icon_button(("artifact-centre", index), "doc", tr("Open in centre"))
+                        .xsmall()
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_in_centre(path.clone(), window, cx)
+                        })),
                 );
             }
             if let Some(path) = artifact.path.clone() {

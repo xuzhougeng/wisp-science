@@ -51,6 +51,15 @@ impl Workspace {
             return;
         };
         self.layers.close(Layer::Palette);
+        // A frozen branch is not reviewed; asked from the palette, it says
+        // so in the host's words instead.
+        if !self.offered().review {
+            self.notice = Some(crate::i18n::host(
+                wisp_server::desktop::FROZEN_BRANCH_CHANGE_REFUSAL,
+            ));
+            cx.notify();
+            return;
+        }
         self.layers.open(Layer::Review);
         self.review = Some(Asked::Reading);
         let reply = match self.review_turn.clone() {
@@ -123,18 +132,30 @@ impl Workspace {
         let outcome = self.status.as_ref()?.review.as_ref()?;
         let (said, tone, opens) = review::banner(outcome);
         let tone = tone_color(tone, cx);
+        let reading = *outcome == wisp_server::desktop::ReviewOutcome::Reading;
         let mut line = surfaces::bar("review-banner", cx)
             .h_flex()
             .gap_2()
             .child(icon("review").text_color(tone))
             .child(
                 div()
-                    .flex_1()
                     .min_w_0()
                     .truncate()
                     .text_sm()
                     .text_color(tone)
+                    .when(reading, |title| title.font_weight(FontWeight::MEDIUM))
                     .child(said),
+            )
+            // While the reviewer reads, the WebView's line under its title
+            // follows it; once the report is in, the result stands alone.
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .when(reading, |note| note.child(review::reading().1)),
             );
         if let (true, wisp_server::desktop::ReviewOutcome::Done(found)) = (opens, outcome) {
             let found = found.clone();
@@ -147,7 +168,7 @@ impl Workspace {
                     ),
             );
         }
-        if *outcome != wisp_server::desktop::ReviewOutcome::Reading {
+        if !reading {
             line = line.child(
                 super::shell::icon_button("review-banner-dismiss", "close", tr("Put this away"))
                     .xsmall()
@@ -197,12 +218,15 @@ impl Workspace {
         let mut main = None;
         match &self.review {
             None | Some(Asked::Reading) => {
+                // In the WebView's words for a review that is running.
+                let (title, note) = review::reading();
                 card = card.child(
                     div()
                         .py_4()
-                        .text_sm()
-                        .text_color(muted)
-                        .child(tr("Reading the conversation…")),
+                        .v_flex()
+                        .gap_0p5()
+                        .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(title))
+                        .child(div().text_xs().text_color(muted).child(note)),
                 );
             }
             Some(Asked::Failed(error)) => {

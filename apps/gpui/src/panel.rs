@@ -189,6 +189,13 @@ pub fn can_cancel(status: &str) -> bool {
     matches!(status, "draft" | "submitted" | "running" | "paused")
 }
 
+/// Whether a run can be force-cancelled, as the WebView offers it: one
+/// already stopping, whose stop has not come back. A method search is
+/// stopped through its own coordinator, never forced.
+pub fn can_force_cancel(run: &RunRecord) -> bool {
+    run.status == "cancelling" && run.kind != "method_search"
+}
+
 /// Whether a run left a workspace where it ran that can be deleted: one
 /// that has ended, kept a folder there and has not been cleaned. A method
 /// search and a file transfer keep none of their own.

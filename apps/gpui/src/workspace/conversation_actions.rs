@@ -575,6 +575,7 @@ impl Workspace {
         let archived = row.shelved;
         let title = crate::present::one_line(&row.title);
         let branch = self.open_is_branch();
+        let offered = self.offered();
         let line = cx.theme().border;
         let danger = cx.theme().danger;
         let rule = move || div().h(px(1.)).mx_2().my_1().flex_shrink_0().bg(line);
@@ -656,10 +657,11 @@ impl Workspace {
                 |this, window, cx| this.open_trajectory(window, cx),
                 cx,
             ))
+            // A frozen branch is not reviewed: the host refuses it.
             .child(action(
                 "conversation-review",
                 tr("Review"),
-                !running,
+                !running && offered.review,
                 |this, window, cx| this.open_review(window, cx),
                 cx,
             ))

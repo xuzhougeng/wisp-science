@@ -28,8 +28,12 @@ use crate::{
 
 impl Workspace {
     pub(super) fn toggle_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.layers.close(Layer::FilesPanel) {
-            self.files.close_preview();
+        if self.close_side_panel() {
+            // The panel's preview goes with it; a document in the centre
+            // stays where it is.
+            if !self.preview_in_centre() {
+                self.files.close_preview();
+            }
             self.restore_focus(window, cx);
         } else {
             self.layers.open(Layer::FilesPanel);
@@ -442,6 +446,9 @@ impl Workspace {
                     Ok(path) => then(this, path),
                     Err(error) => this.file_problem = Some(error),
                 }
+                // A document in the centre that was renamed is read again
+                // under its new name.
+                this.follow_centre_document(window, cx);
                 this.reload_files(window, cx);
                 cx.notify();
             });
@@ -460,6 +467,12 @@ impl Workspace {
         };
         let name = self.file_name_input.read(cx).value().to_string();
         let folder = self.files.path.clone();
+        // The centre's tabs of a renamed file, or of the files in a renamed
+        // folder, follow it, as the WebView's do.
+        let renamed = match &naming {
+            Naming::Rename(path) => Some(path.clone()),
+            _ => None,
+        };
         let reply = match naming {
             Naming::Folder => self
                 .backend
@@ -471,9 +484,12 @@ impl Workspace {
         };
         self.change_files(
             reply,
-            |this, _| {
+            move |this, to| {
                 this.layers.close(Layer::FileName);
                 this.file_naming = None;
+                if let Some(from) = renamed {
+                    this.centre.renamed(&from, &to);
+                }
             },
             window,
             cx,
@@ -532,7 +548,23 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Previews a file in the Files tab. There is one preview: a document
+    /// the centre was showing gives it up and steps back to the
+    /// conversation, its tab kept.
     pub(super) fn open_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.centre_steps_back();
+        self.load_file(path, true, window, cx);
+    }
+
+    /// Reads a file into the one preview, which the Files tab shows when
+    /// `beside`, and the centre otherwise.
+    pub(super) fn load_file(
+        &mut self,
+        path: String,
+        beside: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let same_file = self.files.preview_path.as_deref() == Some(path.as_str());
         let Some(ticket) = self.files.begin_preview(&path) else {
             return;
@@ -541,7 +573,9 @@ impl Workspace {
         // An edit of the file shown before stays as its draft.
         self.file_edit = None;
         self.layers.close(Layer::FileChangedOnDisk);
-        self.layers.open(Layer::FilePreview);
+        if beside {
+            self.layers.open(Layer::FilePreview);
+        }
         self.file_image = None;
         self.file_document = None;
         self.file_pages = None;
@@ -734,6 +768,17 @@ impl Workspace {
             (entry.name.clone(), files::size_label(entry.size))
         };
         let (renamed, trashed) = (path.clone(), path.clone());
+        // A file opens in the centre beside the conversation's tab, as the
+        // WebView's Open in center on a file row does.
+        let centre = (!is_dir && self.state.session.is_some()).then(|| {
+            let opened = path.clone();
+            icon_button(("file-centre", index), "doc", tr("Open in centre")).on_click(cx.listener(
+                move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.open_in_centre(opened.clone(), window, cx)
+                },
+            ))
+        });
         surfaces::panel_row(("file-entry", index), cx)
             .w_full()
             .h(px(surfaces::PANEL_ROW_HEIGHT))
@@ -752,6 +797,7 @@ impl Workspace {
                 div()
                     .h_flex()
                     .flex_shrink_0()
+                    .children(centre)
                     .child(
                         icon_button(("file-rename", index), "edit", tr("Rename")).on_click(
                             cx.listener(move |this, _, window, cx| {
@@ -1596,6 +1642,31 @@ impl Workspace {
             .into_any_element()
     }
 
+    /// Whether the preview shows the file's text in the text field, where a
+    /// passage can be selected and read back: plain text, a script in the
+    /// editor, or a table shown as text. Rendered Markdown, pages, notebooks
+    /// and the viewers keep their selection to themselves.
+    fn preview_text_selectable(&self) -> bool {
+        let Some(content) = &self.files.preview else {
+            return false;
+        };
+        if files::preview_mode(content) != PreviewMode::Text || files::html_page(content) {
+            return false;
+        }
+        let path = content.path.as_str();
+        let shown = |other: Option<&String>| other.is_some_and(|other| other == path);
+        if shown(self.file_sequences.as_ref().map(|(at, _)| at))
+            || shown(self.file_structure.as_ref().map(|(at, _)| at))
+        {
+            return false;
+        }
+        let text = content.text.as_deref().unwrap_or_default();
+        if files::notebook(path, text).is_some() {
+            return false;
+        }
+        files::table(path, text).is_none() || self.file_as_text
+    }
+
     /// Looks up which tool call wrote the file being previewed.
     fn load_file_origin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(project), Some(path)) =
@@ -1688,6 +1759,84 @@ impl Workspace {
         Some(block)
     }
 
+    /// The previewed file as the Files tab draws it, and the centre too:
+    /// a header with its name, what is known of it, its actions and `last`
+    /// (Back to files in the Files tab), where it came from once asked, a
+    /// note on the last action, the editor's and the picture's bars, and
+    /// the preview itself.
+    pub(super) fn preview_parts(
+        &self,
+        last: AnyElement,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let muted = cx.theme().muted_foreground;
+        let name = self.files.preview_path.as_deref().unwrap_or_default();
+        let name = files::file_name(name).to_string();
+        let mut note = self
+            .files
+            .preview
+            .as_ref()
+            .map(files::preview_note)
+            .unwrap_or_default();
+        // The WebView's Save shows only while there is something to save;
+        // the line under the name says so as well.
+        if self.live_edit().is_some_and(|edit| edit.dirty) {
+            if !note.is_empty() {
+                note.push_str(" · ");
+            }
+            note.push_str(tr("Not saved"));
+        }
+        let note = (!note.is_empty()).then(|| note.into());
+        // A passage selected in the text can be asked about aside, as the
+        // WebView quotes a selection into its side chat.
+        let quote = (self.state.session.is_some() && self.preview_text_selectable()).then(|| {
+            icon_button(
+                "file-quote-aside",
+                "circle-help",
+                "Ask aside about the selected text",
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.quote_selection_aside(window, cx)))
+        });
+        let header = surfaces::panel_header(name, note, cx)
+            .children(self.file_actions(cx))
+            .children(quote)
+            .child(
+                icon_button(
+                    "file-preview-origin",
+                    "research-trail",
+                    "Which tool call wrote this file, and in which conversation",
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.load_file_origin(window, cx))),
+            )
+            .child(last);
+        let mut parts = vec![header.into_any_element()];
+        parts.extend(
+            self.render_file_origin(window, cx)
+                .map(IntoElement::into_any_element),
+        );
+        // What an action on the file just did.
+        parts.extend(self.file_notice.as_ref().map(|notice| {
+            div()
+                .px_3()
+                .py_1()
+                .text_xs()
+                .text_color(muted)
+                .child(notice.clone())
+                .into_any_element()
+        }));
+        parts.extend(
+            self.render_file_editor_bar(cx)
+                .map(IntoElement::into_any_element),
+        );
+        parts.extend(
+            self.render_picture_bar(cx)
+                .map(IntoElement::into_any_element),
+        );
+        parts.push(self.render_preview(window, cx));
+        parts
+    }
+
     pub(super) fn render_files(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let previewing = self.layers.contains(Layer::FilePreview);
         let muted = cx.theme().muted_foreground;
@@ -1697,59 +1846,10 @@ impl Workspace {
             .min_w(px(240.));
 
         if previewing {
-            let name = self.files.preview_path.as_deref().unwrap_or_default();
-            let name = files::file_name(name).to_string();
-            let mut note = self
-                .files
-                .preview
-                .as_ref()
-                .map(files::preview_note)
-                .unwrap_or_default();
-            // The WebView's Save shows only while there is something to save;
-            // the line under the name says so as well.
-            if self.live_edit().is_some_and(|edit| edit.dirty) {
-                if !note.is_empty() {
-                    note.push_str(" · ");
-                }
-                note.push_str(tr("Not saved"));
-            }
-            let note = (!note.is_empty()).then(|| note.into());
+            let back = icon_button("file-preview-back", "arrow-left", "Back to files")
+                .on_click(cx.listener(|this, _, window, cx| this.close_preview(window, cx)));
             return panel
-                .child(
-                    surfaces::panel_header(name, note, cx)
-                        .children(self.file_actions(cx))
-                        .child(
-                            icon_button(
-                                "file-preview-origin",
-                                "research-trail",
-                                "Which tool call wrote this file, and in which conversation",
-                            )
-                            .on_click(
-                                cx.listener(|this, _, window, cx| {
-                                    this.load_file_origin(window, cx)
-                                }),
-                            ),
-                        )
-                        .child(
-                            icon_button("file-preview-back", "arrow-left", "Back to files")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.close_preview(window, cx)
-                                })),
-                        ),
-                )
-                .children(self.render_file_origin(window, cx))
-                // What an action on the file just did.
-                .children(self.file_notice.as_ref().map(|notice| {
-                    div()
-                        .px_3()
-                        .py_1()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(notice.clone())
-                }))
-                .children(self.render_file_editor_bar(cx))
-                .children(self.render_picture_bar(cx))
-                .child(self.render_preview(window, cx))
+                .children(self.preview_parts(back.into_any_element(), window, cx))
                 .into_any_element();
         }
 

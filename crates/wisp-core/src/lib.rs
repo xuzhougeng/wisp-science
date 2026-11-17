@@ -59,8 +59,8 @@ pub use orchestration::{
     DYNAMIC_DELEGATION_SCHEMA_VERSION, MAX_DELEGATION_TASKS,
 };
 pub use output::{
-    NullOutput, Output, OutputFuture, PreToolDecision, StreamRecovery, StreamRecoveryKind,
-    StreamRecoveryPhase, StreamSinkAdapter, ToolEnvAdapter,
+    kept_draft_len, NullOutput, Output, OutputFuture, PreToolDecision, StreamRecovery,
+    StreamRecoveryKind, StreamRecoveryPhase, StreamSinkAdapter, ToolEnvAdapter,
 };
 pub use provenance::ProvenanceRecord;
 pub use subagent::ExploreTool;

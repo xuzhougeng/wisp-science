@@ -7,39 +7,7 @@ use crate::text::event_target_value;
 use leptos::*;
 use serde_wasm_bindgen::to_value;
 use wasm_bindgen::JsValue;
-
-/// DOM selection offsets count UTF-16 code units; persisted anchors count UTF-8
-/// bytes. Reject offsets inside a surrogate pair rather than moving the range.
-fn utf16_byte_offset(text: &str, offset: u32) -> Option<usize> {
-    let mut units = 0;
-    for (byte, ch) in text.char_indices() {
-        if units == offset {
-            return Some(byte);
-        }
-        units += ch.len_utf16() as u32;
-    }
-    (units == offset).then_some(text.len())
-}
-
-/// Card teaser for a transcript source: drops Markdown emphasis, code and
-/// heading markers and collapses whitespace. The preview keeps the exact text.
-fn source_snippet(text: &str) -> String {
-    let cleaned: String = text.chars().filter(|ch| !matches!(ch, '*' | '`')).collect();
-    let mut snippet = String::new();
-    for word in cleaned
-        .split_whitespace()
-        .filter(|word| !word.chars().all(|ch| ch == '#'))
-    {
-        if !snippet.is_empty() {
-            snippet.push(' ');
-        }
-        snippet.push_str(word);
-        if snippet.chars().count() >= 160 {
-            break;
-        }
-    }
-    snippet.chars().take(160).collect()
-}
+use wisp_dto::publication_sources::{message_span_locator, source_snippet, utf16_byte_range};
 
 /// Short label beside a source title: file version, speaker, or Run status.
 fn source_detail(locale: Locale, source: &PublicationSourceChoice) -> String {
@@ -112,11 +80,7 @@ pub(super) fn PublicationSourcePicker(
             .ok()
             .flatten()
             .zip(element.selection_end().ok().flatten());
-        range.set(offsets.and_then(|(start, end)| {
-            let start = utf16_byte_offset(&value, start)?;
-            let end = utf16_byte_offset(&value, end)?;
-            (start < end).then_some((start, end))
-        }));
+        range.set(offsets.and_then(|(start, end)| utf16_byte_range(&value, start, end)));
     });
     view! {
         <section class="publication-source-picker" data-testid="publication-source-picker">
@@ -216,15 +180,10 @@ pub(super) fn PublicationSourcePicker(
                             <button type="button" class="primary" data-testid="publication-source-continue"
                                 on:click=move |_| {
                                     let kind = match source.kind.as_str() { "artifact_version" => "artifact_version", "run" => "run", _ => "message_span" };
-                                    let id = if let Some(text) = &source.text {
-                                        let (start,end) = range.get_untracked().unwrap_or((0,text.len()));
-                                        let mut locator = serde_json::json!({"byte_end":end,"byte_start":start,"frame_id":source.frame_id,"message_seq":source.message_seq});
-                                        if let Some(hash) = &source.text_sha256 { locator["message_content_sha256"] = hash.clone().into(); }
-                                        // Keep canonical key order even if serde_json's
-                                        // preserve_order feature is enabled by another dependency.
-                                        let fields: std::collections::BTreeMap<_, _> = locator.as_object().expect("message locator").iter().collect();
-                                        serde_json::to_string(&fields).expect("message locator is serializable")
-                                    } else { source.id.clone() };
+                                    // Canonical key order even if serde_json's preserve_order
+                                    // feature is enabled by another dependency.
+                                    let id = message_span_locator(&source, range.get_untracked())
+                                        .unwrap_or_else(|| source.id.clone());
                                     on_select.call(PublicationEvidenceSource {kind,id,label:source.title.clone()});
                                 }>{move || t(locale.get(), "publication.explain_use")}</button>
                         }.into_view()
@@ -241,27 +200,7 @@ pub(super) fn PublicationSourcePicker(
 
 #[cfg(test)]
 mod tests {
-    use super::{source_range, source_snippet, utf16_byte_offset};
-    #[test]
-    fn transcript_selection_preserves_utf8_boundaries() {
-        let text = "A水稻🌱结果";
-        assert_eq!(utf16_byte_offset(text, 0), Some(0));
-        assert_eq!(utf16_byte_offset(text, 3), Some(7));
-        assert_eq!(utf16_byte_offset(text, 4), None);
-        assert_eq!(utf16_byte_offset(text, 5), Some(11));
-        assert_eq!(utf16_byte_offset(text, 7), Some(text.len()));
-        assert_eq!(utf16_byte_offset(text, 8), None);
-    }
-
-    #[test]
-    fn source_snippet_drops_markdown_markers_and_bounds_length() {
-        assert_eq!(
-            source_snippet("## 确认了。**`celltype_go/`** 就是\n\n这张图 `run_in_context`"),
-            "确认了。celltype_go/ 就是 这张图 run_in_context"
-        );
-        assert_eq!(source_snippet("  \n "), "");
-        assert_eq!(source_snippet(&"水稻 ".repeat(200)).chars().count(), 160);
-    }
+    use super::source_range;
 
     #[test]
     fn source_range_is_one_based_and_empty_without_sources() {

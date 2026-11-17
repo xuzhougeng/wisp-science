@@ -2,16 +2,22 @@
 //! for each figure, table or claim the results and runs it rests on.
 //!
 //! This is the store's publication model seen from the desktop: papers,
-//! versions, items and the evidence bound to them, the readiness check,
-//! waivers, finalizing a version (see `paper_freeze`) and starting a new
-//! version from one. Capsules and reproduction runs are not done from here.
+//! versions, items and the evidence bound to them (results, runs and
+//! passages of the project's conversations), the readiness check, waivers,
+//! finalizing a version (see `paper_freeze`), starting a new version from
+//! one, rerunning a finalized version's runs in a clean folder and saving
+//! its evidence capsule. The rerun and the capsule are the WebView host's,
+//! shared through `wisp_runs::publication_reproduction` and
+//! `wisp_runs::publication_capsule`.
 
 use anyhow::{bail, ensure, Context, Result};
+use std::path::Path;
+use wisp_runs::publication_capsule::{CapsuleArchive, CapsuleHost};
 use wisp_store::{
-    EvidenceBinding, EvidenceBindingDraft, EvidenceSelectionState, EvidenceSourceKind,
-    EvidenceVisibility, PublicationCapabilityLevel, PublicationFreezePolicy, PublicationItem,
-    PublicationItemKind, PublicationReadinessFinding, PublicationRevisionState, PublicationWaiver,
-    Store,
+    canonical_json_sha256, EvidenceBinding, EvidenceBindingDraft, EvidenceSelectionState,
+    EvidenceSourceKind, EvidenceVisibility, PublicationCapabilityLevel, PublicationFreezePolicy,
+    PublicationItem, PublicationItemKind, PublicationReadinessFinding, PublicationRevisionState,
+    PublicationWaiver, Store,
 };
 
 const TITLE_LIMIT: usize = 200;
@@ -100,21 +106,28 @@ pub enum PaperSourceKind {
     /// A registered result of the project, at one exact version.
     Result,
     Run,
-    /// A passage of a conversation, a tool call and the like, bound by
-    /// the WebView desktop.
+    /// A passage of a message of one of the project's conversations, its
+    /// text kept as it was when chosen.
+    Passage,
+    /// A tool call, a code cell and the like, bound by the WebView
+    /// desktop's exact anchors.
     Other,
 }
 
-/// One result or run a figure, table or claim rests on.
+/// One result, run or passage a figure, table or claim rests on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PaperSource {
     /// The binding, to remove it.
     pub id: String,
     pub kind: PaperSourceKind,
-    /// The file or run as it is called, when it can still be told.
+    /// The file or run as it is called, when it can still be told; for a
+    /// passage its first 80 characters.
     pub name: String,
     /// Why it was chosen.
     pub purpose: String,
+    /// The run a clean rerun of a finalized version repeats for this
+    /// evidence: the run itself, or the one that made the result.
+    pub run: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -141,6 +154,63 @@ pub struct Paper {
     pub items: Vec<PaperItem>,
     /// Evidence bound to the version as a whole.
     pub loose: Vec<PaperSource>,
+    /// For a finalized version: how far its evidence goes, counting clean
+    /// reruns; `None` for a draft.
+    pub level: Option<PaperLevel>,
+    /// The clean reruns of the shown version, as recorded.
+    pub reruns: Vec<PaperRerun>,
+    /// The capsules built from the shown version, as recorded.
+    pub capsules: Vec<PaperCapsule>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaperRerunStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+/// One output of a rerun compared with the finalized one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaperRerunOutput {
+    pub path: String,
+    /// `sha256`, `text`, `json` or `numeric`.
+    pub comparator: String,
+    pub passed: bool,
+}
+
+/// A clean rerun of one run of a finalized version.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaperRerun {
+    pub id: String,
+    /// The run that was repeated.
+    pub run: String,
+    pub status: PaperRerunStatus,
+    pub level: PaperLevel,
+    pub environment_matched: bool,
+    pub exit_code: Option<i64>,
+    pub error: Option<String>,
+    pub outputs: Vec<PaperRerunOutput>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaperCapsuleStatus {
+    Building,
+    Succeeded,
+    Failed,
+}
+
+/// One attempt at saving a finalized version's evidence capsule.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaperCapsule {
+    pub id: String,
+    pub status: PaperCapsuleStatus,
+    pub audience: PaperAudience,
+    /// Where it was written.
+    pub path: String,
+    /// The SHA-256 of the archive, once written.
+    pub archive: Option<String>,
+    pub error: Option<String>,
 }
 
 /// The form for a new paper.
@@ -161,14 +231,19 @@ pub struct PaperItemInput {
     pub note: String,
 }
 
-/// A result or run offered as evidence.
+/// A result, run or conversation message offered as evidence.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PaperSourceChoice {
     pub kind: PaperSourceKind,
     pub id: String,
+    /// The file, the run, or the conversation the message is in.
     pub name: String,
-    /// The result's version, or the run's state.
+    /// The result's version, the run's state, or who wrote the message
+    /// (`user` or `assistant`).
     pub detail: String,
+    /// For a message: the store's choice with its text (up to 16 KiB) and
+    /// what pins it, to pick a passage from and bind exactly.
+    pub message: Option<wisp_dto::PublicationSourceChoice>,
 }
 
 /// Who the finalized evidence may be shown to.
@@ -186,6 +261,14 @@ impl PaperAudience {
         PaperAudience::Restricted,
         PaperAudience::Public,
     ];
+
+    fn of(visibility: EvidenceVisibility) -> Self {
+        match visibility {
+            EvidenceVisibility::Private => PaperAudience::Private,
+            EvidenceVisibility::Restricted => PaperAudience::Restricted,
+            EvidenceVisibility::Public => PaperAudience::Public,
+        }
+    }
 
     fn stored(self) -> EvidenceVisibility {
         match self {
@@ -231,6 +314,17 @@ pub enum PaperLevel {
     /// The runs behind it have their code and environment, to run again.
     Rerunnable,
     Reproduced,
+}
+
+impl PaperLevel {
+    fn of(level: PublicationCapabilityLevel) -> Self {
+        match level {
+            PublicationCapabilityLevel::Archived => PaperLevel::Archived,
+            PublicationCapabilityLevel::Traceable => PaperLevel::Traceable,
+            PublicationCapabilityLevel::ReExecutable => PaperLevel::Rerunnable,
+            PublicationCapabilityLevel::Reproduced => PaperLevel::Reproduced,
+        }
+    }
 }
 
 /// One thing the readiness check found.
@@ -328,25 +422,56 @@ async fn draft(store: &Store, project: &str, version: &str) -> Result<()> {
     Ok(())
 }
 
+/// The text a passage was bound with, from its binding's snapshot when the
+/// snapshot is intact: the first 80 characters, as the WebView card shows.
+fn passage_text(snapshot_json: &str) -> Option<String> {
+    let snapshot: serde_json::Value = serde_json::from_str(snapshot_json).ok()?;
+    let anchor = snapshot.get("anchor")?;
+    let intact = snapshot
+        .get("anchor_sha256")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|hash| hash == canonical_json_sha256(anchor).1);
+    intact.then_some(())?;
+    anchor
+        .get("text_snapshot")
+        .and_then(serde_json::Value::as_str)
+        .map(|text| text.chars().take(80).collect())
+}
+
 async fn source(store: &Store, binding: EvidenceBinding) -> PaperSource {
+    // As the WebView's card: the run that made a result, or the binding's
+    // own run, or the run itself.
+    let mut run = binding.run_id.clone();
     let (kind, name) = match binding.source_kind {
-        EvidenceSourceKind::Run => (
-            PaperSourceKind::Run,
-            store
-                .get_run(&binding.source_id)
-                .await
-                .ok()
-                .flatten()
-                .map(|run| run.title),
-        ),
-        EvidenceSourceKind::ArtifactVersion => (
-            PaperSourceKind::Result,
-            store
+        EvidenceSourceKind::Run => {
+            run = Some(binding.source_id.clone());
+            (
+                PaperSourceKind::Run,
+                store
+                    .get_run(&binding.source_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|run| run.title),
+            )
+        }
+        EvidenceSourceKind::ArtifactVersion => {
+            let context = store
                 .get_artifact_version_context(&binding.source_id)
                 .await
                 .ok()
-                .flatten()
-                .map(|context| context.filename),
+                .flatten();
+            if let Some(context) = &context {
+                run = context.version.producing_run_id.clone();
+            }
+            (
+                PaperSourceKind::Result,
+                context.map(|context| context.filename),
+            )
+        }
+        EvidenceSourceKind::MessageSpan => (
+            PaperSourceKind::Passage,
+            passage_text(&binding.source_snapshot_json),
         ),
         _ => (PaperSourceKind::Other, None),
     };
@@ -357,6 +482,7 @@ async fn source(store: &Store, binding: EvidenceBinding) -> PaperSource {
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| binding.source_kind.as_str().replace('_', " ")),
         purpose: binding.purpose,
+        run,
     }
 }
 
@@ -387,6 +513,9 @@ pub(crate) async fn open(
                     editable: false,
                     items: vec![],
                     loose: vec![],
+                    level: None,
+                    reruns: vec![],
+                    capsules: vec![],
                 })
             }
         },
@@ -415,6 +544,58 @@ pub(crate) async fn open(
             None => loose.push(bound),
         }
     }
+    let runs = store.list_reproduction_runs(&shown.id).await?;
+    let mut reruns = Vec::with_capacity(runs.len());
+    for rerun in &runs {
+        let outputs = store
+            .list_reproduction_results(&rerun.id)
+            .await?
+            .into_iter()
+            .map(|result| PaperRerunOutput {
+                path: result.output_path,
+                comparator: result.comparator_kind.as_str().to_owned(),
+                passed: result.passed,
+            })
+            .collect();
+        reruns.push(PaperRerun {
+            id: rerun.id.clone(),
+            run: rerun.source_run_id.clone(),
+            status: match rerun.status.as_str() {
+                "running" => PaperRerunStatus::Running,
+                "completed" => PaperRerunStatus::Completed,
+                _ => PaperRerunStatus::Failed,
+            },
+            level: PaperLevel::of(rerun.capability_level),
+            environment_matched: rerun.environment_matched,
+            exit_code: rerun.exit_code,
+            error: rerun.error.clone(),
+            outputs,
+        });
+    }
+    let capsules = store
+        .list_capsule_builds(&shown.id)
+        .await?
+        .into_iter()
+        .map(|build| PaperCapsule {
+            id: build.id,
+            status: match build.status.as_str() {
+                "building" => PaperCapsuleStatus::Building,
+                "succeeded" => PaperCapsuleStatus::Succeeded,
+                _ => PaperCapsuleStatus::Failed,
+            },
+            audience: PaperAudience::of(build.visibility),
+            path: build.output_path.unwrap_or_default(),
+            archive: build.archive_sha256,
+            error: build.error,
+        })
+        .collect();
+    let level = (shown.state != PublicationRevisionState::Draft).then(|| {
+        PaperLevel::of(wisp_runs::publication_reproduction::effective_capability(
+            shown.capability_level,
+            shown.manifest_json.as_deref(),
+            &runs,
+        ))
+    });
     Ok(Paper {
         id: found.id,
         title: found.title,
@@ -440,6 +621,9 @@ pub(crate) async fn open(
             .collect(),
         items,
         loose,
+        level,
+        reruns,
+        capsules,
     })
 }
 
@@ -554,7 +738,10 @@ pub(crate) async fn remove_item(
     store.delete_publication_item(item).await
 }
 
-/// The project's results or runs to choose evidence from, 50 at a time.
+/// The project's results, runs or conversation messages to choose evidence
+/// from, 50 at a time. Messages are the users' and the assistant's in the
+/// project's own conversations (not explorations), newest first, matched
+/// by the conversation's name or the text.
 pub(crate) async fn choices(
     store: &Store,
     project: &str,
@@ -565,7 +752,10 @@ pub(crate) async fn choices(
     let category = match kind {
         PaperSourceKind::Result => "files",
         PaperSourceKind::Run => "runs",
-        PaperSourceKind::Other => bail!("Only results and runs can be chosen here"),
+        PaperSourceKind::Passage => "messages",
+        PaperSourceKind::Other => {
+            bail!("Only results, runs and conversation passages can be chosen here")
+        }
     };
     let page = store
         .publication_source_page(project, category, query, offset)
@@ -575,17 +765,21 @@ pub(crate) async fn choices(
             .into_iter()
             .map(|choice| PaperSourceChoice {
                 kind,
-                id: choice.id,
-                name: choice.title,
-                detail: choice.detail,
+                id: choice.id.clone(),
+                name: choice.title.clone(),
+                detail: choice.detail.clone(),
+                message: (kind == PaperSourceKind::Passage).then_some(choice),
             })
             .collect(),
         page.has_more,
     ))
 }
 
-/// Binds a result (at the version it has now) or a run to an item of a
-/// draft version, with why it was chosen.
+/// Binds a result (at the version it has now), a run, or a passage of a
+/// conversation message to an item of a draft version, with why it was
+/// chosen. A passage's `source` is its exact locator
+/// (`wisp_dto::publication_sources::message_span_locator`); a message
+/// changed since it was shown is refused.
 pub(crate) async fn bind(
     store: &Store,
     project: &str,
@@ -621,7 +815,12 @@ pub(crate) async fn bind(
             ensure!(run.project_id == project, "That run is not in this project");
             EvidenceSourceKind::Run
         }
-        PaperSourceKind::Other => bail!("Only results and runs can be chosen here"),
+        // The store checks the message is of this project and unchanged,
+        // and keeps the passage's text with the binding.
+        PaperSourceKind::Passage => EvidenceSourceKind::MessageSpan,
+        PaperSourceKind::Other => {
+            bail!("Only results, runs and conversation passages can be chosen here")
+        }
     };
     store
         .save_evidence_binding(&EvidenceBindingDraft {
@@ -678,12 +877,7 @@ pub(crate) async fn check(
     let readiness = outcome.readiness;
     Ok(PaperCheck {
         finalized: outcome.frozen,
-        level: match readiness.capability_level {
-            PublicationCapabilityLevel::Archived => PaperLevel::Archived,
-            PublicationCapabilityLevel::Traceable => PaperLevel::Traceable,
-            PublicationCapabilityLevel::ReExecutable => PaperLevel::Rerunnable,
-            PublicationCapabilityLevel::Reproduced => PaperLevel::Reproduced,
-        },
+        level: PaperLevel::of(readiness.capability_level),
         blockers: readiness.blockers.into_iter().map(finding).collect(),
         warnings: readiness.warnings.into_iter().map(finding).collect(),
         omissions: readiness.omissions.into_iter().map(finding).collect(),
@@ -750,3 +944,112 @@ pub(crate) async fn new_version(
         .await?;
     Ok(id)
 }
+
+/// Whether the version is a finalized (or published) version of a paper of
+/// this project.
+async fn finalized(store: &Store, project: &str, version: &str) -> Result<()> {
+    let found = store
+        .get_publication_revision(version)
+        .await?
+        .context("That version is gone")?;
+    owned(store, project, &found.publication_id).await?;
+    ensure!(
+        matches!(
+            found.state,
+            PublicationRevisionState::Frozen | PublicationRevisionState::Published
+        ),
+        "Only a finalized version can be rerun or saved as a capsule"
+    );
+    Ok(())
+}
+
+/// Reruns `run` of a finalized version in a fresh temporary folder that
+/// holds only the version's frozen inputs and code, through `runner`, and
+/// records how each declared output compares (SHA-256, as the WebView's
+/// button asks). The version itself never changes. A rerun that could
+/// not start is refused; one that ran and failed is recorded.
+pub(crate) async fn verify(
+    store: &Store,
+    project: &str,
+    version: &str,
+    run: &str,
+    runner: &dyn wisp_runs::RunCommandRunner,
+) -> Result<()> {
+    finalized(store, project, version).await?;
+    wisp_runs::publication_reproduction::verify_publication_revision_with_runner(
+        store,
+        version,
+        run,
+        &[],
+        runner,
+        crate::paper_freeze::capsule_security_violations,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    Ok(())
+}
+
+/// Writes the evidence capsule of a finalized version to `destination`, a
+/// new `.zip` file where the person chose to save it, and records the
+/// attempt with the version. Only the version's frozen snapshots are read.
+pub(crate) async fn build_capsule(
+    store: &Store,
+    project: &str,
+    version: &str,
+    destination: &Path,
+) -> Result<()> {
+    finalized(store, project, version).await?;
+    ensure!(
+        destination.is_absolute()
+            && destination
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("zip")),
+        "Choose where to save the capsule as a .zip file"
+    );
+    wisp_runs::publication_capsule::build_publication_capsule_to(
+        store,
+        version,
+        destination,
+        CAPSULE_HOST,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    Ok(())
+}
+
+/// Writes a capsule's entries as the WebView host does: deflated at level
+/// 6, with the zero timestamp and mode 0644, so a version gives the same
+/// bytes each time.
+struct ZipCapsule(zip::ZipWriter<std::fs::File>);
+
+impl CapsuleArchive for ZipCapsule {
+    fn start_file(&mut self, path: &str, size_bytes: u64) -> Result<(), String> {
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .compression_level(Some(6))
+            .last_modified_time(zip::DateTime::default())
+            .large_file(size_bytes > u32::MAX as u64)
+            .unix_permissions(0o644);
+        self.0
+            .start_file(path, options)
+            .map_err(|error| error.to_string())
+    }
+
+    fn write_all(&mut self, bytes: &[u8]) -> Result<(), String> {
+        std::io::Write::write_all(&mut self.0, bytes).map_err(|error| error.to_string())
+    }
+
+    fn finish(self: Box<Self>) -> Result<std::fs::File, String> {
+        self.0.finish().map_err(|error| error.to_string())
+    }
+}
+
+fn open_zip(file: std::fs::File) -> Box<dyn CapsuleArchive> {
+    Box::new(ZipCapsule(zip::ZipWriter::new(file)))
+}
+
+const CAPSULE_HOST: CapsuleHost = CapsuleHost {
+    scan: crate::paper_freeze::capsule_security_violations,
+    open: open_zip,
+};

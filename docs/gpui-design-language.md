@@ -19,6 +19,9 @@ build works and [GPUI parity ledger](gpui-parity.md) what is ported.
    Only layers that float above it (dialogs, menus) cast a shadow.
 4. **Tools at the margin.** Files, runs and evidence sit beside the text like
    notes in a margin; they never push the conversation out of its column.
+   A document opened in the centre is not a margin note: it is read on the
+   page, in the conversation's place or beside it, and the conversation
+   beside it keeps a column of its own.
 
 ## Text
 
@@ -175,6 +178,29 @@ names and never a colour of their own.
     starts where the tab's name does and switching tabs does not move it;
     a file's preview keeps that inset round its text, tables, pictures,
     pages, molecules and alignments.
+- A project file opened in the centre (Open in centre) is a document on the
+  page, not a tool at the margin:
+  - **Tab**: it follows its conversation's own tab in the strip above the
+    conversation, in that tab's shape (its name, a close button), with the
+    document icon before the name; the tab in view is the filled one, so
+    while a document is shown the conversation's tab is not, and a click on
+    it brings the conversation back.
+  - **Document**: it takes the conversation's place under the
+    conversation's header, on the paper, as the preview the Files tab draws
+    (`preview_parts`): the same header row (its name in `MEDIUM`, a faded
+    note, its actions as icon buttons, a hairline under it), the same bars
+    and the same inset. The header's last button splits the centre. The
+    centre draws no preview of its own.
+  - **Split**: the document on the left; a divider, a hairline in a 5 px
+    grip that goes teal under the pointer and drags; the conversation on the
+    right in a column of its own, 38% of the centre until dragged and never
+    under 320 px (`centre::CHAT_MIN`). Inside that column the transcript, the
+    bars and the composer keep the reading column, as everywhere. The
+    document takes the rest, and a drag leaves it at least 240 px. Splitting
+    puts the side panel away, as the WebView does with its right pane; if it
+    is opened again it gives way first (down to its 240 px), then the
+    document, while the conversation keeps its 320 px: the centre does not
+    go under 565 px while it is split (`centre::SPLIT_MIN`).
 
 ## Controls
 
@@ -210,6 +236,7 @@ names and never a colour of their own.
 | The rem and the palettes | `apps/gpui/src/theme.rs` |
 | Titles, display text, cards, dialogs (`dialog`, `DialogWidth`), the reading column, the bars above the composer (`bar`, `above_composer`), the on/off switch | `apps/gpui/src/workspace/surfaces.rs` |
 | The side panel: its frame (`side_panel`), tabs (`panel_tab`), headers (`panel_header`), rows (`panel_row`, `panel_entry`, `panel_label`, `PANEL_ROW_HEIGHT`), cards (`panel_card`), sections (`panel_section`), notes (`panel_note`) and empty lines (`panel_empty`) | `apps/gpui/src/workspace/surfaces.rs` |
+| A document in the centre: the preview it shares with the Files tab (`preview_parts`), its tab, the split and its widths | `apps/gpui/src/workspace/files_panel.rs`, `apps/gpui/src/workspace/centre_view.rs`, `apps/gpui/src/centre.rs` |
 | A setting's row: name and note on the left, control on the right | `setting` in `apps/gpui/src/workspace/settings_sections.rs` |
 
 ## Where it stands
@@ -228,5 +255,7 @@ its column, switches for on/off, and for the side panel its frame from
 with no pill or icon for a name, every tab's empty line from `panel_empty`,
 a header from `panel_header` exactly where the rules above give one, and its
 cards, rows, entries and sections from their helpers with no bold, hand-made
-card or shadow. The one exception they allow is Provenance's input and
+card or shadow; and a document in the centre drawn from the Files tab's
+`preview_parts` and no preview of its own, its conversation at least
+`CHAT_MIN` wide in a centre of at least `SPLIT_MIN`. The one exception they allow is Provenance's input and
 output, which are code in a well as the conversation shows code.

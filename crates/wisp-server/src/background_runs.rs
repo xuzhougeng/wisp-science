@@ -10,7 +10,10 @@
 //! one completion message to the conversation that owns the Run once it
 //! ends, after any turn running there. The agent is not resumed by it. The
 //! request is stored with the Run, so one that ends while the app is closed
-//! is reported after the next start.
+//! is reported after the next start. Each such end is also told to the
+//! desktop ([`Server::background_run_endings`]), which raises a system
+//! notification unless the conversation is on screen, as the WebView does
+//! with its `RunBackgroundFinished` event.
 
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -28,6 +31,22 @@ const POLL: Duration = if cfg!(test) {
 
 /// How long a notice waits for a turn running in its conversation.
 const IDLE_POLL: Duration = Duration::from_millis(200);
+
+/// A Run moved to the background that has ended, once its conversation got
+/// its message: what the desktop needs to tell the user.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BackgroundRunEnded {
+    pub project: String,
+    /// The conversation that started it, and its title then.
+    pub session: String,
+    pub conversation: String,
+    pub run: String,
+    /// The Run's title.
+    pub title: String,
+    /// How it ended: `succeeded`, `failed`, `cancelled`, `timed_out` or
+    /// `lost`.
+    pub status: String,
+}
 
 impl Server {
     /// Moves a Run of `project` that has not ended to the background: a
@@ -64,6 +83,13 @@ impl Server {
         });
     }
 
+    /// Hears of each Run moved to the background that ends from now on,
+    /// once its conversation has its message. A listener that falls more
+    /// than 64 behind misses the oldest.
+    pub fn background_run_endings(&self) -> tokio::sync::broadcast::Receiver<BackgroundRunEnded> {
+        self.0.background_endings.subscribe()
+    }
+
     /// The language a notice from a watcher started at launch is in: the
     /// desktop's saved choice, else the WebView's, else English.
     async fn notices_in_chinese(&self) -> bool {
@@ -95,7 +121,7 @@ impl Server {
         });
     }
 
-    async fn report_background_run(&self, run: &str, chinese: bool) -> Result<()> {
+    pub(crate) async fn report_background_run(&self, run: &str, chinese: bool) -> Result<()> {
         let store = &self.0.store;
         // Until it ends, without claiming it: the app may close first.
         let frame = loop {
@@ -140,8 +166,19 @@ impl Server {
                     store
                         .append_message(&frame, seq, &wisp_llm::Message::assistant(notice))
                         .await?;
-                    let mut live = session.live.lock().unwrap();
-                    live.generation = live.generation.wrapping_add(1);
+                    {
+                        let mut live = session.live.lock().unwrap();
+                        live.generation = live.generation.wrapping_add(1);
+                    }
+                    // Nobody listening is not a failure.
+                    let _ = self.0.background_endings.send(BackgroundRunEnded {
+                        project: ended.project_id.clone(),
+                        conversation: store.session_title(&frame).await?.unwrap_or_default(),
+                        session: frame.clone(),
+                        run: ended.id.clone(),
+                        title: ended.title.clone(),
+                        status: ended.status.as_str().to_owned(),
+                    });
                     return Ok(());
                 }
             }

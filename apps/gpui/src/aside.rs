@@ -86,6 +86,68 @@ impl Thread {
     }
 }
 
+/// A passage selected in a project file, quoted into the next side
+/// question, as the WebView's "Quote in side chat" puts a selection there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Quote {
+    /// The file's project path.
+    pub source: String,
+    pub text: String,
+}
+
+/// How much of a selection a side question carries: the host takes a
+/// question of at most 4,000 characters, and room is left to ask it.
+pub const QUOTE_CHARS: usize = 3_000;
+
+impl Quote {
+    /// The text selected in `source`, or nothing when only blanks were. A
+    /// longer selection is cut, and says so.
+    pub fn of_selection(source: &str, selected: &str) -> Option<Self> {
+        let selected = selected.trim_matches(['\r', '\n']);
+        if selected.trim().is_empty() {
+            return None;
+        }
+        let mut text: String = selected.chars().take(QUOTE_CHARS).collect();
+        if selected.chars().count() > QUOTE_CHARS {
+            text.push('…');
+        }
+        Some(Self {
+            source: source.to_owned(),
+            text,
+        })
+    }
+
+    /// What its chip says: the file's name and the selection's first line,
+    /// cut at 40 characters as the WebView's chip is.
+    pub fn label(&self) -> String {
+        let line = self.text.trim().lines().next().unwrap_or_default();
+        let mut label: String = line.chars().take(40).collect();
+        if line.chars().count() > 40 {
+            label.push('…');
+        }
+        format!("{} · {label}", crate::files::file_name(&self.source))
+    }
+}
+
+/// The question as it is asked, with the quoted passages before it as the
+/// WebView's side chat folds them in: each under the line naming its file,
+/// as a Markdown quote, and none of the main composer's edit instruction,
+/// since a side question changes nothing.
+pub fn question_with_quotes(question: &str, quotes: &[Quote]) -> String {
+    if quotes.is_empty() {
+        return question.trim().to_owned();
+    }
+    let mut out = String::new();
+    for quote in quotes {
+        // A project file previewed as text: a workspace file to the model.
+        out.push_str(&wisp_dto::selected_excerpt_heading(&quote.source, true));
+        out.push_str(&wisp_dto::blockquote_lines(&quote.text));
+        out.push('\n');
+    }
+    out.push_str(question.trim());
+    out.trim_end().to_owned()
+}
+
 /// The line under the tab's title.
 pub fn hint(has_conversation: bool) -> &'static str {
     if has_conversation {
@@ -194,5 +256,32 @@ mod tests {
         thread.ask("again?").unwrap();
         thread.answered_with(Err("no model".into()));
         assert!(thread.entries.last().unwrap().sources.is_empty());
+    }
+
+    #[test]
+    fn a_selection_is_quoted_before_the_question_under_its_file() {
+        // Blank selections quote nothing; the line ends around one go.
+        assert_eq!(Quote::of_selection("fit.R", " \n "), None);
+        let quote = Quote::of_selection("analysis/fit.R", "\nplot(1:3)\nlines(x)\n").unwrap();
+        assert_eq!(quote.text, "plot(1:3)\nlines(x)");
+        assert_eq!(quote.label(), "fit.R · plot(1:3)");
+        // The WebView's read-only wording: no edit instruction.
+        assert_eq!(
+            question_with_quotes(" 这是什么意思? ", std::slice::from_ref(&quote)),
+            "Selected excerpt from workspace file `analysis/fit.R`:\n\
+             > plot(1:3)\n> lines(x)\n\n这是什么意思?"
+        );
+        // A quote alone is a question; none leaves the question as typed.
+        assert_eq!(
+            question_with_quotes("", &[quote]),
+            "Selected excerpt from workspace file `analysis/fit.R`:\n\
+             > plot(1:3)\n> lines(x)"
+        );
+        assert_eq!(question_with_quotes(" why? ", &[]), "why?");
+        // A long selection is cut, and says so; so is a long first line.
+        let long = Quote::of_selection("notes.txt", &"x".repeat(QUOTE_CHARS + 5)).unwrap();
+        assert_eq!(long.text.chars().count(), QUOTE_CHARS + 1);
+        assert!(long.text.ends_with('…'));
+        assert_eq!(long.label(), format!("notes.txt · {}…", "x".repeat(40)));
     }
 }

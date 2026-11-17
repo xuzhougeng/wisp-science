@@ -1,5 +1,7 @@
 //! The Aside tab of the side panel: questions about the open conversation
-//! that are answered beside it and never become part of it.
+//! that are answered beside it and never become part of it. A passage
+//! selected in a file's text can be quoted into the next question, as the
+//! WebView's "Quote in side chat" does.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
@@ -10,7 +12,7 @@ use gpui_component::{
 };
 
 use super::{Workspace, shell::icon_button, surfaces};
-use crate::{aside, backend::receive, panel::PanelTab};
+use crate::{aside, assets::icon, backend::receive, panel::PanelTab};
 
 impl Workspace {
     /// Opens the tab with the caret in its question field.
@@ -32,18 +34,47 @@ impl Workspace {
         self.open_aside(window, cx);
     }
 
-    /// Asks what is in the question field about the open conversation.
+    /// Quotes the passage selected in the previewed file's text into the
+    /// next side question and opens the tab, as the WebView's "Quote in
+    /// side chat" does with a selection. With nothing selected it says so.
+    pub(super) fn quote_selection_aside(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.files.preview_path.clone() else {
+            return;
+        };
+        // UTF-16 offsets, as the input gives them.
+        let selected = self.file_view.update(cx, |input, cx| {
+            let range = input.selected_text_range(false, window, cx)?.range;
+            if range.is_empty() {
+                return None;
+            }
+            input.text_for_range(range, &mut None, window, cx)
+        });
+        match selected.and_then(|text| aside::Quote::of_selection(&path, &text)) {
+            Some(quote) => {
+                self.file_notice = None;
+                self.aside_quotes.push(quote);
+                self.open_aside(window, cx);
+            }
+            None => self.file_notice = Some(tr("Select a passage of the text first.").into()),
+        }
+        cx.notify();
+    }
+
+    /// Asks what is in the question field about the open conversation,
+    /// with the quoted passages before it.
     pub(super) fn ask_aside(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(project), Some(session)) =
             (self.state.project.clone(), self.state.session.clone())
         else {
             return;
         };
-        let question = self.aside_input.read(cx).value().to_string();
+        let typed = self.aside_input.read(cx).value().to_string();
+        let question = aside::question_with_quotes(&typed, &self.aside_quotes);
         let thread = self.asides.entry(session.clone()).or_default();
         let Some(earlier) = thread.ask(&question) else {
             return;
         };
+        self.aside_quotes.clear();
         self.aside_input
             .update(cx, |input, cx| input.set_value("", window, cx));
         let reply = match self.aside_run.clone() {
@@ -220,6 +251,34 @@ impl Workspace {
                     })),
                 )
         });
+        // The passages quoted into the next question, each taken back
+        // with its ×, as the WebView's side chat shows its quote chips.
+        let quotes = (!self.aside_quotes.is_empty()).then(|| {
+            let mut chips = div().h_flex().flex_wrap().gap_1();
+            for (index, quote) in self.aside_quotes.iter().enumerate() {
+                let full = SharedString::from(quote.text.clone());
+                chips = chips.child(
+                    Self::chip_box(cx)
+                        .id(("aside-quote", index))
+                        .tooltip(move |window, cx| {
+                            gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
+                        })
+                        .child(icon("doc").text_color(muted))
+                        .child(div().max_w(px(220.)).truncate().child(quote.label()))
+                        .child(
+                            icon_button(("aside-quote-remove", index), "close", tr("Remove"))
+                                .xsmall()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if index < this.aside_quotes.len() {
+                                        this.aside_quotes.remove(index);
+                                    }
+                                    cx.notify();
+                                })),
+                        ),
+                );
+            }
+            chips
+        });
         div().v_flex().flex_1().min_h_0().child(list).child(
             div()
                 .v_flex()
@@ -229,6 +288,7 @@ impl Workspace {
                 .border_t_1()
                 .border_color(border)
                 .children(about)
+                .children(quotes)
                 .child(Input::new(&self.aside_input).small())
                 .child(actions),
         )

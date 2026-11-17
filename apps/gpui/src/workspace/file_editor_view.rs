@@ -1,5 +1,6 @@
-//! Editing an R or Python script where the Files tab previews it, a port of
-//! the WebView's source editor (`RpCodeEditor`): the text is edited in
+//! Editing an R or Python script where the Files tab previews it, or where
+//! the centre shows it (the same preview, `centre_view`), a port of the
+//! WebView's source editor (`RpCodeEditor`): the text is edited in
 //! place with line numbers, saved by Save or Cmd/Ctrl+S over the file it
 //! was loaded from (and refused if the file changed on disk since), and run
 //! in the open conversation's interpreter for its language, a statement or
@@ -59,10 +60,12 @@ enum AfterSave {
 }
 
 impl Workspace {
-    /// The edit of the previewed script, while that is the file shown.
+    /// The edit of the previewed script, while that is the file shown, in
+    /// the Files tab or in the centre: there is one preview, so one editor
+    /// and one draft per file wherever it is drawn.
     pub(super) fn live_edit(&self) -> Option<&Editing> {
         let edit = self.file_edit.as_ref()?;
-        (self.layers.contains(Layer::FilePreview)
+        ((self.layers.contains(Layer::FilePreview) || self.preview_in_centre())
             && self.files.preview_path.as_deref() == Some(edit.path.as_str())
             && self.state.project.as_deref() == Some(edit.project.as_str()))
         .then_some(edit)
@@ -218,7 +221,9 @@ impl Workspace {
         };
         self.layers.close(Layer::FileChangedOnDisk);
         self.file_drafts.forget(&edit.project, &edit.path);
-        self.open_file(edit.path, window, cx);
+        // Read again where it is shown, the Files tab or the centre.
+        let beside = !self.preview_in_centre();
+        self.load_file(edit.path, beside, window, cx);
     }
 
     /// Runs the selection, or the statement under the caret and then moves
@@ -285,6 +290,9 @@ impl Workspace {
         if let Some(edit) = self.file_edit.as_mut() {
             edit.problem = None;
         }
+        // The console is above the composer: a script run from the centre
+        // keeps the conversation beside it, so what it gives back shows.
+        self.keep_conversation_beside(window, cx);
         let start = self
             .backend
             .start_runtime(project.clone(), session.clone(), script.runtime());

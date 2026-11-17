@@ -277,6 +277,9 @@ impl Workspace {
         self.picture_mark = None;
         self.state.save_draft(filled.clone());
         self.fill_composer(filled, window, cx);
+        // A picture in the centre stays open with the conversation beside
+        // it, where the notes were put, as in the WebView.
+        self.keep_conversation_beside(window, cx);
         cx.notify();
     }
 
@@ -312,7 +315,9 @@ impl Workspace {
                         this.attach(Chip::File(kept), cx);
                         this.layers.close(Layer::PictureSelect);
                         if jump {
-                            this.close_preview(window, cx);
+                            // Out of the Files tab's preview, or from the
+                            // centre's document back to the conversation.
+                            this.leave_preview(window, cx);
                             this.focus_composer(window, cx);
                         } else {
                             this.file_notice = Some(tr("Attached to the message.").to_owned());

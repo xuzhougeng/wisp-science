@@ -1166,6 +1166,50 @@ pub enum TurnErrorKind {
     Other,
 }
 
+/// Where the running turn's recovery of a failed model request stands
+/// (#1641), as the core reports it.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamRecoveryPhase {
+    /// Waiting `retry_in_ms` before sending the request again; what the
+    /// failed attempt had streamed is gone from the draft.
+    Waiting,
+    /// The request is being rebuilt from the confirmed context and sent.
+    Reconnecting,
+    /// A phase this client does not know yet.
+    #[serde(other)]
+    Other,
+}
+
+/// Which failure the running turn is recovering from.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamRecoveryCause {
+    /// The provider refused the request (rate limit, overload, 5xx).
+    Request,
+    /// The answer had started and its stream was cut.
+    Stream,
+    /// A cause this client does not know yet.
+    #[serde(other)]
+    Other,
+}
+
+/// A model request of the running turn that failed and is being sent again
+/// inside the same turn, while the host waits or reconnects. It goes with
+/// the next thing the model says or does, or with the turn's end.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct StreamRecoveryState {
+    pub phase: StreamRecoveryPhase,
+    pub cause: StreamRecoveryCause,
+    /// 1-based, within the cause's own budget of `max_attempts`.
+    pub attempt: u64,
+    pub max_attempts: u64,
+    /// The wait before the next attempt; zero once reconnecting.
+    pub retry_in_ms: u64,
+    /// The failure being recovered from, as the provider said it.
+    pub error: String,
+}
+
 /// A replacement event, never a delta. Sequence orders responses within one
 /// host epoch. Reconnects fetch another snapshot; mutations are never replayed.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1228,6 +1272,11 @@ pub struct Snapshot {
     /// not tell, and for any other failure; `error` keeps its text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_kind: Option<TurnErrorKind>,
+    /// The running turn is sending a failed model request again. Absent
+    /// otherwise, from older hosts and from hosts that do not tell; a
+    /// client that does not know it shows the turn running as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_recovery: Option<StreamRecoveryState>,
     pub approvals: Vec<super::PendingToolApproval>,
     /// Exact pending IDs and the scopes each request can actually grant.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -1271,6 +1320,33 @@ mod tests {
         assert_eq!(
             serde_json::from_value::<TurnErrorKind>(serde_json::json!("quota_spent")).unwrap(),
             TurnErrorKind::Other
+        );
+    }
+    #[test]
+    fn a_stream_recovery_is_optional_and_unknown_phases_are_read_as_other() {
+        use super::{StreamRecoveryCause, StreamRecoveryPhase, StreamRecoveryState};
+        let state = StreamRecoveryState {
+            phase: StreamRecoveryPhase::Waiting,
+            cause: StreamRecoveryCause::Stream,
+            attempt: 1,
+            max_attempts: 5,
+            retry_in_ms: 1_000,
+            error: "stream ended early".into(),
+        };
+        let value = serde_json::to_value(&state).unwrap();
+        assert_eq!(value["phase"], "waiting");
+        assert_eq!(value["cause"], "stream");
+        assert_eq!(
+            serde_json::from_value::<StreamRecoveryState>(value).unwrap(),
+            state
+        );
+        assert_eq!(
+            serde_json::from_value::<StreamRecoveryPhase>(serde_json::json!("resumed")).unwrap(),
+            StreamRecoveryPhase::Other
+        );
+        assert_eq!(
+            serde_json::from_value::<StreamRecoveryCause>(serde_json::json!("quota")).unwrap(),
+            StreamRecoveryCause::Other
         );
     }
     #[test]

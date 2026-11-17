@@ -454,7 +454,7 @@ pub(crate) async fn require_mutable_session(
         .await
         .map_err(|e| e.to_string())?
     {
-        return Err("Frozen conversation branches cannot be changed".into());
+        return Err(wisp_store::FROZEN_BRANCH_CHANGE_REFUSAL.into());
     }
     Ok(())
 }
@@ -1419,6 +1419,8 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 read_only_reason: None,
                 // Nor do they offer a way out of a failed turn by its kind.
                 error_kind: None,
+                // The WebView shows a recovery from its own event stream.
+                stream_recovery: None,
                 acp_state: if frozen || args.before_seq.is_some() || binding.is_none() {
                     None
                 } else {

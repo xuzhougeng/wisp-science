@@ -3,8 +3,10 @@ mod agents_view;
 mod archive_view;
 mod aside_view;
 mod assistant_view;
+mod browser_prompts_view;
 mod calendar_view;
 mod capabilities_view;
+mod centre_view;
 mod compact_view;
 mod conversation_actions;
 mod demos_view;
@@ -69,6 +71,7 @@ mod settings_workflows;
 mod share_view;
 mod shell;
 mod slash_view;
+mod stream_recovery_view;
 mod surfaces;
 mod tabs_view;
 mod terminal_view;
@@ -198,6 +201,9 @@ pub struct Workspace {
     model_view_error: Option<String>,
     /// The rows opened to show their whole text.
     model_view_open: HashSet<usize>,
+    /// The kind of the latest request opened to show what it holds; one
+    /// at a time, as in the WebView's context usage.
+    model_view_kind: Option<crate::model_view::Sent>,
     /// The kind of compaction the compact dialog has chosen.
     compact_kind: crate::compaction::Kind,
     /// A compaction asked for there is running.
@@ -327,6 +333,14 @@ pub struct Workspace {
     paper_source_fields: [Entity<InputState>; 2],
     paper_choices: Vec<wisp_server::desktop::PaperSourceChoice>,
     paper_choices_more: bool,
+    /// The conversation message a passage is being chosen from, and its
+    /// text, read-only, to select the passage in.
+    paper_passage: Option<wisp_server::desktop::PaperSourceChoice>,
+    paper_passage_field: Entity<InputState>,
+    /// The run of the shown finalized version being rerun clean, and
+    /// whether its capsule is being written.
+    paper_rerunning: Option<String>,
+    paper_capsule_saving: bool,
     /// What finalizing the shown version is checked against, what the
     /// last check found, and whether one is under way.
     paper_policy: wisp_server::desktop::PaperPolicy,
@@ -365,6 +379,9 @@ pub struct Workspace {
     /// The run the next side question is about, with its title, when it
     /// was asked from a run card.
     aside_run: Option<(String, String)>,
+    /// Passages selected in project files, quoted into the next side
+    /// question, as the WebView's side chat holds its quotes.
+    aside_quotes: Vec<crate::aside::Quote>,
     palette_scroll: ScrollHandle,
     sessions: Vec<SessionSearchInfo>,
     /// Conversations in any project that are waiting for the user.
@@ -374,6 +391,13 @@ pub struct Workspace {
     known: HashMap<String, SessionSearchInfo>,
     /// The conversations opened in this window, as tabs.
     tabs: crate::tabs::Tabs,
+    /// The project files each conversation has open in the centre, as tabs
+    /// after its own, and the split that puts it beside the one shown.
+    centre: crate::centre::Centre,
+    /// The document tab whose menu is open, by its path.
+    centre_menu: Option<String>,
+    /// How wide the split centre was when last drawn, for its widths.
+    centre_width: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     /// The SSH host folder the Files tab is looking at, instead of the
     /// project's own files.
     remote: Option<crate::files::RemoteBrowse>,
@@ -611,6 +635,12 @@ pub struct Workspace {
     browser: Option<wisp_server::desktop::BrowserSettings>,
     /// Blocked host and why, preferred host and why.
     browser_fields: [Entity<InputState>; 4],
+    /// What is asked or told about the browser over the shown project.
+    browser_prompts: crate::browser::Prompts,
+    /// The project those are about.
+    browser_project: Option<String>,
+    /// Asks the host about the browser every two seconds.
+    browser_watch: Option<Task<()>>,
     /// The workflow templates.
     workflows: Vec<wisp_server::desktop::Workflow>,
     /// The workflow in the form or the remove question; empty is a new one.
@@ -781,6 +811,12 @@ pub struct Workspace {
     /// the card shows, worked out again whenever the rows or the
     /// conversation's runs change.
     run_card_rows: HashMap<usize, (String, u64)>,
+    /// The cards of runs that no row names, by the row they are drawn with:
+    /// where, the run and the shape of what the card shows.
+    own_run_cards: HashMap<usize, Vec<(crate::run_cards::Anchor, String, u64)>>,
+    /// Ended runs whose card of its own was dismissed while the window is
+    /// open, as the WebView keeps them.
+    dismissed_runs: HashSet<String>,
     /// Runs the user moved to the background here, until a snapshot says so.
     backgrounded_runs: HashSet<String>,
     /// The latest work over many items the open conversation ran.
@@ -988,6 +1024,41 @@ pub struct Workspace {
     watch: Option<Task<()>>,
 }
 
+/// Tells the user that a Run moved to the background ended, through the
+/// notification and sound chosen in Settings, unless its conversation is on
+/// screen in the focused window: one notification for the whole app,
+/// however many windows are open.
+fn tell_run_ended(ended: &wisp_server::desktop::BackgroundRunEnded, cx: &mut App) {
+    let mut on_screen = false;
+    let mut teller = None;
+    for handle in cx.windows() {
+        let seen = handle.update(cx, |root, window, cx| {
+            let root = root.downcast::<gpui_component::Root>().ok()?;
+            let workspace = root.read(cx).view().clone().downcast::<Workspace>().ok()?;
+            Some((window.is_window_active(), workspace))
+        });
+        let Ok(Some((active, workspace))) = seen else {
+            continue;
+        };
+        on_screen |= active && workspace.read(cx).shows(&ended.session);
+        teller.get_or_insert(workspace);
+    }
+    let Some(teller) = teller else {
+        return;
+    };
+    let teller = teller.read(cx);
+    if !crate::notify::run_end_wanted(teller.notify, on_screen) {
+        return;
+    }
+    crate::notify::post_run_end(
+        teller.notify,
+        teller.notify_tone,
+        &ended.status,
+        &present::one_line(&ended.conversation),
+        &ended.title,
+    );
+}
+
 fn tone_color(tone: Tone, cx: &App) -> Hsla {
     match tone {
         Tone::Neutral => cx.theme().muted_foreground,
@@ -1143,6 +1214,7 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx)),
         ];
+        let paper_passage_field = cx.new(|cx| InputState::new(window, cx).multi_line(true));
         let paper_waiver_field = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(tr("Why it can stand, for whoever reads the record"))
@@ -1642,6 +1714,7 @@ impl Workspace {
             plan_feedback,
             asides: HashMap::new(),
             aside_run: None,
+            aside_quotes: Vec::new(),
             capabilities: None,
             capabilities_error: None,
             archive: None,
@@ -1655,6 +1728,7 @@ impl Workspace {
             model_view: None,
             model_view_error: None,
             model_view_open: HashSet::new(),
+            model_view_kind: None,
             compact_kind: Default::default(),
             compacting: false,
             compact_error: None,
@@ -1729,6 +1803,10 @@ impl Workspace {
             paper_source_fields,
             paper_choices: Vec::new(),
             paper_choices_more: false,
+            paper_passage: None,
+            paper_passage_field,
+            paper_rerunning: None,
+            paper_capsule_saving: false,
             paper_policy: Default::default(),
             paper_check: None,
             paper_checking: false,
@@ -1750,6 +1828,9 @@ impl Workspace {
             inbox: vec![],
             known: HashMap::new(),
             tabs: Default::default(),
+            centre: Default::default(),
+            centre_menu: None,
+            centre_width: std::rc::Rc::default(),
             remote: None,
             run_logs: HashMap::new(),
             open_search: None,
@@ -1867,6 +1948,9 @@ impl Workspace {
             decision_testing: false,
             browser: None,
             browser_fields,
+            browser_prompts: Default::default(),
+            browser_project: None,
+            browser_watch: None,
             workflows: Vec::new(),
             workflow_editing: None,
             workflow_fields,
@@ -1954,6 +2038,8 @@ impl Workspace {
             batches_for: None,
             agent_cards: HashMap::new(),
             run_card_rows: HashMap::new(),
+            own_run_cards: HashMap::new(),
+            dismissed_runs: HashSet::new(),
             backgrounded_runs: HashSet::new(),
             swarm: None,
             batches_request: 0,
@@ -2278,6 +2364,11 @@ impl Workspace {
             }
             // Putting the guide away is finishing it, as in the WebView.
             Some(Layer::Onboarding) => self.finish_onboarding(cx),
+            Some(
+                layer @ (Layer::BrowserTabCleanup
+                | Layer::BrowserNeedsHuman
+                | Layer::BrowserExtensionUpdate),
+            ) => self.escape_browser_prompt(layer, window, cx),
             // The newest card goes; the others wait for the next press.
             Some(Layer::SessionNotices) => {
                 self.notices.dismiss_newest();
@@ -2336,6 +2427,7 @@ impl Workspace {
             ) => {}
             // A move waiting to be confirmed is forgotten with its menu.
             Some(Layer::TransferMenu) => self.transfer_preview = None,
+            Some(Layer::CentreTabMenu) => self.centre_menu = None,
             None => return false,
         }
         cx.notify();
@@ -2553,6 +2645,12 @@ impl Workspace {
     /// Changes the selection. File state belongs to a project, so a preview
     /// from the previous project must not stay open over the new one.
     fn choose(&mut self, project: Option<String>, session: Option<String>) {
+        // The document the centre shows is the conversation's being left:
+        // its tab stays with it, and it is read again when it comes back
+        // (`restore_centre`).
+        if self.state.session != session && self.preview_in_centre() {
+            self.drop_preview();
+        }
         if self.state.project != project {
             self.layers.close(Layer::FilePreview);
             // A host's runs and placed files are the project's.
@@ -2613,9 +2711,11 @@ impl Workspace {
             Layer::BranchMerge,
             Layer::RunReview,
             Layer::ShareMessages,
+            Layer::CentreTabMenu,
         ] {
             self.layers.close(layer);
         }
+        self.centre_menu = None;
         self.run_review = None;
         self.sharing = None;
         self.archive = None;
@@ -2676,6 +2776,11 @@ impl Workspace {
                         this.load_environments(window, cx);
                         // The desk display can ask for a conversation.
                         this.follow_device_focus(window, cx);
+                        // What the browser asks of the user, and its update.
+                        this.watch_browser(window, cx);
+                        // A Run moved to the background is told about
+                        // when it ends.
+                        this.listen_for_run_endings(cx);
                     }
                     Err(error) => this.error = Some(error),
                 }
@@ -2683,6 +2788,42 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    /// Has the app tell the user, once whatever window asks first, each
+    /// time a Run moved to the background ends, as the WebView does.
+    fn listen_for_run_endings(&self, cx: &mut Context<Self>) {
+        /// Set once the app listens.
+        struct Listening;
+        impl Global for Listening {}
+        if cx.has_global::<Listening>() {
+            return;
+        }
+        let Some(mut endings) = self.backend.background_run_endings() else {
+            return;
+        };
+        cx.set_global(Listening);
+        let app: &App = cx;
+        app.spawn(async move |cx| {
+            use tokio::sync::broadcast::error::RecvError;
+            loop {
+                match endings.recv().await {
+                    Ok(ended) => {
+                        if cx.update(|cx| tell_run_ended(&ended, cx)).is_err() {
+                            return;
+                        }
+                    }
+                    Err(RecvError::Lagged(_)) => {}
+                    Err(RecvError::Closed) => return,
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Whether `session` is the conversation open here.
+    fn shows(&self, session: &str) -> bool {
+        self.state.session.as_deref() == Some(session)
     }
 
     /// Opens each conversation the StickS3 desk display asks for, and
@@ -3023,13 +3164,16 @@ impl Workspace {
     fn clear_transcript(&mut self) {
         self.poll = None;
         self.rows.clear();
-        // A side question about a run was about the conversation left.
+        // A side question about a run, or quoting a passage, was about the
+        // conversation left, as the WebView clears its side chat's quotes.
         self.aside_run = None;
+        self.aside_quotes.clear();
         self.turn_tokens.clear();
         self.batches.clear();
         self.batches_for = None;
         self.agent_cards.clear();
         self.run_card_rows.clear();
+        self.own_run_cards.clear();
         self.backgrounded_runs.clear();
         self.swarm = None;
         self.drop_history();
@@ -3145,6 +3289,8 @@ impl Workspace {
         self.start_poll(window, cx);
         self.load_status(window, cx);
         self.load_saved(window, cx);
+        // The documents it had open come back, the one it showed with them.
+        self.restore_centre(window, cx);
         self.ensure_files(window, cx);
         self.reload_artifacts(window, cx);
         self.load_reply_artifacts(window, cx);
@@ -3789,6 +3935,12 @@ impl Workspace {
             parent.map(String::as_str),
             source.map(String::as_str),
         )
+    }
+
+    /// What the open conversation's messages and menu offer that would
+    /// change it or start from it, as the host allows it.
+    pub(super) fn offered(&self) -> compose::Offered {
+        compose::offered(self.read_only().as_ref(), self.open_is_branch())
     }
 
     /// What is attached to the message being written in this conversation.
@@ -4715,7 +4867,7 @@ impl Render for Workspace {
                     if !self.sidebar_hidden {
                         row = row.child(self.render_sidebar(cx));
                     }
-                    row = row.child(self.render_conversation(cx));
+                    row = row.child(self.render_conversation(window, cx));
                     if self.layers.contains(Layer::FilesPanel) {
                         row = row.child(self.render_files(window, cx));
                     }
@@ -4861,6 +5013,18 @@ impl Render for Workspace {
         };
         let root = if self.layers.contains(Layer::ConfirmCloseUnsaved) {
             root.child(self.render_close_unsaved(cx))
+        } else {
+            root
+        };
+        // What the browser asks: the question about a human over the one
+        // about tabs, as the WebView draws them.
+        let root = if self.layers.contains(Layer::BrowserTabCleanup) {
+            root.children(self.render_browser_cleanup(cx))
+        } else {
+            root
+        };
+        let root = if self.layers.contains(Layer::BrowserNeedsHuman) {
+            root.children(self.render_browser_needs_human(cx))
         } else {
             root
         };

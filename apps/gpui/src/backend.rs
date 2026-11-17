@@ -893,8 +893,10 @@ impl Backend {
         self.local(move |host| async move { host.reply_artifacts(&project, &session).await })
     }
 
-    pub fn cancel_run(&self, project: String, run: String) -> Reply<()> {
-        self.local(move |host| async move { host.cancel_run(&project, &run).await })
+    /// Cancels a run as the button meant it: `force` finishes one already
+    /// stopping, and a button drawn for the other state is refused.
+    pub fn cancel_run(&self, project: String, run: String, force: bool) -> Reply<()> {
+        self.local(move |host| async move { host.cancel_run_as_meant(&project, &run, force).await })
     }
 
     /// Stops a turn's wait on a run without touching the run; its
@@ -1587,6 +1589,64 @@ impl Backend {
         self.local(move |host| async move { host.save_browser_filters(filters).await })
     }
 
+    /// **Open browser automatically**.
+    pub fn set_browser_auto_launch(
+        &self,
+        enabled: bool,
+    ) -> Reply<wisp_server::desktop::BrowserSettings> {
+        self.local(move |host| async move { host.set_browser_auto_launch(enabled).await })
+    }
+
+    /// **Automatically close browser tabs**.
+    pub fn set_browser_auto_close_tabs(
+        &self,
+        enabled: bool,
+    ) -> Reply<wisp_server::desktop::BrowserSettings> {
+        self.local(move |host| async move { host.set_browser_auto_close_tabs(enabled).await })
+    }
+
+    /// The update banner and the browser questions for a project.
+    pub fn browser_alerts(&self, project: String) -> Reply<wisp_server::desktop::BrowserAlerts> {
+        self.local(move |host| async move { host.browser_alerts(&project).await })
+    }
+
+    /// Closes the chosen tabs of an ended turn.
+    pub fn confirm_browser_tab_cleanup(
+        &self,
+        turn: String,
+        tabs: Vec<wisp_dto::BrowserTabCleanupItem>,
+    ) -> Reply<Vec<i64>> {
+        self.local(move |host| async move { host.confirm_browser_tab_cleanup(&turn, tabs).await })
+    }
+
+    /// Keeps all the tabs of an ended turn.
+    pub fn dismiss_browser_tab_cleanup(&self, turn: String) -> Reply<()> {
+        self.local(move |host| async move { host.dismiss_browser_tab_cleanup(&turn).await })
+    }
+
+    /// Looks again at tabs the user says they verified.
+    pub fn confirm_browser_needs_human(
+        &self,
+        tabs: Vec<wisp_dto::BrowserNeedsHumanTab>,
+    ) -> Reply<wisp_dto::BrowserNeedsHumanConfirmResult> {
+        self.local(move |host| async move { host.confirm_browser_needs_human(tabs).await })
+    }
+
+    /// Shows a tab that waits for a human in the browser.
+    pub fn focus_browser_needs_human(&self, tab: i64) -> Reply<()> {
+        self.local(move |host| async move { host.focus_browser_needs_human(tab).await })
+    }
+
+    /// Updates the browser extension, as the banner's button does.
+    pub fn update_browser_extension(&self) -> Reply<wisp_dto::BrowserExtensionUpdateResult> {
+        self.local(|host| async move { host.update_browser_extension().await })
+    }
+
+    /// Opens the user's browser on its extension page.
+    pub fn open_browser_extension_page(&self) -> Reply<wisp_dto::BrowserExtensionSetup> {
+        self.local(|host| async move { host.open_browser_extension_page().await })
+    }
+
     /// The workflow templates.
     pub fn workflows(&self) -> Reply<Vec<wisp_server::desktop::Workflow>> {
         self.local(|host| async move { host.workflows().await })
@@ -2024,6 +2084,25 @@ impl Backend {
         })
     }
 
+    /// Reruns one run of a finalized version in a clean folder and records
+    /// how its outputs compare.
+    pub fn verify_paper_run(&self, project: String, version: String, run: String) -> Reply<()> {
+        self.local(move |host| async move { host.verify_paper_run(&project, &version, &run).await })
+    }
+
+    /// Saves a finalized version's evidence capsule at `destination`.
+    pub fn build_paper_capsule(
+        &self,
+        project: String,
+        version: String,
+        destination: std::path::PathBuf,
+    ) -> Reply<()> {
+        self.local(move |host| async move {
+            host.build_paper_capsule(&project, &version, &destination)
+                .await
+        })
+    }
+
     /// What is installed under the data folder, and how an install goes.
     pub fn toolchain(&self) -> Reply<wisp_dto::ToolchainStatus> {
         self.local(|host| async move { Ok(host.toolchain()) })
@@ -2304,6 +2383,14 @@ impl Backend {
 
     pub fn rotate_device_bridge_token(&self) -> Reply<String> {
         self.local(|host| async move { host.rotate_device_bridge_token() })
+    }
+
+    /// Hears of each Run moved to the background that ends from now on;
+    /// nothing before the host is ready.
+    pub fn background_run_endings(
+        &self,
+    ) -> Option<tokio::sync::broadcast::Receiver<wisp_server::desktop::BackgroundRunEnded>> {
+        self.host.get().map(|host| host.background_run_endings())
     }
 
     /// Waits until the desk display asks for a conversation.

@@ -61,6 +61,22 @@ pub fn distilled_experience_heading(label: &str) -> String {
     )
 }
 
+/// The line in front of a passage selected in a file or other source and
+/// quoted into a message or a side question, as the model reads it: a file
+/// of the project's workspace, or any other reference (an artifact, a
+/// remote file, a document's text).
+pub fn selected_excerpt_heading(source: &str, workspace_file: bool) -> String {
+    format!(
+        "Selected excerpt from {} `{}`:\n",
+        if workspace_file {
+            "workspace file"
+        } else {
+            "reference"
+        },
+        quote_source_safe(source)
+    )
+}
+
 /// `text` as a Markdown quote, each of its lines behind `> `.
 pub fn blockquote_lines(text: &str) -> String {
     let mut out = String::new();
@@ -92,6 +108,18 @@ mod tests {
             "Reusable experience distilled from conversation `x · turn 1`:\n"
         );
         assert_eq!(blockquote_lines("  "), "");
+    }
+
+    #[test]
+    fn a_selected_passage_is_quoted_under_its_source() {
+        assert_eq!(
+            selected_excerpt_heading(" analysis/fit`1.R\n", true),
+            "Selected excerpt from workspace file `analysis/fit\\`1.R`:\n"
+        );
+        assert_eq!(
+            selected_excerpt_heading("artifact:abc", false),
+            "Selected excerpt from reference `artifact:abc`:\n"
+        );
     }
 
     #[test]

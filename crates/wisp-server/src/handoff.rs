@@ -29,7 +29,8 @@ impl Server {
     /// Has the conversation's model write a handoff note from what the
     /// model is sent now, steered by the user's optional instruction.
     /// Nothing is saved. Refused while a turn runs, in a conversation an
-    /// ACP agent runs and in one whose research is archived.
+    /// ACP agent runs, in one whose research is archived and in a frozen
+    /// branch.
     pub async fn draft_handoff(
         &self,
         project: &str,
@@ -49,6 +50,7 @@ impl Server {
             !self.archived(session).await?,
             "This conversation's research is archived and it is read-only"
         );
+        self.ensure_branch_changeable(session).await?;
         ensure!(
             crate::acp_turn::agent_of(&self.0.store, session)
                 .await?

@@ -16,6 +16,10 @@ use wisp_llm::ProviderKind;
 pub use wisp_store::GlobalMemory;
 use wisp_store::Store;
 pub use wisp_store::{LibraryItem, LibraryItemSummary, LibraryItemVersion};
+/// What both hosts answer when a branch is branched again, or a frozen one
+/// is handed off, reviewed or moved away; a client saying so before it asks
+/// uses the same words.
+pub use wisp_store::{BRANCH_AGAIN_REFUSAL, FROZEN_BRANCH_CHANGE_REFUSAL};
 
 /// The saved model profiles: `{"profiles": [...], "default": "<id>"}`.
 const MODELS_SETTING: &str = "desktop.models";
@@ -2492,7 +2496,7 @@ impl Server {
     /// The favorites library. It is one database for every project, apart
     /// from the conversations, so deleting a project or a conversation does
     /// not take what was saved from it.
-    async fn library(&self) -> Result<&wisp_store::LibraryStore> {
+    pub(crate) async fn library(&self) -> Result<&wisp_store::LibraryStore> {
         self.0
             .library
             .get_or_try_init(|| async {
@@ -2819,6 +2823,7 @@ impl Server {
         ensure!(project != target, "Choose a different project");
         self.own_conversation(project, session).await?;
         self.known_project(target).await?;
+        self.ensure_branch_changeable(session).await?;
         self.0
             .store
             .preview_session_artifacts(session, project, Some(target))
@@ -2865,6 +2870,8 @@ impl Server {
                 .copy_session_to_project(session, project, target, &id)
                 .await?;
         } else {
+            // A frozen branch can be copied, not moved away.
+            self.ensure_branch_changeable(session).await?;
             self.without_branches(project, session, "move").await?;
             match artifacts {
                 Some(fingerprint) => {
@@ -3015,6 +3022,8 @@ impl Server {
             live.messages.clear();
             live.outcomes.clear();
             live.usage = None;
+            // The latest request was made of what is now taken back.
+            live.context = None;
             live.error = None;
             // So do the questions and the review that followed it.
             live.follow_ups.clear();
@@ -3042,6 +3051,11 @@ impl Server {
         self.ensure_idle(session, "branch")?;
         self.ensure_not_exploring(session, "branch").await?;
         let store = &self.0.store;
+        // A branch, frozen or not, is not branched again, as in the WebView.
+        ensure!(
+            !store.session_is_branch(session).await?,
+            wisp_store::BRANCH_AGAIN_REFUSAL
+        );
         let cut = match upto {
             Some(turn) => self.locate_turn(session, turn).await?.1,
             None => None,
@@ -3880,7 +3894,7 @@ impl Server {
 
     /// Where a server's environment variables and headers are kept, with
     /// their values, as one JSON object: `{"env": {…}, "headers": {…}}`.
-    fn mcp_extra_secret(key_id: &str, server: &str) -> String {
+    pub(crate) fn mcp_extra_secret(key_id: &str, server: &str) -> String {
         format!("desktop.mcp.{key_id}.{server}.extra")
     }
 
@@ -3910,7 +3924,7 @@ impl Server {
 
     /// What a connection to `server` is made with: its token, and the
     /// variables and headers it names with their saved values.
-    async fn mcp_credentials(&self, server: &McpServer) -> crate::mcp::Credentials {
+    pub(crate) async fn mcp_credentials(&self, server: &McpServer) -> crate::mcp::Credentials {
         let (env, headers) = self.mcp_extra(&server.id).await;
         let pick = |names: &[String], values: &BTreeMap<String, String>| {
             names
@@ -4021,7 +4035,21 @@ impl Server {
     pub async fn mcp_servers(&self) -> Result<Vec<McpServerRow>> {
         let mut rows = Vec::new();
         for server in crate::mcp::load(&self.0.store).await {
+            let (env, headers) = self.mcp_extra(&server.id).await;
+            let unset = server
+                .env
+                .iter()
+                .filter(|name| !env.contains_key(*name))
+                .chain(
+                    server
+                        .headers
+                        .iter()
+                        .filter(|name| !headers.contains_key(*name)),
+                )
+                .cloned()
+                .collect();
             rows.push(McpServerRow {
+                unset,
                 has_token: self.mcp_token(&server.id).await.is_some(),
                 error: self.0.mcp.error(&server.id),
                 server,
@@ -4760,6 +4788,31 @@ impl Server {
         self.0
             .runs
             .cancel(&self.0.store, run)
+            .await
+            .map_err(anyhow::Error::msg)
+    }
+
+    /// Cancels a run as the button that was pressed meant it, as the Tauri
+    /// desktop does for its native clients (`cancel_with_intent`): `force`
+    /// off asks a run that is going to stop; on, it finishes a run already
+    /// stopping whose stop never came back, as cancelled. A button drawn
+    /// for the other state is refused, so a stale Cancel never forces.
+    pub async fn cancel_run_as_meant(&self, project: &str, run: &str, force: bool) -> Result<()> {
+        self.project_root(project).await?;
+        let record = self.0.store.get_run(run).await?.context("Run not found")?;
+        ensure!(
+            record.project_id == project,
+            "Run does not belong to the selected project"
+        );
+        // A method search ends through its own coordinator and is never
+        // forced, as in the Tauri desktop.
+        if record.kind == "method_search" {
+            ensure!(!force, "Run state changed; refresh before cancelling");
+            return self.cancel_method_search(project, run).await.map(drop);
+        }
+        self.0
+            .runs
+            .cancel_with_intent(&self.0.store, run, Some(force))
             .await
             .map_err(anyhow::Error::msg)
     }
@@ -5678,6 +5731,41 @@ impl Server {
         crate::papers::open(&self.0.store, project, paper, Some(&created)).await
     }
 
+    /// Reruns one run of a finalized version in a clean temporary folder
+    /// with only its frozen inputs and code, as the WebView's "Verify in
+    /// clean workspace" does, and records how its outputs compare. Runs
+    /// through the host's run runner; only local runs can be rerun.
+    pub async fn verify_paper_run(&self, project: &str, version: &str, run: &str) -> Result<()> {
+        self.verify_paper_run_with(project, version, run, self.0.runs.runner_ref())
+            .await
+    }
+
+    pub(crate) async fn verify_paper_run_with(
+        &self,
+        project: &str,
+        version: &str,
+        run: &str,
+        runner: &dyn wisp_runs::RunCommandRunner,
+    ) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::papers::verify(&self.0.store, project, version, run, runner).await
+    }
+
+    /// Saves the evidence capsule of a finalized version as a new `.zip`
+    /// at `destination`, which the person chose; the attempt is recorded
+    /// with the version either way.
+    pub async fn build_paper_capsule(
+        &self,
+        project: &str,
+        version: &str,
+        destination: &std::path::Path,
+    ) -> Result<()> {
+        let _admission = self.0.admission.read().await;
+        self.known_project(project).await?;
+        crate::papers::build_capsule(&self.0.store, project, version, destination).await
+    }
+
     /// The ACP agents that can be started from here, with whether each
     /// program is found.
     pub async fn acp_agents(&self) -> Vec<AcpAgentRow> {
@@ -6581,9 +6669,11 @@ impl Server {
     }
 
     /// Answers a question about a conversation without adding anything to
-    /// it: the conversation's model reads its latest turns and `earlier`,
-    /// the side exchanges so far, and has no tools. It can be asked while a
-    /// turn runs, and reads what has been saved by then.
+    /// it: the conversation's model first classifies the question, as the
+    /// WebView's side chat does, then reads its latest turns, the earlier
+    /// passages its scope looks up and `earlier`, the side exchanges so
+    /// far, and has no tools. It can be asked while a turn runs, and reads
+    /// what has been saved by then.
     pub async fn ask_aside(
         &self,
         project: &str,
@@ -6622,6 +6712,9 @@ impl Server {
         question: &str,
     ) -> Result<AsideAnswer> {
         self.own_conversation(project, session).await?;
+        // A question that would be refused is refused before the model is
+        // asked anything about it.
+        let question = crate::aside::checked_question(question)?;
         let snapshot = match run {
             None => None,
             Some(run) => {
@@ -6645,18 +6738,47 @@ impl Server {
         let messages = store
             .load_recent_turn_preview_messages(session, crate::aside::TURNS)
             .await?;
+        let provider = (self.0.models)(model);
+        // As the WebView's side chat does, the model first says what kind of
+        // question it is, unless it is about a run, whose scope the card
+        // chose. One it cannot classify is answered on a best-effort reading.
+        let intent = match snapshot {
+            Some(_) => None,
+            None => Some(
+                match wisp_app::side_question::classify(
+                    provider.as_ref(),
+                    question,
+                    wisp_app::side_question::INTENT_TIMEOUT,
+                )
+                .await
+                {
+                    Ok(intent) => intent,
+                    Err(reason) => {
+                        tracing::warn!(
+                            reason,
+                            "Aside classification unavailable; using recent conversation"
+                        );
+                        wisp_app::side_question::Intent::fallback(crate::aside::terms(question))
+                    }
+                },
+            ),
+        };
+        let wanted = match &intent {
+            Some(intent) => crate::aside::lookup_terms(question, intent),
+            None => crate::aside::terms(question),
+        };
         // Passages from before the turns quoted whole that match the
         // question go along, labelled, as the WebView's evidence does.
         let history = store
             .load_recent_turn_preview_messages(session, crate::aside::HISTORY_TURNS)
             .await?;
         let before = history.len().saturating_sub(messages.len());
-        let sources = crate::aside::sources(question, &history[..before]);
-        let provider = (self.0.models)(model);
+        let sources = crate::aside::sources(&wanted, &history[..before]);
         match crate::aside::ask(
             provider.as_ref(),
             &messages,
             snapshot.as_deref(),
+            intent.map(|intent| intent.scope),
             &sources,
             earlier,
             question,
@@ -6680,6 +6802,9 @@ impl Server {
         let messages = self.0.store.load_messages(session).await?;
         let mut view = crate::model_view::fold(&messages);
         view.epoch = self.0.store.frame_head_epoch(session).await?;
+        // And what the latest request was made of, tools included, while
+        // this host has it.
+        view.sent = self.session(session).live.lock().unwrap().context.clone();
         Ok(view)
     }
 
@@ -6690,6 +6815,7 @@ impl Server {
     /// because half a turn cannot be judged.
     pub async fn review_conversation(&self, project: &str, session: &str) -> Result<Review> {
         self.own_conversation(project, session).await?;
+        self.ensure_branch_changeable(session).await?;
         let messages = self.numbered_transcript(session).await?;
         self.review_messages(session, messages).await
     }
@@ -6704,6 +6830,7 @@ impl Server {
         turn: &TurnRef,
     ) -> Result<Review> {
         self.own_conversation(project, session).await?;
+        self.ensure_branch_changeable(session).await?;
         let (_, next) = self.locate_turn(session, turn).await?;
         let mut messages = self.numbered_transcript(session).await?;
         if let Some(next) = next {
@@ -7442,6 +7569,10 @@ pub struct McpServerRow {
     pub server: McpServer,
     /// A token is saved for it. The token itself is never handed back.
     pub has_token: bool,
+    /// The variables and headers it names with no value saved, as one
+    /// brought over from the WebView whose value the keychain would not
+    /// give: each is entered again before it is sent.
+    pub unset: Vec<String>,
     /// Why it gave no tools the last time it was asked.
     pub error: Option<String>,
 }
@@ -7898,7 +8029,8 @@ pub use crate::approvals::{ApprovalScope, ProjectApprovals, ToolRule};
 pub use crate::aside::Exchange as AsideExchange;
 pub use crate::aside::{Answer as AsideAnswer, Source as AsideSource};
 pub use crate::assistant::{is_assistant, ASSISTANT_FRAME_ID};
-pub use crate::browser::{BrowserSettings, BrowserStatus};
+pub use crate::background_runs::BackgroundRunEnded;
+pub use crate::browser::{BrowserAlerts, BrowserSettings, BrowserStatus};
 pub use crate::browser_filters::{BrowserFilters, BrowserHostRule};
 pub use crate::channels::{
     feishu::{FeishuBind, FeishuBindPoll, FeishuStatus},
@@ -7913,20 +8045,24 @@ pub use crate::experts::{Expert, ExpertInput};
 pub use crate::explorations::{FileChange, PromotionPreview, StartedExploration};
 pub use crate::method_search::control::MethodSearchRunDetails;
 pub use crate::method_search::prepare::{MethodSearchAuditReport, ProtectedFileAudit};
-pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow};
+pub use crate::model_view::{ModelRowKind, ModelView, ModelViewRow, SentContext};
 pub use crate::origin::FileOrigin;
 pub use crate::papers::{
-    Paper, PaperAudience, PaperCheck, PaperFinding, PaperInput, PaperItem, PaperItemInput,
-    PaperItemKind, PaperLevel, PaperPolicy, PaperRow, PaperSource, PaperSourceChoice,
-    PaperSourceKind, PaperVersion, PaperVersionState,
+    Paper, PaperAudience, PaperCapsule, PaperCapsuleStatus, PaperCheck, PaperFinding, PaperInput,
+    PaperItem, PaperItemInput, PaperItemKind, PaperLevel, PaperPolicy, PaperRerun,
+    PaperRerunOutput, PaperRerunStatus, PaperRow, PaperSource, PaperSourceChoice, PaperSourceKind,
+    PaperVersion, PaperVersionState,
 };
 pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
 pub use crate::plugins::PluginRow;
 pub use crate::project_archive::ArchiveProgress;
 pub use crate::webview_import::{
-    WebViewData, WebViewImport, WebViewModel, WebViewOutcome, WebViewProject,
-    SETTING_GROUPS as WEBVIEW_SETTING_GROUPS,
+    WebViewData, WebViewGroup, WebViewHold, WebViewImport, WebViewModel, WebViewOutcome,
+    WebViewProject, LIST_GROUPS as WEBVIEW_LIST_GROUPS, SETTING_GROUPS as WEBVIEW_SETTING_GROUPS,
 };
+/// The file name a version's evidence capsule is offered under when saving
+/// it, from the paper's title and the version's id, as the WebView offers.
+pub use wisp_runs::publication_capsule::capsule_filename as paper_capsule_file_name;
 
 /// Where a project's work keeps things on one SSH host.
 /// One of the project's runs on an SSH host.
@@ -7980,12 +8116,12 @@ pub use crate::workflows::{
     WorkflowInput, WorkflowTask, CAPABILITIES as WORKFLOW_CAPABILITIES,
     TASK_LIMIT as WORKFLOW_TASK_LIMIT,
 };
-/// A working set's estimated tokens by kind.
-pub use wisp_core::ContextUsage;
 /// Which model a task's agent works on.
 pub use wisp_core::ModelTier;
 /// The most tasks a workflow run as agents takes.
 pub use wisp_core::MAX_DELEGATION_TASKS as WORKFLOW_AGENT_LIMIT;
+/// A working set's estimated tokens by kind, and what each kind holds.
+pub use wisp_core::{ContextToolDetail, ContextUsage, ContextUsageDetails};
 pub use wisp_dto::AutoFailureAnalysisSettings;
 pub use wisp_dto::{
     ArchiveFile, ArchiveFileChoice, ArchiveScript, ConfirmResearchArchive, ResearchArchive,

@@ -2,8 +2,13 @@
 //! reads the conversation and answers, with no tools, and nothing is added
 //! to the conversation. The host keeps nothing of it; whoever asks carries
 //! the earlier exchanges along.
+//!
+//! As the WebView's side chat does, the model first classifies the question
+//! (`wisp_app::side_question`, shared with it): its scope decides which
+//! earlier passages are looked up and is told to the answering model.
 
 use anyhow::{bail, ensure, Context, Result};
+use wisp_app::side_question::{scope_instruction, Intent, Scope};
 use wisp_llm::{Message, Provider};
 
 use crate::excerpt::{self, Limits};
@@ -70,7 +75,7 @@ pub struct Answer {
 
 /// The words a question is looked up by: lower case, three letters or
 /// more and not the commonest; runs of CJK characters by their pairs.
-fn terms(text: &str) -> Vec<String> {
+pub(crate) fn terms(text: &str) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
     let mut push = |term: String| {
         if !found.contains(&term) {
@@ -95,12 +100,38 @@ fn terms(text: &str) -> Vec<String> {
     found
 }
 
+/// What a classified question is looked up by, as the WebView's side chat
+/// picks its retrieval terms: the classifier's phrases when it gave some;
+/// otherwise the question's own words for a lookup or a comparison (and
+/// for a question the classifier could not take, whose fallback carries
+/// them); nothing for a question about the conversation as a whole, which
+/// the latest turns quoted whole answer.
+pub(crate) fn lookup_terms(question: &str, intent: &Intent) -> Vec<String> {
+    if !intent.query_terms.is_empty() {
+        return intent.query_terms.clone();
+    }
+    match intent.scope {
+        Scope::Lookup | Scope::Comparison => terms(question),
+        Scope::Session | Scope::Fallback | Scope::Run => Vec::new(),
+    }
+}
+
+/// The question as it is asked: trimmed, there, and not a document.
+pub(crate) fn checked_question(question: &str) -> Result<&str> {
+    let question = question.trim();
+    ensure!(!question.is_empty(), "Type a question first");
+    ensure!(
+        question.chars().count() <= QUESTION_LIMIT,
+        "A side question is at most {QUESTION_LIMIT} characters"
+    );
+    Ok(question)
+}
+
 /// The passages of `earlier` (the conversation before the turns quoted
-/// whole) that match `question` best, in the order they were said, each
-/// labelled [E1], [E2]… A rarer word counts more; a later passage wins a
-/// tie. None match, none go.
-pub(crate) fn sources(question: &str, earlier: &[Message]) -> Vec<Source> {
-    let wanted = terms(question);
+/// whole) that hold the `wanted` words or phrases best, in the order they
+/// were said, each labelled [E1], [E2]… A rarer one counts more; a later
+/// passage wins a tie. None match, none go.
+pub(crate) fn sources(wanted: &[String], earlier: &[Message]) -> Vec<Source> {
     if wanted.is_empty() {
         return Vec::new();
     }
@@ -212,12 +243,14 @@ pub(crate) fn run_snapshot(run: &wisp_store::RunRecord, now: i64) -> String {
     text.trim_end().to_owned()
 }
 
-/// What the model is sent: the rule, the conversation (and the run the
-/// question is about, when it is about one), the latest earlier exchanges
-/// as they went, and the question.
+/// What the model is sent: the rule (with the scope the question was
+/// classified as), the conversation (and the run the question is about,
+/// when it is about one), the latest earlier exchanges as they went, and
+/// the question.
 fn request(
     messages: &[Message],
     run: Option<&str>,
+    scope: Option<Scope>,
     sources: &[Source],
     earlier: &[Exchange],
     question: &str,
@@ -247,6 +280,9 @@ fn request(
     if run.is_some() {
         system = format!("{system}\n\n{ABOUT_RUN}");
     }
+    if let Some(scope) = scope {
+        system = format!("{system}\n\n{}", scope_instruction(scope));
+    }
     let mut request = vec![
         Message::system(system),
         Message::user(quoted),
@@ -267,19 +303,18 @@ pub(crate) async fn ask(
     model: &dyn Provider,
     messages: &[Message],
     run: Option<&str>,
+    scope: Option<Scope>,
     sources: &[Source],
     earlier: &[Exchange],
     question: &str,
 ) -> Result<String> {
-    let question = question.trim();
-    ensure!(!question.is_empty(), "Type a question first");
-    ensure!(
-        question.chars().count() <= QUESTION_LIMIT,
-        "A side question is at most {QUESTION_LIMIT} characters"
-    );
+    let question = checked_question(question)?;
     let reply = tokio::time::timeout(
         WAIT,
-        model.complete(&request(messages, run, sources, earlier, question), &[]),
+        model.complete(
+            &request(messages, run, scope, sources, earlier, question),
+            &[],
+        ),
     )
     .await
     .context("The model did not answer within two minutes")??;
@@ -305,7 +340,7 @@ mod tests {
     #[test]
     fn the_model_is_sent_the_conversation_then_the_exchanges_then_the_question() {
         let conversation = [Message::user("count the reads"), Message::assistant("100.")];
-        let sent = request(&conversation, None, &[], &[exchange(1)], "why 100?");
+        let sent = request(&conversation, None, None, &[], &[exchange(1)], "why 100?");
         let roles: Vec<_> = sent.iter().map(|message| message.role).collect();
         assert_eq!(
             roles,
@@ -328,7 +363,7 @@ mod tests {
 
         // Only the latest exchanges go along, in the order they went.
         let many: Vec<_> = (0..EARLIER + 3).map(exchange).collect();
-        let sent = request(&[], None, &[], &many, "and now?");
+        let sent = request(&[], None, None, &[], &many, "and now?");
         assert_eq!(sent.len(), 3 + 2 * EARLIER + 1);
         assert_eq!(sent[3].content.as_text(), "q3");
         assert!(sent[1].content.as_text().contains("Nothing has been said"));
@@ -354,10 +389,10 @@ mod tests {
         assert!(snapshot.contains("command:\nbwa mem ref.fa reads.fq"));
         assert!(snapshot.ends_with("stderr tail:\n[E::bwa_idx_load] fail to locate the index"));
         assert!(!snapshot.contains("stdout tail"));
-        let sent = request(&[], Some(&snapshot), &[], &[], "why did it fail?");
+        let sent = request(&[], Some(&snapshot), None, &[], &[], "why did it fail?");
         assert!(sent[0].content.as_text().contains("about the run quoted"));
         assert!(sent[1].content.as_text().contains("<run>\nRun r1"));
-        assert!(!request(&[], None, &[], &[], "q")[1]
+        assert!(!request(&[], None, None, &[], &[], "q")[1]
             .content
             .as_text()
             .contains("<run>"));
@@ -373,7 +408,7 @@ mod tests {
             Message::assistant("The PCA shows batch two apart from the others."),
             Message::user("什么是批次效应"),
         ];
-        let found = sources("Why was batch two apart in the PCA?", &earlier);
+        let found = sources(&terms("Why was batch two apart in the PCA?"), &earlier);
         let labels: Vec<_> = found.iter().map(|source| source.label.as_str()).collect();
         // In the order they were said, the best ones only.
         assert_eq!(labels, ["E1", "E2"]);
@@ -381,18 +416,60 @@ mod tests {
         assert_eq!(found[0].excerpt, "Plot the PCA");
         assert_eq!(found[1].matched, ["batch", "two", "apart", "pca"]);
         // The commonest words find nothing; neither does nothing.
-        assert!(sources("why was it?", &earlier).is_empty());
-        assert!(sources("liver", &[]).is_empty());
+        assert!(sources(&terms("why was it?"), &earlier).is_empty());
+        assert!(sources(&terms("liver"), &[]).is_empty());
         // Chinese is looked up by its character pairs.
-        let chinese = sources("批次效应怎么处理", &earlier);
+        let chinese = sources(&terms("批次效应怎么处理"), &earlier);
         assert_eq!(chinese.len(), 1);
         assert_eq!(chinese[0].excerpt, "什么是批次效应");
         // Passages go after the conversation, and the model is told to cite.
-        let sent = request(&earlier[1..3], None, &found, &[], "why?");
+        let sent = request(&earlier[1..3], None, None, &found, &[], "why?");
         assert!(sent[0].content.as_text().contains("cite its label"));
         assert!(sent[1]
             .content
             .as_text()
             .contains("<earlier_passages>\n[E1] (user)\nPlot the PCA"));
+    }
+
+    #[test]
+    fn a_classified_question_is_looked_up_and_answered_by_its_scope() {
+        let intent = |scope, query_terms: &[&str]| Intent {
+            scope,
+            prefer_recent: true,
+            query_terms: query_terms.iter().map(|term| term.to_string()).collect(),
+        };
+        let question = "What did we decide about the batch correction?";
+        // The classifier's phrases are what is looked for.
+        assert_eq!(
+            lookup_terms(question, &intent(Scope::Lookup, &["batch correction"])),
+            ["batch correction"]
+        );
+        // Without them a lookup or comparison is looked up by its words…
+        assert_eq!(
+            lookup_terms(question, &intent(Scope::Comparison, &[])),
+            terms(question)
+        );
+        // …and a question about the conversation as a whole by none.
+        assert!(lookup_terms(question, &intent(Scope::Session, &[])).is_empty());
+        // A phrase finds the passage that holds it whole.
+        let earlier = [
+            Message::user("Use ComBat for the batch correction."),
+            Message::assistant("Batch two is apart; correction pending."),
+        ];
+        let found = sources(&["batch correction".to_owned()], &earlier);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].excerpt, "Use ComBat for the batch correction.");
+        // The answering model is told the scope, after the rule.
+        let sent = request(&[], None, Some(Scope::Lookup), &[], &[], question);
+        let system = sent[0].content.as_text();
+        assert!(system.starts_with(SYSTEM), "{system}");
+        assert!(
+            system.ends_with(scope_instruction(Scope::Lookup)),
+            "{system}"
+        );
+        // A question is checked before anything is asked.
+        assert_eq!(checked_question("  why?  ").unwrap(), "why?");
+        assert!(checked_question("   ").is_err());
+        assert!(checked_question(&"x".repeat(QUESTION_LIMIT + 1)).is_err());
     }
 }

@@ -26,6 +26,42 @@ pub struct ModelView {
     /// Which compaction the working set is from: 0 before any. Undoing
     /// a compaction names the one that was looked at.
     pub epoch: i64,
+    /// What the latest request of a Wisp turn was made of, tool
+    /// definitions included, while the host still has it; `None` before a
+    /// turn has run since the host started, after a compaction or an undo,
+    /// and for an ACP agent's conversation. `breakdown` then stands alone.
+    pub sent: Option<SentContext>,
+}
+
+/// The WebView's context usage: the latest request's estimated tokens by
+/// kind, as `wisp-core` counted them for the request itself (provider
+/// calibrated, tool schemas at their fixed estimate), with what each kind
+/// holds and, for tools, which tools and where they come from.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SentContext {
+    pub usage: wisp_core::ContextUsage,
+    /// The text and tools behind each kind but the conversation, read from
+    /// the agent when its turn ended; empty while the first turn runs.
+    pub details: wisp_core::ContextUsageDetails,
+    /// The model's context window; 0 when it is not known.
+    pub max_context: usize,
+}
+
+/// What a turn's agent sends, read once the turn is over: its context and
+/// tools as the WebView's usage panel reads its live agent. The latest
+/// request's own split, reported while the turn ran, is kept; an agent
+/// that made no request gives its own estimate.
+pub(crate) fn kept(previous: Option<SentContext>, agent: &wisp_core::Agent) -> SentContext {
+    let (schemas, origins) = agent.tools.schemas_with_origins();
+    let details = agent.ctx.context_usage_details(&schemas, &origins);
+    match previous {
+        Some(sent) if sent.usage.total() > 0 => SentContext { details, ..sent },
+        _ => SentContext {
+            usage: agent.ctx.context_usage(&schemas, &origins),
+            details,
+            max_context: agent.ctx.max_context,
+        },
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -1239,6 +1239,13 @@ pub async fn run(
             .run_with_images(&text, &[], false, &out, Some(&session.cancel), guidance)
             .await;
     }
+    // What the model was sent, with each kind's text and tools, for What
+    // the model is sent, as the WebView reads its agent after a turn.
+    {
+        let mut live = session.live.lock().unwrap();
+        let previous = live.context.take();
+        live.context = Some(crate::model_view::kept(previous, &agent));
+    }
     drop(out);
     wisp_store::join_or_abort_persist(persist, std::time::Duration::from_secs(10)).await??;
     // What the turn's model calls used, for the usage statistics. Written

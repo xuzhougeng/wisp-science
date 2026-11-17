@@ -10,7 +10,8 @@
 //! (or, under auto-safe approval, starts at once when nothing in it asks
 //! for approval), and its result is delivered to that conversation. The
 //! templates are this desktop's own, kept under its own key; the
-//! WebView's (`workflow_templates`) are neither read nor changed.
+//! WebView's (`workflow_templates`) are never changed, and are read only
+//! to bring over those this desktop can hold as they are.
 
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -20,12 +21,12 @@ use wisp_store::Store;
 
 use crate::Server;
 
-const KEY: &str = "desktop.workflows";
+pub(crate) const KEY: &str = "desktop.workflows";
 const NAME_LIMIT: usize = 100;
 const GOAL_LIMIT: usize = 2_000;
 const INSTRUCTION_LIMIT: usize = 8_000;
 pub const TASK_LIMIT: usize = 20;
-const LIMIT: usize = 40;
+pub(crate) const LIMIT: usize = 40;
 /// The most a workflow's context holds, as a delegated batch's.
 const CONTEXT_LIMIT: usize = 11_000;
 
@@ -344,7 +345,7 @@ fn task_ids(tasks: &[WorkflowTask]) -> Vec<String> {
     ids
 }
 
-fn starters() -> Vec<Workflow> {
+pub(crate) fn starters() -> Vec<Workflow> {
     let task = |title: &str, instructions: &str, after: &[usize]| WorkflowTask {
         title: title.into(),
         instructions: instructions.into(),
@@ -428,14 +429,14 @@ pub(crate) async fn list(store: &Store) -> Vec<Workflow> {
     }
 }
 
-async fn save(store: &Store, workflows: &[Workflow]) -> Result<()> {
+pub(crate) async fn save(store: &Store, workflows: &[Workflow]) -> Result<()> {
     store
         .set_setting(KEY, &serde_json::to_string(workflows)?)
         .await
 }
 
 /// Checks a form and gives the workflow it describes, trimmed.
-fn checked(input: &WorkflowInput) -> Result<Workflow> {
+pub(crate) fn checked(input: &WorkflowInput) -> Result<Workflow> {
     let name = input.name.trim();
     ensure!(!name.is_empty(), "Give the workflow a name");
     ensure!(
@@ -584,6 +585,16 @@ struct SourceSelection {
     skill_ids: Vec<String>,
 }
 
+/// A task's title from its id in a proposal: `-` and `_` read as spaces,
+/// and the first letter in capitals.
+pub(crate) fn task_title(id: &str) -> String {
+    let mut title = id.replace(['-', '_'], " ");
+    if let Some(first) = title.get(..1) {
+        title = first.to_uppercase() + &title[1..];
+    }
+    title
+}
+
 /// A converted proposal as a template of this desktop: tasks in an order in
 /// which each needs only tasks before it, titled from their ids, with the
 /// capabilities and agent settings the proposal gave them.
@@ -624,12 +635,8 @@ fn from_proposal(proposal: wisp_dto::DynamicAgentWorkflowProposal, name: &str) -
         .iter()
         .map(|&index| {
             let task = &proposal.tasks[index];
-            let mut title = task.id.replace(['-', '_'], " ");
-            if let Some(first) = title.get(..1) {
-                title = first.to_uppercase() + &title[1..];
-            }
             WorkflowTask {
-                title,
+                title: task_title(&task.id),
                 instructions: task.instruction.clone(),
                 after: task.depends_on.iter().filter_map(|id| place(id)).collect(),
                 capabilities: task

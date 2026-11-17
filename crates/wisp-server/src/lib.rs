@@ -203,6 +203,10 @@ struct Inner {
     delivering: std::sync::Mutex<HashSet<String>>,
     /// Runs moved to the background that a watcher here reports on.
     background_runs: std::sync::Mutex<HashSet<String>>,
+    /// Told each time a Run moved to the background ended and its
+    /// conversation got its message, so the desktop can raise a system
+    /// notification.
+    background_endings: tokio::sync::broadcast::Sender<background_runs::BackgroundRunEnded>,
     /// Conversations whose running turn corrects what an automatic review
     /// found; the review after it is not corrected again.
     corrections: std::sync::Mutex<HashSet<String>>,
@@ -520,6 +524,7 @@ impl Server {
             subagent_resumes: Default::default(),
             delivering: Default::default(),
             background_runs: Default::default(),
+            background_endings: tokio::sync::broadcast::channel(64).0,
             corrections: Default::default(),
             stop_continued: Default::default(),
             to_correct,
@@ -1414,6 +1419,9 @@ impl Server {
         live.proposing = false;
         live.stop_reason = None;
         live.hook_failures.clear();
+        live.recovery = None;
+        // The latest request is this turn's from now on.
+        live.context = None;
         session.suggested.notify_waiters();
         live.calls.clear();
         live.provenance.clear();
@@ -1458,6 +1466,8 @@ impl Server {
         // the turn over, so an exploration can start from its answer at
         // once, while follow-ups and the review are still being asked for.
         drop(activity);
+        // The tabs the turn opened in the browser are closed or offered.
+        self.browser_turn_over(&request.request_id);
         let succeeded = error.is_none();
         let answered = succeeded && side_model.is_some();
         // A timer's turn is not followed by suggestions or a memory
@@ -1472,6 +1482,7 @@ impl Server {
             live.messages.clear();
             live.draft.clear();
             live.reasoning.clear();
+            live.recovery = None;
             live.error = error;
             // Set with the turn's end, so whoever sees the turn over
             // can wait for the questions without missing them.
@@ -1711,6 +1722,17 @@ impl Server {
         Ok(())
     }
 
+    /// Refuses, with the Tauri desktop's words for its native clients, to
+    /// hand off, review or move away a branch frozen as read-only history.
+    /// The rule is the store's, which that desktop shares.
+    pub(crate) async fn ensure_branch_changeable(&self, session: &str) -> Result<()> {
+        ensure!(
+            !self.0.store.session_branch_frozen(session).await?,
+            wisp_store::FROZEN_BRANCH_CHANGE_REFUSAL
+        );
+        Ok(())
+    }
+
     /// Asks the conversation's model what could be asked next and keeps
     /// the answer for the snapshot, unless a newer turn began meanwhile.
     /// A failure costs the user nothing but the suggestions.
@@ -1910,6 +1932,8 @@ impl Server {
                 options.acp_agent.is_empty() && wisp_llm::is_context_overflow_message(error)
             })
             .map(|_| dto::TurnErrorKind::ContextTooLong);
+        // Only while the turn runs: one that ended has nothing to retry.
+        let stream_recovery = live.recovery.clone().filter(|_| live.running);
         let snapshot = dto::Snapshot {
             magpie: None,
             schema: dto::SCHEMA.into(),
@@ -1965,6 +1989,7 @@ impl Server {
             request_id: turn.as_ref().map(|turn| turn.request_id.clone()),
             error,
             error_kind,
+            stream_recovery,
             approval_scopes: approvals
                 .iter()
                 .map(|a| (a.approval_id.clone(), vec![dto::ApprovalScope::Once]))

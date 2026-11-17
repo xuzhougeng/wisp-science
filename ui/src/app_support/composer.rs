@@ -579,14 +579,11 @@ fn message_with_quotes_inner(
             } else if let Some(label) = source.strip_prefix(EXPERIENCE_SOURCE_PREFIX) {
                 out.push_str(&crate::dto::distilled_experience_heading(label));
             } else {
-                let source = prompt_safe_source(source);
-                if quote.workspace_source().is_some() {
-                    out.push_str("Selected excerpt from workspace file `");
-                } else {
-                    out.push_str("Selected excerpt from reference `");
-                }
-                out.push_str(&source);
-                out.push_str("`:\n");
+                // Worded in `wisp-dto` too, which the GPUI desktop's aside shares.
+                out.push_str(&crate::dto::selected_excerpt_heading(
+                    source,
+                    quote.workspace_source().is_some(),
+                ));
             }
         }
         out.push_str(&crate::dto::blockquote_lines(&quote.text));

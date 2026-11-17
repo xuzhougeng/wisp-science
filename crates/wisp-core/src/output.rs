@@ -80,6 +80,20 @@ pub struct StreamRecovery {
     pub discarded_reasoning_bytes: usize,
 }
 
+/// Length of a live `draft` once the `discarded` bytes a failed attempt
+/// streamed into it ([`StreamRecovery::discarded_text_bytes`] or
+/// [`StreamRecovery::discarded_reasoning_bytes`]) are taken off its end.
+/// The deltas were appended whole, so the boundary is exact unless the
+/// counts drifted; snapping to a char boundary keeps `truncate` from
+/// panicking then. Every host that shows a draft drops it the same way.
+pub fn kept_draft_len(draft: &str, discarded: usize) -> usize {
+    let mut keep = draft.len().saturating_sub(discarded);
+    while keep > 0 && !draft.is_char_boundary(keep) {
+        keep -= 1;
+    }
+    keep
+}
+
 pub trait Output: Send + Sync {
     fn assistant_text(&self, _delta: &str) {}
     fn reasoning(&self, _delta: &str) {}
@@ -524,6 +538,21 @@ mod tests {
         );
         // A sink built without a cancel flag never reports cancelled.
         assert!(!StreamSinkAdapter::new(&out).is_cancelled());
+    }
+
+    #[test]
+    fn a_failed_attempts_draft_is_taken_off_the_end_on_a_char_boundary() {
+        let draft = "Kept. Half an ans";
+        assert_eq!(
+            &draft[..kept_draft_len(draft, "Half an ans".len())],
+            "Kept. "
+        );
+        // Nothing streamed, nothing taken; more than there is, everything.
+        assert_eq!(kept_draft_len(draft, 0), draft.len());
+        assert_eq!(kept_draft_len(draft, 999), 0);
+        // A count that drifted into a character keeps the whole character.
+        let wide = "读数é";
+        assert_eq!(&wide[..kept_draft_len(wide, 1)], "读数");
     }
 
     struct AsyncConfirmOutput {

@@ -1,11 +1,14 @@
 //! Bringing the WebView desktop's projects and settings into this one:
 //! where its database is, which of its projects can come, what each group
-//! of its settings is called, and what to say about how it went.
+//! of its settings and each of its lists is called, what of a list would
+//! stay behind and why, and what to say about how it went.
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::i18n::{fill, tr};
-use wisp_server::desktop::{WebViewModel, WebViewOutcome, WebViewProject};
+use wisp_server::desktop::{
+    WebViewGroup, WebViewHold, WebViewModel, WebViewOutcome, WebViewProject,
+};
 
 /// Where the WebView desktop keeps its database under `data`, the
 /// system's application data folder, as Tauri names its folder there.
@@ -118,6 +121,148 @@ pub fn setting_label(group: &str) -> &'static str {
     }
 }
 
+/// What one of the WebView's lists is called here.
+pub fn group_label(group: &str) -> &'static str {
+    match group {
+        "mcp_servers" => tr("Your MCP servers"),
+        "decision_model" => tr("Decision model"),
+        "workflows" => tr("Workflows"),
+        "quick_actions" => tr("Quick actions"),
+        "favorites" => tr("Favorites"),
+        _ => tr("Other lists"),
+    }
+}
+
+/// What of a list comes and what does not, whatever it holds.
+pub fn group_note(group: &str) -> &'static str {
+    match group {
+        "mcp_servers" => tr(
+            "Over HTTP or as a program, switched on or off as they are; the values of their \
+             headers and variables go from the keychain to the keychain.",
+        ),
+        "decision_model" => tr(
+            "Service, model, thinking mode and timeout, switched on or off as it is; each \
+             service's key goes from the keychain to the keychain.",
+        ),
+        "workflows" => tr(
+            "Goal, context, approval and each task with what it needs, may do, its expert, \
+             model tier, worktree, token budget and time limit; their descriptions stay, as \
+             workflows here have none.",
+        ),
+        "quick_actions" => tr(
+            "Each starts its workflow as agents on what you type in the composer, where the \
+             WebView started it on a selected passage; their descriptions and icons stay.",
+        ),
+        "favorites" => tr(
+            "Saved code with its versions, figures with their pictures, and passages; a link \
+             to a conversation that is not here is dropped.",
+        ),
+        _ => "",
+    }
+}
+
+/// The lists ticked when they are first shown: every one that has
+/// something to bring.
+pub fn first_group_picks(groups: &[WebViewGroup]) -> BTreeSet<String> {
+    groups
+        .iter()
+        .filter(|group| !group.items.is_empty())
+        .map(|group| group.group.clone())
+        .collect()
+}
+
+/// The ticked lists that have something to bring, in the order listed.
+pub fn chosen_groups(groups: &[WebViewGroup], picks: &BTreeSet<String>) -> Vec<String> {
+    groups
+        .iter()
+        .filter(|group| !group.items.is_empty() && picks.contains(&group.group))
+        .map(|group| group.group.clone())
+        .collect()
+}
+
+/// The names of what in a list comes without its secret: for the
+/// decision model, its service.
+fn without_secret(group: &WebViewGroup) -> Vec<&str> {
+    group
+        .without_secret
+        .iter()
+        .map(|name| match group.group.as_str() {
+            "decision_model" => crate::decision::preset_label(name),
+            _ => name.as_str(),
+        })
+        .collect()
+}
+
+/// The line under a list's name: how many come, which need a key or value
+/// entered again, how many favorites lose their link, and how many are
+/// left behind.
+pub fn group_detail(group: &WebViewGroup) -> String {
+    let mut parts = Vec::new();
+    match (group.group.as_str(), group.items.first()) {
+        (_, None) => parts.push(tr("Nothing of it can come").to_owned()),
+        ("decision_model", Some(preset)) => {
+            parts.push(crate::decision::preset_label(preset).to_owned())
+        }
+        _ => parts.push(fill(tr("{} to come"), &[&group.items.len()])),
+    }
+    if !group.without_secret.is_empty() {
+        parts.push(fill(
+            tr("keys or values to enter again: {}"),
+            &[&without_secret(group).join(", ")],
+        ));
+    }
+    if group.unlinked > 0 {
+        parts.push(fill(
+            tr("{} unlinked from conversations not here"),
+            &[&group.unlinked],
+        ));
+    }
+    if !group.held.is_empty() {
+        parts.push(fill(tr("{} left behind"), &[&group.held.len()]));
+    }
+    parts.join(" · ")
+}
+
+/// Why something of a list stays behind.
+pub fn hold_reason(hold: &WebViewHold) -> String {
+    match hold {
+        WebViewHold::Unreadable => tr("the WebView's entry could not be read").into(),
+        WebViewHold::OwnFolder => {
+            tr("it starts in a folder of its own, which servers here cannot").into()
+        }
+        WebViewHold::OAuth => tr("it signs in with OAuth, which is not done here").into(),
+        WebViewHold::Activity => tr("a task runs an activity on a host, not an agent").into(),
+        WebViewHold::Skills => tr("a task is bound to skills").into(),
+        WebViewHold::NamedModel => tr("a task runs on a model of its own").into(),
+        WebViewHold::Executor => tr("a task is done by an ACP or other outside agent").into(),
+        WebViewHold::Budget => tr("a task is limited in tool calls or cost").into(),
+        WebViewHold::Capability(capability) => fill(
+            tr("a task may do what agents here are not given: {}"),
+            &[capability],
+        ),
+        WebViewHold::Expert(expert) => fill(
+            tr("a task is done as an expert that is not here: {}"),
+            &[expert],
+        ),
+        WebViewHold::Off => tr("switched off in the WebView; actions here are always on").into(),
+        WebViewHold::BuiltInWorkflow => tr("it starts one of the WebView's own workflows").into(),
+        WebViewHold::NoWorkflow => tr("its workflow does not come").into(),
+        WebViewHold::NameTaken => tr("one here already has its name").into(),
+        WebViewHold::Full => tr("the list here is full").into(),
+        WebViewHold::Refused(why) => crate::i18n::host(why),
+    }
+}
+
+/// One line for what stays behind: its name, when it has one, and why.
+pub fn held_line(name: &str, hold: &WebViewHold) -> String {
+    let why = hold_reason(hold);
+    if name.is_empty() {
+        why
+    } else {
+        format!("{name}: {why}")
+    }
+}
+
 /// What a finished import says, before the reasons for any project left
 /// behind.
 pub fn summary(outcome: &WebViewOutcome) -> String {
@@ -148,7 +293,24 @@ pub fn summary(outcome: &WebViewOutcome) -> String {
             .collect();
         fill(tr("Settings brought over: {}."), &[&names.join(", ")])
     });
-    let lines: Vec<String> = [projects, models, settings].into_iter().flatten().collect();
+    let came: Vec<String> = outcome
+        .groups
+        .iter()
+        .filter(|group| !group.items.is_empty())
+        .map(|group| format!("{} ({})", group_label(&group.group), group.items.len()))
+        .collect();
+    let lists = (!came.is_empty()).then(|| fill(tr("Also brought over: {}."), &[&came.join(", ")]));
+    let again: Vec<&str> = outcome.groups.iter().flat_map(without_secret).collect();
+    let again = (!again.is_empty()).then(|| {
+        fill(
+            tr("Enter their keys or values again in Settings: {}."),
+            &[&again.join(", ")],
+        )
+    });
+    let lines: Vec<String> = [projects, models, settings, lists, again]
+        .into_iter()
+        .flatten()
+        .collect();
     if lines.is_empty() {
         tr("Nothing was brought over.").into()
     } else {
@@ -226,6 +388,7 @@ mod tests {
                 projects,
                 models: Vec::new(),
                 settings: settings.iter().map(|group| (*group).to_owned()).collect(),
+                groups: Vec::new(),
             }
         };
         assert_eq!(
@@ -307,5 +470,92 @@ mod tests {
         for (group, _) in wisp_server::desktop::WEBVIEW_SETTING_GROUPS {
             assert_ne!(setting_label(group), "Other settings", "{group}");
         }
+        for group in wisp_server::desktop::WEBVIEW_LIST_GROUPS {
+            assert_ne!(group_label(group), "Other lists", "{group}");
+            assert!(!group_note(group).is_empty(), "{group}");
+        }
+    }
+
+    fn list(group: &str, items: &[&str]) -> WebViewGroup {
+        WebViewGroup {
+            group: group.into(),
+            items: items.iter().map(|item| (*item).to_owned()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_list_says_what_comes_what_needs_a_secret_and_what_stays() {
+        let mut servers = list("mcp_servers", &["Lab tools", "Papers"]);
+        assert_eq!(group_detail(&servers), "2 to come");
+        servers.without_secret = vec!["Papers".into()];
+        servers.held = vec![
+            ("Signed in".into(), WebViewHold::OAuth),
+            (String::new(), WebViewHold::Unreadable),
+        ];
+        assert_eq!(
+            group_detail(&servers),
+            "2 to come · keys or values to enter again: Papers · 2 left behind"
+        );
+        assert_eq!(
+            held_line("Signed in", &WebViewHold::OAuth),
+            "Signed in: it signs in with OAuth, which is not done here"
+        );
+        assert_eq!(
+            held_line("", &WebViewHold::Unreadable),
+            "the WebView's entry could not be read"
+        );
+        assert_eq!(
+            hold_reason(&WebViewHold::Expert("stats".into())),
+            "a task is done as an expert that is not here: stats"
+        );
+        assert_eq!(
+            hold_reason(&WebViewHold::Refused("Give the server a name".into())),
+            "Give the server a name"
+        );
+
+        let mut decision = list("decision_model", &["typesafe"]);
+        decision.without_secret = vec!["typesafe".into()];
+        assert_eq!(
+            group_detail(&decision),
+            "TypeSafe Jev · keys or values to enter again: TypeSafe Jev"
+        );
+        let mut favorites = list("favorites", &["a", "b", "c"]);
+        favorites.unlinked = 2;
+        assert_eq!(
+            group_detail(&favorites),
+            "3 to come · 2 unlinked from conversations not here"
+        );
+        let mut nothing = list("quick_actions", &[]);
+        nothing.held = vec![("Off one".into(), WebViewHold::Off)];
+        assert_eq!(
+            group_detail(&nothing),
+            "Nothing of it can come · 1 left behind"
+        );
+
+        // Only a list with something to bring is ticked or sent.
+        let groups = [servers, nothing, favorites];
+        let picks = first_group_picks(&groups);
+        assert_eq!(
+            picks.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["favorites", "mcp_servers"]
+        );
+        let ticked: BTreeSet<String> = ["quick_actions", "favorites", "mcp_servers"]
+            .map(String::from)
+            .into();
+        assert_eq!(
+            chosen_groups(&groups, &ticked),
+            ["mcp_servers", "favorites"]
+        );
+
+        let outcome = WebViewOutcome {
+            groups: vec![groups[0].clone(), groups[1].clone(), decision],
+            ..Default::default()
+        };
+        assert_eq!(
+            summary(&outcome),
+            "Also brought over: Your MCP servers (2), Decision model (1). Enter their keys or \
+             values again in Settings: Papers, TypeSafe Jev."
+        );
     }
 }
