@@ -56,6 +56,24 @@ cargo run build-gpui --release
 Output: `apps/gpui/target/debug/wisp-gpui` (`.exe` on Windows), or `release/` for
 optimized builds. Cargo target-directory overrides still apply.
 
+On Windows, the desktop executable reserves 8 MiB for its main thread's stack
+(MSVC and GNU targets). GPUI renders on that thread; the default 1 MiB can be
+exhausted by unoptimized element builders when a conversation opens. This is
+an address-space reservation, not an 8 MiB initial memory commit. The composer
+builds its toolbar sections in separate functions to reduce debug stack usage.
+The Windows regression test inspects the linked executable's PE header without
+starting the application or opening project data.
+
+The Windows title bar draws minimize, maximize/restore and close using the
+component library's native window-control hit areas. Its `window-*` asset paths
+resolve to Wisp's embedded shared SVGs, including the restore icon shown when
+maximized, so the controls remain visible without external icon files.
+
+Opening a project shows “Loading conversations…” until its first list response,
+without a zero count or the empty-project welcome screen. A failed request says
+that conversations could not be loaded; only a successful empty response shows
+“No conversations yet.” Refreshes keep the previous successful list visible.
+
 No configuration is needed to launch:
 
 ```sh
@@ -2023,6 +2041,14 @@ dismissible surface must be added there rather than handling the key itself.
    before making GPUI default or removing `ui/` and `src-tauri/`.
 
 ## Verification
+
+For the Windows conversation-opening regression, after local test permission is
+granted, run `cargo test --locked --manifest-path apps/gpui/Cargo.toml --test windows_stack`
+and the `organise::tests` unit tests. For a separately authorized manual smoke
+check, use a debug build, open a project with existing conversations, and confirm
+the loading state changes into its sidebar and first conversation with a working
+composer. Check an empty project and a project switch as well, and keep the loaded
+conversation open across an activity refresh. No model or network is needed.
 
 Local checks/tests require the permission specified in `AGENTS.md`:
 

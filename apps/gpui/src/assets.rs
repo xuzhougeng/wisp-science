@@ -77,8 +77,21 @@ icons! {
 
 pub struct Assets;
 
+/// The component library draws Windows title-bar controls using these paths.
+/// Resolve them to the shared drawings, just as Wisp's own controls do.
+const COMPONENT_ICON_ALIASES: &[(&str, &str)] = &[
+    ("icons/window-minimize.svg", "icons/minus.svg"),
+    ("icons/window-maximize.svg", "icons/square.svg"),
+    ("icons/window-restore.svg", "icons/copy.svg"),
+    ("icons/window-close.svg", "icons/close.svg"),
+];
+
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        let path = COMPONENT_ICON_ALIASES
+            .iter()
+            .find(|(alias, _)| *alias == path)
+            .map_or(path, |(_, source)| *source);
         Ok(ICONS
             .iter()
             .find(|(name, _)| *name == path)
@@ -88,8 +101,10 @@ impl AssetSource for Assets {
     fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
         Ok(ICONS
             .iter()
-            .filter(|(name, _)| name.starts_with(path))
-            .map(|(name, _)| SharedString::from(*name))
+            .map(|(name, _)| *name)
+            .chain(COMPONENT_ICON_ALIASES.iter().map(|(alias, _)| *alias))
+            .filter(|name| name.starts_with(path))
+            .map(SharedString::from)
             .collect())
     }
 }
@@ -149,7 +164,38 @@ mod tests {
             assert_eq!(Assets.load(name).unwrap().as_deref(), Some(*bytes));
         }
         assert!(Assets.load("icons/missing.svg").unwrap().is_none());
-        assert_eq!(Assets.list("icons/").unwrap().len(), ICONS.len());
+        assert_eq!(
+            Assets.list("icons/").unwrap().len(),
+            ICONS.len() + COMPONENT_ICON_ALIASES.len()
+        );
+    }
+
+    #[test]
+    fn title_bar_control_icons_resolve_through_the_application_asset_source() {
+        use gpui_component::{IconName, IconNamed};
+
+        let listed = Assets.list("icons/window-").unwrap();
+        assert_eq!(listed.len(), 4);
+        let mut drawings = std::collections::HashSet::new();
+        for (icon, shared) in [
+            (IconName::WindowMinimize, "minus"),
+            (IconName::WindowMaximize, "square"),
+            (IconName::WindowRestore, "copy"),
+            (IconName::WindowClose, "close"),
+        ] {
+            // Ask with the library's actual path, not a manually duplicated
+            // path: a library upgrade must not silently leave blank buttons.
+            let path = icon.path();
+            assert!(listed.contains(&path), "missing title-bar asset {path}");
+            let bytes = Assets.load(&path).unwrap().expect("title-bar SVG");
+            assert_eq!(
+                Some(bytes.as_ref()),
+                Assets.load(&icon_path(shared)).unwrap().as_deref()
+            );
+            let drawing = drawing(&bytes);
+            assert!(!drawing.is_empty(), "empty title-bar SVG {path}");
+            assert!(drawings.insert(drawing), "window controls must be distinct");
+        }
     }
 
     /// The table of a font file named `tag`: where it starts and how long
