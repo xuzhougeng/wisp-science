@@ -126,7 +126,7 @@ impl Workspace {
                         .child(
                             surfaces::markdown(
                                 SharedString::from(format!("aside-answer-{index}")),
-                                answer.clone(),
+                                crate::present::answer_markdown(answer).into_owned(),
                                 window,
                                 cx,
                             )

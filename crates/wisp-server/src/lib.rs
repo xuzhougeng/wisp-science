@@ -9,6 +9,7 @@ mod branch_merge;
 mod browser;
 mod browser_filters;
 mod channels;
+pub mod citations;
 mod compact;
 pub mod config;
 mod context_runtime;

@@ -253,8 +253,16 @@ names and never a colour of their own.
   stays.
 - The conversation keeps a reading column (`surfaces::READING_WIDTH`),
   centred in the space the sidebar and the side panel leave. The composer
-  sits in the same column. So do the error and notice lines above the
-  transcript, inset as the bars above the composer are.
+  sits in the same column. So do the bars above the transcript (no model
+  to send with, with Open Settings as an outlined icon and word; an error;
+  a notice with its dismiss button): `surfaces::status_bar` cards at the
+  top of the column with the composer box's edges
+  (`surfaces::above_transcript`), not strips across the centre.
+- Codex's file citations in an answer (`:codex-file-citation{path=…}`)
+  are drawn as links named after the file (`present::answer_markdown`,
+  `wisp_server::citations`), in the transcript, the side chat,
+  favourites, the exported document and the shared page; an absolute path
+  links as a `file:` address, which the system opens.
 - What waits between the transcript and the composer (approvals and plans
   to approve, the line about a review, hooks that failed, a drafted memory,
   the questions to ask next, the transfer tray) and the composer's own
@@ -281,15 +289,17 @@ names and never a colour of their own.
   review, bring back (on a branch), research archive, save as skill;
   archive and delete. Group and Move open beside it, and the outline opens
   in its place. Nothing is listed across the page.
-- **The transcript is a record of entries** (`surfaces::entry_row`). Each of
-  the user's messages opens an entry: a 64 px gutter at the left holds
-  `№ n` and the time (Facts; the time when the message has one), and the
-  content column's left edge is the record line, which every row draws
-  through its own height so it runs without a gap (space between rows is
-  padding inside them). An entry has a hollow ink dot on the line at its
-  question's first line; the entry whose turn runs has a solid teal one.
-  `n` counts the user's messages from 1 in the rows the view holds
-  (`present::entry_number`, the one place it is counted).
+- **The transcript is a record of entries** (spec §7.2), with no gutter
+  and no vertical line: everything shares the reading column's text edges
+  (`surfaces::ENTRY_TEXT`, 24 px in from each side). Each of the user's
+  messages opens an entry with one head line (`surfaces::entry_head`):
+  `№ n` and the time in faded fact text on the text edge; the entry whose
+  turn runs has a solid 7 px teal dot before the number. A hairline across
+  the text column (`entry_rule`, theme `border`) with 14 px above and below
+  (`ENTRY_SPACE`) separates an entry from the one before; none before the
+  first. The question row draws both, so the list measures them. `n`
+  counts the user's messages from 1 (`present::entry_number`, the one place
+  it is counted).
 - **The question** is the user's message, left-aligned on the paper with no
   bubble or fill (`surfaces::question`): a Title (regular) when it is short, one
   paragraph of at most 120 characters (a Chinese character counts as one,
@@ -298,9 +308,8 @@ names and never a colour of their own.
   it carried (files, conversations and skills) stays under it; its actions
   lie over its top right corner and take no line.
 - **Rhythm in an entry**: 8 px from the question to what follows, 8 px
-  between a paragraph and a group of record rows either way, and 28 px from
-  the end of one entry to the next question (less the row of actions an
-  answer ends on).
+  between a paragraph and a group of record rows either way, and between
+  entries 14 px, the hairline, 14 px, then the next entry's head.
 - **Tool calls are record rows** (`record_row`), consecutive ones one group:
   the icon of what they work on (`present::tool_icon`: run `flask`, file
   `doc`, command `terminal`, approval `hand`, search `search`, another agent
@@ -356,21 +365,13 @@ names and never a colour of their own.
   line of them stands between the text and what follows.
 - **The composer** is one white box (`radius_lg`, the `input.border` line,
   the teal ring on focus): the text on top, one line of controls under it.
-  It is attached to the record line (spec §7.3): its left border is on the
-  line, past the 64 px gutter, and its right border is where answers and
-  record rows end (`ENTRY_RIGHT`, 24 px short of the column). Its text,
-  chips and the `+` icon start where an answer's text does (`ENTRY_TEXT`
-  past the line; the `+` button reaches `ICON_INSET` left of it); the send
-  button keeps the box's 8 px inset. The line runs unbroken down to the
-  box's top border (behind a short transcript too, `record_line_behind`)
-  and not beside or below it. The gutter beside the box's first line holds
-  the next entry's number in faded fact text (`present::next_entry_number`),
-  nothing where the conversation cannot be written to. The bars above it
-  and the composer's own strips are cards beside the line with the box's
-  edges. All of it goes through `surfaces::entry_aligned`. In a split
-  beside a document narrower than 420 px (`GUTTER_COLUMN_MIN`) the gutter
-  and the numbers are left out and the line is the column's left edge;
-  the box stays on it.
+  Its text, chips and the `+` icon are on the answers' text edge, and
+  the box is wider than the text by its own padding (`BOX_PAD`, 12 px)
+  and its border on each side (spec §7.3); the `+` button reaches
+  `ICON_INSET` left of the edge, and the send button keeps the 12 px inset
+  on the right. No number beside or inside it. The bars above it and the
+  composer's own strips take exactly the box's edges; all of them go
+  through `surfaces::column_box`.
   - At the left end a `+` icon button opens a menu (`Layer::PlusMenu`) of
     what can be put into the message, each an icon and a word with its key
     in fact text: attach files, add a project file, conversation or skill

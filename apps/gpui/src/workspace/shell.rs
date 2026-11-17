@@ -921,11 +921,10 @@ impl Workspace {
         div().w_full().px_6().py_2().child(card).into_any_element()
     }
 
-    /// One transcript row as part of the record (`surfaces::entry_row`): a
-    /// message of the user's opens an entry, with its number and time in the
-    /// gutter and its dot on the record line. The cards of runs no row names
-    /// are placed with it: above a message of yours sent after the run was
-    /// made, or below the last row.
+    /// One transcript row. A message of the user's opens an entry with its
+    /// head (`row_body`). The cards of runs no row names are placed with
+    /// it: above a message of yours sent after the run was made, or below
+    /// the last row.
     pub(super) fn row(
         &self,
         index: usize,
@@ -933,8 +932,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         // An answer with no text (the turn went on to a tool) draws nothing
-        // at all: not even the entry's gutter, whose top inset would leave a
-        // gap in the record.
+        // at all, so it leaves no gap.
         if self
             .rows
             .get(index)
@@ -944,66 +942,17 @@ impl Workspace {
             return div().into_any_element();
         }
         let body = self.row_body(index, window, cx);
-        let gutter = self.entry_gutter();
-        let number = present::entry_number(&self.rows, index, self.earlier_users);
-        let time = number
-            .and_then(|_| self.rows.get(index)?.timestamp)
-            .map(|at| crate::home::clock(unix_now(), at))
-            .filter(|time| !time.is_empty())
-            .map(SharedString::from);
-        let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
-        let dot = match number {
-            None => surfaces::EntryDot::None,
-            Some(_) if running && present::latest_entry(&self.rows) == Some(index) => {
-                surfaces::EntryDot::Live
-            }
-            Some(_) => surfaces::EntryDot::Open,
-        };
         if !self.own_run_cards.contains_key(&index) {
-            return surfaces::entry_row(number, time, dot, body, gutter, cx).into_any_element();
+            return body;
         }
         let (above, below) = self.own_run_cards_at(index, window, cx);
-        let above = (!above.is_empty()).then(|| {
-            surfaces::entry_row(
-                None,
-                None,
-                surfaces::EntryDot::None,
-                div().w_full().v_flex().children(above).into_any_element(),
-                gutter,
-                cx,
-            )
-        });
         div()
             .w_full()
             .v_flex()
             .children(above)
-            .child(surfaces::entry_row(
-                number,
-                time,
-                dot,
-                div()
-                    .w_full()
-                    .v_flex()
-                    .child(body)
-                    .children(below)
-                    .into_any_element(),
-                gutter,
-                cx,
-            ))
+            .child(body)
+            .children(below)
             .into_any_element()
-    }
-
-    /// Whether the conversation's column keeps the gutter for entry numbers:
-    /// always, but in a split beside a document narrower than
-    /// `surfaces::GUTTER_COLUMN_MIN`, where the line is the column's edge.
-    pub(super) fn entry_gutter(&self) -> bool {
-        if !self.centre.split_shown(self.state.session.as_deref()) {
-            return true;
-        }
-        self.centre_width.get().is_none_or(|width| {
-            crate::centre::split_widths(width, self.centre.chat_width).1
-                >= surfaces::GUTTER_COLUMN_MIN
-        })
     }
 
     /// Whether row `index` is drawn as a record row: a tool call (not a
@@ -1090,20 +1039,6 @@ impl Workspace {
         )
     }
 
-    /// How far a row of the user's stands below what comes before it: the
-    /// space between entries (28 px), less the row of actions an answer
-    /// already ends on; the first row stands close to the top.
-    fn entry_gap(&self, index: usize) -> Pixels {
-        let Some(before) = index.checked_sub(1).and_then(|at| self.rows.get(at)) else {
-            return px(8.);
-        };
-        let answer = !matches!(
-            before.role.as_str(),
-            "user" | "tool" | "reasoning" | "review" | "branch_merge" | "compaction"
-        ) && !before.text.trim().is_empty();
-        if answer { px(4.) } else { px(28.) }
-    }
-
     /// A record row in the transcript, inset as the answers are; the first
     /// of a run of them carries the group's hairline above it.
     fn transcript_record(
@@ -1145,8 +1080,26 @@ impl Workspace {
         match item.role.as_str() {
             "user" => {
                 let text = compose::user_text(item);
-                // Its actions lie over its top right corner, so they take
-                // no height under the question.
+                // An entry opens with a hairline (none before the first),
+                // then its head: `№ n`, its time, the live dot. The row
+                // draws both, so the list measures them with it.
+                let first = index == 0;
+                let number = present::entry_number(&self.rows, index, self.earlier_users);
+                let time = item
+                    .timestamp
+                    .map(|at| crate::home::clock(unix_now(), at))
+                    .filter(|time| !time.is_empty())
+                    .map(SharedString::from);
+                let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
+                let live = running && present::latest_entry(&self.rows) == Some(index);
+                let space = px(surfaces::ENTRY_SPACE);
+                // Where the head stands from the row's top: its actions lie
+                // over its right end, so they take no height.
+                let head_top = if first {
+                    px(8.)
+                } else {
+                    space + px(1.) + space
+                };
                 let mut message = div()
                     .group(MESSAGE)
                     .relative()
@@ -1154,8 +1107,12 @@ impl Workspace {
                     .v_flex()
                     .items_start()
                     .gap_1()
-                    .px_6()
-                    .pt(self.entry_gap(index));
+                    .px(px(surfaces::ENTRY_TEXT))
+                    .pt(if first { px(8.) } else { space })
+                    .when(!first, |message| {
+                        message.child(surfaces::entry_rule(cx).mb(space - px(4.)))
+                    })
+                    .child(surfaces::entry_head(number, time, live, cx));
                 if !text.is_empty() {
                     // A question past three lines is folded until opened.
                     let key = format!("question-{}", present::tool_key(item, index));
@@ -1221,8 +1178,8 @@ impl Workspace {
                     .child(
                         self.message_actions(index, true, cx)
                             .absolute()
-                            .top(self.entry_gap(index))
-                            .right_6(),
+                            .top(head_top - px(5.))
+                            .right(px(surfaces::ENTRY_TEXT)),
                     )
                     .into_any_element()
             }
@@ -1423,9 +1380,17 @@ impl Workspace {
                     .gap_1()
                     .px_6()
                     .pt_2()
-                    .child(div().font(surfaces::body_face(cx)).child(
-                        surfaces::markdown(id, item.text.clone(), window, cx).selectable(true),
-                    ))
+                    .child(
+                        div().font(surfaces::body_face(cx)).child(
+                            surfaces::markdown(
+                                id,
+                                present::answer_markdown(&item.text).into_owned(),
+                                window,
+                                cx,
+                            )
+                            .selectable(true),
+                        ),
+                    )
                     .children(self.inline_pictures(&item.text, cx))
                     .children(self.written_pictures(index, cx))
                     .children(self.generated_section(index, cx))
@@ -2590,17 +2555,9 @@ impl Workspace {
             .and_then(|status| status.usage.as_ref());
 
         // The composer's strips (console, usage, thinking, plan, the
-        // read-only card) and its box are laid on the record line
-        // (`surfaces::entry_aligned`): the strips beside the line, the box
-        // with its left border on it and the next entry's number in the
-        // gutter beside its first line.
-        let gutter = self.entry_gutter();
-        // No line before the first entry: nothing is on the record yet.
-        let strips = surfaces::EntryPlace {
-            gutter,
-            number: None,
-            line: !self.rows.is_empty(),
-        };
+        // read-only card) and its box take the box's edges
+        // (`surfaces::column_box`): its text on the answers' text edge,
+        // the box outside it by its own padding.
         let mut area = div().v_flex().gap_2().pt_2().pb_2();
         if let Some(console) = self.render_console(cx) {
             area = area.child(console);
@@ -2754,10 +2711,8 @@ impl Workspace {
                 .v_flex()
                 .flex_shrink_0()
                 .pb_4()
-                .child(surfaces::entry_aligned(
+                .child(surfaces::column_box(
                     area.child(self.read_only_card(&why, cx)),
-                    strips,
-                    cx,
                 ));
         }
         if self.layers.contains(Layer::ConfirmFullAccess) {
@@ -2790,14 +2745,14 @@ impl Workspace {
             );
         }
         // The text, the chips and the `+` icon start where an answer's
-        // text does (`ENTRY_TEXT` past the line); the send button keeps
-        // the box's own inset on the right.
+        // text does: the box is wider than the text by its own padding
+        // (`BOX_PAD`) on each side; the send button keeps that inset on
+        // the right.
         let mut editor = div()
             .v_flex()
             .gap_1()
             .py_2()
-            .pl(px(surfaces::ENTRY_TEXT))
-            .pr_2()
+            .px(px(surfaces::BOX_PAD))
             .rounded(cx.theme().radius_lg)
             .border_1()
             .border_color(cx.theme().input)
@@ -2820,7 +2775,6 @@ impl Workspace {
             }
             editor = editor.child(chips);
         }
-        let next = present::next_entry_number(&self.rows, self.earlier_users, true);
         let editor =
             editor
                 .child(
@@ -2867,16 +2821,8 @@ impl Workspace {
             .v_flex()
             .flex_shrink_0()
             .pb_4()
-            .child(surfaces::entry_aligned(area, strips, cx))
-            .child(surfaces::entry_aligned(
-                editor,
-                surfaces::EntryPlace {
-                    gutter,
-                    number: next,
-                    line: false,
-                },
-                cx,
-            ))
+            .child(surfaces::column_box(area))
+            .child(surfaces::column_box(editor))
     }
 
     /// The composer's `+` menu: first what can be put into the message
@@ -3092,27 +3038,21 @@ impl Workspace {
         }
         if !self.settings.configured() {
             let attention = tone_color(Tone::Attention, cx);
-            content = content.child(
-                div()
-                    .h_flex()
-                    .gap_3()
-                    .px_4()
-                    .py_2()
-                    .flex_shrink_0()
-                    .bg(attention.opacity(0.08))
-                    .child(icon("circle-alert").text_color(attention))
-                    .child(div().flex_1().text_sm().child(tr(
-                        "No model is configured, so messages cannot be sent yet.",
-                    )))
-                    .child(
-                        Button::new("configure-model")
-                            .label(tr("Open Settings"))
-                            .small()
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.open_settings(window, cx)),
-                            ),
-                    ),
-            );
+            content = content.child(surfaces::above_transcript(
+                surfaces::status_bar(
+                    "no-model",
+                    "circle-alert",
+                    attention,
+                    tr("No model is configured, so messages cannot be sent yet."),
+                    cx,
+                )
+                .child(
+                    surfaces::outlined_action("configure-model", "gear", tr("Open Settings"), cx)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_settings(window, cx)),
+                        ),
+                ),
+            ));
         }
         // A turn refused as too long is said by its bar above the composer,
         // with the ways on; its raw error shows again once paused on.
@@ -3125,13 +3065,36 @@ impl Workspace {
         if let Some(error) = self.error.as_ref().or(turn_error) {
             // In the transcript's column, inset as the bars above the
             // composer are, so their edges line up.
-            content = content.child(surfaces::reading_column(
-                div().px_4().pt_2().child(error_banner(error, cx)),
-            ));
+            content = content.child(surfaces::above_transcript(surfaces::status_bar(
+                "transcript-error",
+                "circle-alert",
+                cx.theme().danger,
+                crate::i18n::host(error),
+                cx,
+            )));
         }
         if let Some(notice) = &self.notice {
-            content = content.child(surfaces::reading_column(
-                div().px_4().pt_2().child(self.notice_banner(notice, cx)),
+            content = content.child(surfaces::above_transcript(
+                surfaces::status_bar(
+                    "transcript-notice",
+                    "circle-check",
+                    cx.theme().success,
+                    notice.clone(),
+                    cx,
+                )
+                .child(
+                    surfaces::icon_action(
+                        "notice-close",
+                        "close",
+                        tr("Dismiss"),
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.notice = None;
+                        cx.notify();
+                    })),
+                ),
             ));
         }
         if self.state.session.is_none() {
@@ -3216,33 +3179,27 @@ impl Workspace {
         } else {
             px(0.)
         };
-        content =
-            content.child(
-                div()
-                    .relative()
+        content = content.child(
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .pr(margin)
+                .child(
+                    // Every row keeps the reading column, centred in what the
+                    // sidebar and the side panel leave.
+                    list(self.list.clone(), move |index, window, cx| {
+                        weak.update(cx, |this, cx| this.found_row(index, window, cx))
+                            .map(|row| surfaces::reading_column(row).into_any_element())
+                            .unwrap_or_else(|_| div().into_any_element())
+                    })
                     .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .pr(margin)
-                    // The record line under a short transcript too, down to
-                    // the bars and the composer.
-                    .children((!self.rows.is_empty()).then(|| {
-                        surfaces::record_line_behind(self.entry_gutter(), cx).right(margin)
-                    }))
-                    .child(
-                        // Every row keeps the reading column, centred in what the
-                        // sidebar and the side panel leave.
-                        list(self.list.clone(), move |index, window, cx| {
-                            weak.update(cx, |this, cx| this.found_row(index, window, cx))
-                                .map(|row| surfaces::reading_column(row).into_any_element())
-                                .unwrap_or_else(|_| div().into_any_element())
-                        })
-                        .flex_1()
-                        .min_h_0(),
-                    )
-                    .children(pet),
-            );
+                    .min_h_0(),
+                )
+                .children(pet),
+        );
         // What waits on the user between the transcript and the composer
         // keeps the composer's column, with its edges on the composer box's.
         let bars = [
@@ -3269,8 +3226,6 @@ impl Workspace {
         let content = content
             .children(surfaces::above_composer(
                 bars.into_iter().flatten().collect(),
-                self.entry_gutter(),
-                cx,
             ))
             .child(surfaces::reading_column(self.render_composer(running, cx)).flex_shrink_0());
         // A document opened in the centre takes the conversation's place,

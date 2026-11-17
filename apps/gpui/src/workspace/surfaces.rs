@@ -767,192 +767,69 @@ pub(super) fn record_group(rows: impl IntoIterator<Item = RecordRow>, cx: &App) 
         .children(rows)
 }
 
-/// The width of the transcript's gutter, where an entry's number and time
-/// stand left of the record line.
-pub(super) const ENTRY_GUTTER: f32 = 64.;
-
-/// Where the first line of a question sits in its row, from the row's top:
-/// the row's padding and half a line of the title face. The gutter's
-/// number and the dot on the line are set against it.
-const ENTRY_FIRST_LINE: f32 = 8. + 13.;
-
-/// The dot an entry has on the record line.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum EntryDot {
-    /// Not the start of an entry: the line runs past.
-    None,
-    /// An entry: a hollow ink dot.
-    Open,
-    /// The entry whose turn is running: a solid teal dot.
-    Live,
-}
-
-/// One row of the transcript as part of the record: the gutter at the left,
-/// with the entry's number and time when the row opens one; then the
-/// content column, whose left edge is the record line. Every row draws its
-/// own stretch of the line through its full height, so the line runs
-/// through the transcript without a gap; space between rows is padding
-/// inside them. An entry's dot sits on the line at the question's first
-/// line.
-pub(super) fn entry_row(
-    number: Option<usize>,
-    time: Option<SharedString>,
-    dot: EntryDot,
-    content: AnyElement,
-    gutter: bool,
-    cx: &App,
-) -> Div {
-    let theme = cx.theme();
-    // In a column too narrow for it (`entry_gutter`), no gutter: the line
-    // is the column's left edge, and the number and time are left out.
-    let (number, time) = if gutter { (number, time) } else { (None, None) };
-    let gutter = div()
-        .flex_none()
-        .w(px(if gutter { ENTRY_GUTTER } else { 0. }))
-        .v_flex()
-        .items_end()
-        .when(gutter, |gutter| gutter.pr_3().pt(px(ENTRY_FIRST_LINE - 9.)))
-        .children(number.map(|number| fact(entry_label(number), cx)))
-        .children(time.map(|time| fact(time, cx)));
-    const DOT: f32 = 9.;
-    let dot = (dot != EntryDot::None).then(|| {
-        let (fill, line) = match dot {
-            EntryDot::Live => (theme.primary, theme.primary),
-            _ => (theme.background, theme.foreground),
-        };
-        div()
-            .absolute()
-            .top(px(ENTRY_FIRST_LINE - DOT / 2.))
-            .left(px(0.5 - DOT / 2.))
-            .size(px(DOT))
-            .rounded_full()
-            .border_1()
-            .border_color(line)
-            .bg(fill)
-    });
-    // A plain flex row: its children stretch to its height, so the line
-    // runs from top to bottom.
-    div().w_full().flex().child(gutter).child(
-        div()
-            .relative()
-            .flex_1()
-            .min_w_0()
-            .border_l_1()
-            .border_color(theme.border)
-            .child(content)
-            .children(dot),
-    )
-}
-
-/// How far the content of an entry, and what is laid on the record line
-/// with it, stops short of the reading column's right edge: an answer's
-/// `px_6`, a record row's `pr_6`, the composer's and the bars' right edge.
-pub(super) const ENTRY_RIGHT: f32 = 24.;
-
-/// How far an answer's text stands right of the record line (its `px_6`),
-/// and so the composer's text inside its box.
+/// How far the text of the transcript stands inside the reading column,
+/// on both sides: a question's and an answer's `px_6`, and a record row's
+/// `pl(20)` plus its own 4 px inset. The column's text edges.
 pub(super) const ENTRY_TEXT: f32 = 24.;
 
 /// How far a toolbar icon stands inside its icon button (`icon_action`):
 /// half of what the button is wider than the icon.
 pub(super) const ICON_INSET: f32 = (ICON_BUTTON - IconSize::Toolbar.px()) / 2.;
 
-/// The narrowest conversation column that keeps the gutter: in a narrower
-/// one (a split beside a document) the line is the column's left edge.
-pub(super) const GUTTER_COLUMN_MIN: f32 = 420.;
+/// The composer box's own inner padding at the left and the right: the
+/// box stands this far (and its 1 px border) outside the text edges, and
+/// so do the bars above it.
+pub(super) const BOX_PAD: f32 = 12.;
 
-/// Where the composer's first line of text sits below the box's top, for
-/// the gutter's number: the border, the box's `p_2` and the input's own
-/// 8 px, less the fact's slightly shorter line.
-const COMPOSER_FIRST_LINE: f32 = 1. + 8. + 8. + 1.;
-
-/// How something is laid on the record line with the transcript's rows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct EntryPlace {
-    /// Whether the column keeps its gutter (`GUTTER_COLUMN_MIN`).
-    pub gutter: bool,
-    /// The number in the gutter, beside the composer's first line.
-    pub number: Option<usize>,
-    /// Whether the record line runs down beside it. The composer's box
-    /// does not: its own left border is where the line ends.
-    pub line: bool,
-}
+/// The space above and below the hairline between two entries.
+pub(super) const ENTRY_SPACE: f32 = 14.;
 
 /// What sits between the transcript and the composer (`surfaces::bar`
 /// items, the composer's strips, the read-only card), and the composer's
-/// box, on the record line: past the gutter, the left edge on the line,
-/// the right edge `ENTRY_RIGHT` short of the column's, as the rows above
-/// are laid. The one place these edges are set, so the line, the box and
-/// the answers' text cannot drift apart.
-pub(super) fn entry_aligned(content: impl IntoElement, place: EntryPlace, cx: &App) -> Div {
-    let gutter = div()
-        .flex_none()
-        .w(px(if place.gutter { ENTRY_GUTTER } else { 0. }))
-        .v_flex()
-        .items_end()
-        .when(place.gutter, |gutter| {
-            gutter.pr_3().pt(px(COMPOSER_FIRST_LINE))
-        })
-        .children(
-            place
-                .number
-                .filter(|_| place.gutter)
-                .map(|number| fact(entry_label(number), cx)),
-        );
-    let line = place.line.then(|| {
-        div()
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .left_0()
-            .w(px(1.))
-            .bg(cx.theme().border)
-    });
-    div().w_full().flex().child(gutter).child(
-        div()
-            .relative()
-            .flex_1()
-            .min_w_0()
-            .mr(px(ENTRY_RIGHT))
-            .children(line)
-            .child(content),
-    )
-}
-
-/// The record line behind the transcript's list, so it runs on through
-/// the space under a short transcript down to the bars and the composer.
-/// The rows draw their own stretch on the same x.
-pub(super) fn record_line_behind(gutter: bool, cx: &App) -> Div {
+/// box, in the reading column: wider than the text by the box's inner
+/// padding (`BOX_PAD`) and its border on each side, so the composer's text
+/// is on the answers' text edges. The one place these edges are set.
+pub(super) fn column_box(content: impl IntoElement) -> Div {
     div()
-        .absolute()
-        .top_0()
-        .bottom_0()
-        .left_0()
-        .right_0()
-        .flex()
-        .justify_center()
-        .child(
-            div()
-                .w_full()
-                .max_w(px(READING_WIDTH))
-                .h_full()
-                .flex()
-                .child(
-                    div()
-                        .flex_none()
-                        .w(px(if gutter { ENTRY_GUTTER } else { 0. })),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .h_full()
-                        .border_l_1()
-                        .border_color(cx.theme().border),
-                ),
-        )
+        .w_full()
+        .px(px(ENTRY_TEXT - BOX_PAD - 1.))
+        .child(content)
 }
 
-/// How an entry's number is written in the gutter.
+/// The line an entry opens with, above its question: `№ n` and its time in
+/// faded fact text on the text edge; the entry whose turn runs has a solid
+/// teal dot before the number.
+pub(super) fn entry_head(
+    number: Option<usize>,
+    time: Option<SharedString>,
+    live: bool,
+    cx: &App,
+) -> Div {
+    const DOT: f32 = 7.;
+    div()
+        .h_flex()
+        .items_center()
+        .gap_2()
+        .when(live, |head| {
+            head.child(
+                div()
+                    .flex_none()
+                    .size(px(DOT))
+                    .rounded_full()
+                    .bg(cx.theme().primary),
+            )
+        })
+        .children(number.map(|number| fact(entry_label(number), cx)))
+        .children(time.map(|time| fact(time, cx)))
+}
+
+/// The hairline between two entries, across the text column; the question
+/// row draws it at its top, with `ENTRY_SPACE` above and below.
+pub(super) fn entry_rule(cx: &App) -> Div {
+    div().w_full().flex_none().h(px(1.)).bg(cx.theme().border)
+}
+
+/// How an entry's number is written in its head.
 pub(super) fn entry_label(number: usize) -> String {
     format!("№ {number}")
 }
@@ -1648,20 +1525,38 @@ pub(super) fn bar(id: impl Into<ElementId>, cx: &App) -> Stateful<Div> {
     card(id, cx).flex_shrink_0().px_3().py_2()
 }
 
+/// A bar that says one thing: its status icon in `tone`'s colour and the
+/// sentence; the caller adds its one action (an outlined icon and word, or
+/// an icon button to dismiss).
+pub(super) fn status_bar(
+    id: impl Into<ElementId>,
+    icon: &str,
+    tone: Hsla,
+    sentence: impl Into<SharedString>,
+    cx: &App,
+) -> Stateful<Div> {
+    bar(id, cx)
+        .h_flex()
+        .items_center()
+        .gap_2()
+        .child(crate::assets::icon(icon).flex_none().text_color(tone))
+        .child(div().flex_1().min_w_0().text_sm().child(sentence.into()))
+}
+
+/// What is said above the transcript (no model to send with, an error, a
+/// notice): bars at the top of the reading column, with the composer
+/// box's edges (`column_box`), not across the whole centre.
+pub(super) fn above_transcript(bar: impl IntoElement) -> Div {
+    reading_column(column_box(div().pt_2().child(bar))).flex_shrink_0()
+}
+
 /// Stacks the bars that sit between the transcript and the composer in the
-/// conversation's reading column, on the record line (`entry_aligned`),
-/// so their edges are the composer box's at any width.
-pub(super) fn above_composer(bars: Vec<AnyElement>, gutter: bool, cx: &App) -> Option<Div> {
+/// conversation's reading column, with the composer box's edges
+/// (`column_box`) at any width.
+pub(super) fn above_composer(bars: Vec<AnyElement>) -> Option<Div> {
     (!bars.is_empty()).then(|| {
-        // Cards beside the record line, which runs on past them.
-        reading_column(entry_aligned(
-            div().v_flex().gap_2().pt_2().pb_2().children(bars),
-            EntryPlace {
-                gutter,
-                number: None,
-                line: true,
-            },
-            cx,
+        reading_column(column_box(
+            div().v_flex().gap_2().pt_2().pb_1().children(bars),
         ))
         .flex_shrink_0()
     })
@@ -2544,23 +2439,28 @@ mod tests {
         }
     }
 
-    /// The composer attaches to the record line: one helper lays the bars,
-    /// the composer's strips and its box on the line, so the line, the
-    /// box's edges and the answers' text cannot drift apart again.
+    /// The composer's text is on the answers' text edge and its box is wider
+    /// than the text by its own padding on each side; the bars above take
+    /// the box's edges. One helper sets them, so they cannot drift apart.
     #[test]
-    fn the_composer_and_the_bars_are_laid_on_the_record_line() {
-        // The edges, from the column's left, at the full reading width.
-        let line = super::ENTRY_GUTTER;
-        let answer_text = line + 1. + 24.; // an answer's `px_6`
-        let box_text = line + 1. + super::ENTRY_TEXT;
-        assert_eq!(box_text, answer_text);
-        assert_eq!(READING_WIDTH - super::ENTRY_RIGHT, READING_WIDTH - 24.); // `pr_6`
+    fn the_composer_and_the_bars_share_the_box_edges_around_the_text() {
+        // From the reading column's left at its full width.
+        let text = super::ENTRY_TEXT; // a question's and an answer's `px_6`
+        assert_eq!(text, 24.);
+        let box_left = text - super::BOX_PAD - 1.;
+        let box_right = READING_WIDTH - box_left;
+        // The text inside the box: its border and its padding past the box.
+        assert_eq!(box_left + 1. + super::BOX_PAD, text);
+        assert_eq!(box_right - 1. - super::BOX_PAD, READING_WIDTH - text);
         // The `+` icon on the text edge, its hit area to the left.
         assert_eq!(
             super::ICON_INSET,
             (ICON_BUTTON - IconSize::Toolbar.px()) / 2.
         );
         let squeeze = |text: &str| -> String { text.split_whitespace().collect() };
+        let box_fn =
+            squeeze(free_function(code(include_str!("surfaces.rs")), "column_box").unwrap());
+        assert!(box_fn.contains(".px(px(ENTRY_TEXT-BOX_PAD-1.))"));
         let files = sources();
         let shell = &files
             .iter()
@@ -2568,31 +2468,23 @@ mod tests {
             .unwrap()
             .1;
         let composer = squeeze(method(shell, "render_composer").unwrap());
-        assert_eq!(composer.matches("surfaces::entry_aligned(").count(), 3);
-        assert!(!composer.contains(".px_4()"));
-        assert!(composer.contains(".pl(px(surfaces::ENTRY_TEXT))"));
+        assert_eq!(composer.matches("surfaces::column_box(").count(), 3);
+        assert!(composer.contains(".px(px(surfaces::BOX_PAD))"));
         assert!(composer.contains(".px_0()"));
-        assert!(
-            composer.contains("present::next_entry_number(&self.rows,self.earlier_users,true)")
-        );
+        // No number outside or inside the box.
+        assert!(!composer.contains("entry_number") && !composer.contains("entry_label"));
         let plus = squeeze(method(shell, "render_composer_plus").unwrap());
         assert!(plus.contains(".ml(px(-surfaces::ICON_INSET))"));
-        // The bars go through the same helper, and the line runs behind the
-        // transcript down to them.
+        // The bars go through the same helper.
         let stacked = squeeze(method(include_str!("surfaces.rs"), "above_composer").unwrap());
-        assert!(stacked.contains("reading_column(entry_aligned("));
-        let conversation = squeeze(method(shell, "render_conversation").unwrap());
-        assert!(conversation.contains("surfaces::record_line_behind(self.entry_gutter(),cx)"));
-        // The rows take the same gutter rule.
-        let row = squeeze(method(shell, "row").unwrap());
-        assert_eq!(row.matches("gutter,cx").count(), 3);
-        assert!(super::GUTTER_COLUMN_MIN < READING_WIDTH);
+        assert!(stacked.contains("reading_column(column_box("));
     }
 
     #[test]
-    fn the_banners_above_the_transcript_keep_its_column() {
-        // The error and the notice line up with the transcript and the bars
-        // above the composer: the reading column, with the composer's inset.
+    fn the_bars_above_the_transcript_keep_its_column_and_the_box_edges() {
+        // No model, an error and a notice are bars at the top of the
+        // reading column, with the composer box's edges, not strips across
+        // the centre.
         let files = sources();
         let (_, shell) = files
             .iter()
@@ -2600,17 +2492,29 @@ mod tests {
             .expect("shell.rs");
         let conversation: String = method(shell, "render_conversation")
             .unwrap()
-            .chars()
-            .filter(|ch| !ch.is_whitespace())
+            .split_whitespace()
             .collect();
-        for banner in ["error_banner(error,cx)", "self.notice_banner(notice,cx)"] {
+        for id in ["no-model", "transcript-error", "transcript-notice"] {
             assert!(
                 conversation.contains(&format!(
-                    "surfaces::reading_column(div().px_4().pt_2().child({banner})"
+                    "surfaces::above_transcript(surfaces::status_bar(\"{id}\""
                 )),
-                "{banner}"
+                "{id}"
             );
         }
+        assert!(conversation.contains("surfaces::outlined_action(\"configure-model\",\"gear\""));
+        assert!(!conversation.contains(".bg(attention.opacity("));
+        assert!(!conversation.contains("error_banner("));
+        let above: String = free_function(code(include_str!("surfaces.rs")), "above_transcript")
+            .unwrap()
+            .split_whitespace()
+            .collect();
+        assert!(above.contains("reading_column(column_box("));
+        let status: String = free_function(code(include_str!("surfaces.rs")), "status_bar")
+            .unwrap()
+            .split_whitespace()
+            .collect();
+        assert!(status.contains("bar(id,cx)"));
     }
 
     #[test]
@@ -3674,32 +3578,44 @@ mod tests {
     }
 
     #[test]
-    fn the_transcript_is_entries_on_a_record_line() {
-        assert_eq!(super::ENTRY_GUTTER, 64.);
+    fn the_transcript_is_entries_divided_by_hairlines() {
         assert_eq!(super::entry_label(12), "№ 12");
         let files = sources();
         let (_, shell) = files
             .iter()
             .find(|(path, _)| path.ends_with("workspace/shell.rs"))
             .unwrap();
-        // Every row is framed as part of the record, numbered by one
-        // function.
-        let row = method(shell, "row").unwrap();
-        assert!(row.contains("present::entry_number(&self.rows, index, self.earlier_users)"));
-        assert!(row.contains("surfaces::entry_row("));
-        assert!(row.contains("surfaces::EntryDot::Live"));
-        // The line is each row's own left edge, so rows stack without gaps.
+        // No gutter and no vertical record line: the rows share the
+        // column's text edges.
         let (_, surfaces) = files
             .iter()
             .find(|(path, _)| path.ends_with("workspace/surfaces.rs"))
             .unwrap();
-        let entry = free_function(code(surfaces), "entry_row").unwrap();
-        assert!(entry.contains(".border_l_1()"));
-        assert!(!entry.contains(".gap_"));
+        for gone in [
+            "ENTRY_GUTTER",
+            "fn entry_row(",
+            "record_line_behind",
+            "EntryDot",
+            "GUTTER_COLUMN_MIN",
+        ] {
+            assert!(!code(surfaces).contains(gone), "{gone}");
+        }
+        assert!(!code(shell).contains("entry_gutter"));
         let body = method(shell, "row_body").unwrap();
+        let user = arm(body, "user", "\"tool\" => {");
+        // An entry opens with its head, numbered by one function, through
+        // one helper; a hairline above it, none before the first.
+        assert!(user.contains("present::entry_number(&self.rows, index, self.earlier_users)"));
+        assert!(user.contains("surfaces::entry_head(number, time, live, cx)"));
+        assert!(user.contains("let first = index == 0;"));
+        assert!(user.contains(".when(!first, |message| {"));
+        assert!(user.contains("surfaces::entry_rule(cx)"));
+        let head = free_function(code(surfaces), "entry_head").unwrap();
+        assert!(head.contains(".bg(cx.theme().primary)"));
+        assert!(head.contains("fact(entry_label(number), cx)"));
+        assert!(!head.contains(".border_l"));
         // The question is a title on the paper: no bubble, no fill, not to
         // the right.
-        let user = arm(body, "user", "\"tool\" => {");
         assert!(user.contains("surfaces::question("));
         for bubble in [".bg(", ".rounded(", ".items_end()", ".justify_end()"] {
             assert!(!user.contains(bubble), "the question uses {bubble}");
@@ -3727,10 +3643,10 @@ mod tests {
         }
         let record = method(shell, "transcript_record").unwrap();
         assert!(record.contains("surfaces::record_group("));
-        // A short question is a title, a long one body text; both open an
-        // entry 28 px below the last, and their actions take no line.
+        // A short question is a title, a long one body text, on the text
+        // edge; their actions lie over the head's right end.
         assert!(user.contains("present::title_question(&text)"));
-        assert!(user.contains(".pt(self.entry_gap(index))"));
+        assert!(user.contains(".px(px(surfaces::ENTRY_TEXT))"));
         assert!(user.contains(".absolute()"));
         // A call that runs something is one row, the run's: its title,
         // state and time, ask aside and open in Runs at its end, and the

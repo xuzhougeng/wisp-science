@@ -52,7 +52,7 @@ pub(crate) fn markdown(title: &str, project: &str, rows: &[Item]) -> String {
         // Wisp's answer, not as a tool call.
         if row.is_completion_answer() {
             out.push_str("\n## Wisp\n\n");
-            out.push_str(row.text.trim());
+            out.push_str(&crate::citations::file_citations_as_links(row.text.trim()));
             out.push('\n');
             continue;
         }
@@ -68,7 +68,8 @@ pub(crate) fn markdown(title: &str, project: &str, rows: &[Item]) -> String {
                     continue;
                 }
                 out.push_str("\n## Wisp\n\n");
-                out.push_str(row.text.trim());
+                // Codex's file citations as links (`citations`).
+                out.push_str(&crate::citations::file_citations_as_links(row.text.trim()));
                 out.push('\n');
             }
             "tool" => {
@@ -112,7 +113,7 @@ pub(crate) fn share_rows(rows: &[Item]) -> Vec<ShareRow> {
             } else {
                 row.role.clone()
             },
-            text: row.text.trim().to_owned(),
+            text: crate::citations::file_citations_as_links(row.text.trim()).into_owned(),
         })
         .collect()
 }
@@ -141,6 +142,15 @@ mod tests {
         let document = markdown("t", "p", &rows);
         assert!(document.contains("## Wisp\n\n| a | b |"));
         assert!(document.contains("**Tool `attempt_completion`"));
+    }
+
+    #[test]
+    fn codexs_file_citations_are_links_in_the_document_and_the_page() {
+        let said = r#"Wrote :codex-file-citation{path="E:/r/panel_index.csv" purpose="output"}"#;
+        let rows = [item("user", "Go"), item("assistant", said)];
+        let link = "Wrote [panel_index.csv](<file:///E:/r/panel_index.csv>)";
+        assert!(markdown("t", "p", &rows).contains(link));
+        assert_eq!(share_rows(&rows)[1].text, link);
     }
 
     #[test]
