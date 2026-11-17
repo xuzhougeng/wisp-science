@@ -8225,6 +8225,8 @@ pub fn run() {
             project_commands::add_project_memo,
             project_commands::update_project_memo,
             project_commands::delete_project_memo,
+            project_commands::list_project_database_recoveries,
+            project_commands::acknowledge_project_database_recovery,
             research_recap::generate_research_recap,
             research_recap::update_research_recap,
             session_commands::delete_session,

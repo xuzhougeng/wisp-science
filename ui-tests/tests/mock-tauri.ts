@@ -2349,6 +2349,24 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
           }
           case "get_research_graph":
             return researchGraph;
+          // Recovery outcomes live in the application database, so they
+          // outlast a reload; sessionStorage stands in for it here.
+          case "list_project_database_recoveries": {
+            const all = JSON.parse(sessionStorage.getItem("mock-database-recoveries") ?? "[]");
+            return all
+              .filter((outcome: any) => outcome.project_id === activeProjectId && !outcome.acknowledged)
+              .map(({ acknowledged, ...outcome }: any) => outcome);
+          }
+          case "acknowledge_project_database_recovery": {
+            const all = JSON.parse(sessionStorage.getItem("mock-database-recoveries") ?? "[]");
+            const id = Number(arg("id"));
+            const outcome = all.find((item: any) =>
+              item.id === id && item.project_id === activeProjectId && !item.acknowledged);
+            if (!outcome) return false;
+            outcome.acknowledged = true;
+            sessionStorage.setItem("mock-database-recoveries", JSON.stringify(all));
+            return true;
+          }
           case "list_project_memos":
             return sortMemos().map((memo) => ({ ...memo }));
           case "add_project_memo": {
