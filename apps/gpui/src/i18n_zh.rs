@@ -510,6 +510,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("Shown; press to leave it out", "已显示；点击可隐藏"),
     ("Left out; press to show it", "已隐藏；点击可显示"),
     ("Loading…", "加载中…"),
+    ("Loading conversations…", "正在加载会话…"),
+    ("Could not load conversations.", "无法加载会话。"),
     ("Nothing is recorded for this month.", "这个月没有记录。"),
     ("Add a record", "添加记录"),
     ("Something you want the project to remember as of now. The model does not write these; you do.", "你希望项目从现在起记住的事情。这些由你自己写，不是模型写的。"),

@@ -730,7 +730,9 @@ impl Workspace {
                     surfaces::IconTone::Faded,
                     cx,
                 ))
-                .child(surfaces::fact(count.to_string(), cx)),
+                .when(self.paging.received(), |heading| {
+                    heading.child(surfaces::fact(count.to_string(), cx))
+                }),
         );
         // Three shown, by how often they are needed: a new group, sorting
         // and grouping, selecting several; the rest in More.
@@ -1154,13 +1156,14 @@ impl Workspace {
             );
         }
         if rows.is_empty() && self.state.project.is_some() {
-            list = list.child(div().px_2().py_1().text_xs().text_color(muted).child(
-                match self.listing(cx) {
-                    Listing::Search => tr("No conversation matches."),
-                    Listing::Archive => tr("Nothing is archived."),
-                    Listing::Browse => tr("No conversations yet."),
-                },
-            ));
+            list = list.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(self.paging.empty_label(self.listing(cx))),
+            );
         }
         for row in rows {
             match row {

@@ -323,19 +323,22 @@ pub struct Paging {
     pages: usize,
     more: bool,
     loading: bool,
+    /// A successful response, even an empty one, has arrived for this list.
+    received: bool,
 }
 
 impl Paging {
-    /// How many pages to ask for when the list `key` is read: as many as
-    /// are loaded of that list, or one when it is another list.
+    /// Starts a request for the list `key`: as many pages as are loaded of
+    /// that list, or one when it is another list.
     pub fn pages_for(&mut self, key: ListKey) -> usize {
         let key = (key.0, key.1.trim().to_owned(), key.2);
         if self.key.as_ref() != Some(&key) {
             self.key = Some(key);
             self.pages = 1;
             self.more = false;
-            self.loading = false;
+            self.received = false;
         }
+        self.loading = true;
         self.pages.max(1)
     }
 
@@ -347,6 +350,7 @@ impl Paging {
         if self.key.as_ref() == Some(&key) && pages == self.pages.max(1) {
             self.more = more;
             self.loading = false;
+            self.received = true;
         }
     }
 
@@ -374,6 +378,26 @@ impl Paging {
 
     pub fn loading(&self) -> bool {
         self.loading
+    }
+
+    pub fn received(&self) -> bool {
+        self.received
+    }
+
+    /// An empty list is only known to be empty after a successful response.
+    pub fn empty_label(&self, listing: Listing) -> &'static str {
+        if !self.received {
+            return if self.loading {
+                tr("Loading conversations…")
+            } else {
+                tr("Could not load conversations.")
+            };
+        }
+        match listing {
+            Listing::Search => tr("No conversation matches."),
+            Listing::Archive => tr("Nothing is archived."),
+            Listing::Browse => tr("No conversations yet."),
+        }
     }
 }
 
@@ -1007,6 +1031,68 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(archive_line(&other), "Working…");
+    }
+
+    #[test]
+    fn an_unanswered_or_failed_list_is_not_an_empty_project() {
+        let mut paging = Paging::default();
+        for (key, listing, empty) in [
+            (
+                (Some("p".into()), String::new(), false),
+                Listing::Browse,
+                "No conversations yet.",
+            ),
+            (
+                (Some("p".into()), "kinase".into(), false),
+                Listing::Search,
+                "No conversation matches.",
+            ),
+            (
+                (Some("p".into()), String::new(), true),
+                Listing::Archive,
+                "Nothing is archived.",
+            ),
+        ] {
+            paging.pages_for(key.clone());
+            assert!(!paging.received());
+            assert_eq!(paging.empty_label(listing), "Loading conversations…");
+            paging.failed();
+            assert!(!paging.received());
+            assert_eq!(paging.empty_label(listing), "Could not load conversations.");
+
+            // Retrying must replace the failure, and only a successful
+            // response allows the empty state and its zero count.
+            paging.pages_for(key.clone());
+            assert_eq!(paging.empty_label(listing), "Loading conversations…");
+            paging.answered(&key, 1, false);
+            assert!(paging.received());
+            assert_eq!(paging.empty_label(listing), empty);
+
+            // Background refreshes retain the last successful result.
+            paging.pages_for(key.clone());
+            assert!(paging.received());
+            assert_eq!(paging.empty_label(listing), empty);
+            paging.answered(&key, 1, false);
+        }
+    }
+
+    #[test]
+    fn switching_projects_waits_for_the_new_projects_own_response() {
+        let mut paging = Paging::default();
+        let old = (Some("old".into()), String::new(), false);
+        let new = (Some("new".into()), String::new(), false);
+        paging.pages_for(old.clone());
+        paging.answered(&old, 1, false);
+        paging.pages_for(new.clone());
+        paging.answered(&old, 1, false);
+        assert!(!paging.received());
+        assert_eq!(
+            paging.empty_label(Listing::Browse),
+            "Loading conversations…"
+        );
+        paging.answered(&new, 1, false);
+        assert!(paging.received());
+        assert_eq!(paging.empty_label(Listing::Browse), "No conversations yet.");
     }
 
     #[test]
