@@ -41,7 +41,10 @@ Popup **Pause control** must fail later automations with `USER_CONTROLLING`.
    line shows the selection length. Open a PDF URL and ask: the line says there
    is no readable text, and an approval card appears when the agent reaches
    for a tool; **Allow once** continues the turn and **Deny** makes the agent
-   answer without it. **Stop** cancels a running turn. The context menu and
+   answer without it. Ask for something that makes the agent read the page
+   twice (for example two `web_scan` calls) and choose **Allow for this chat**
+   on the first card: the second call runs without a card, and so do later
+   questions in the same panel conversation. **New chat** asks again. **Stop** cancels a running turn. The context menu and
    `Alt+Shift+W` open the same panel. Quit Wisp and ask: the panel reports that
    Wisp is not running.
 
@@ -64,6 +67,12 @@ Shared Chrome with extension 0.5.0 and two projects A and B open in Wisp.
    that id shows the **Share browser tab …** approval. Deny: the tool fails
    and the tab stays unscoped. Allow: the scan runs, the tab is listed under
    `tabs` with `granted: true`, and the window binding is unchanged.
+   With extension 0.5.1, navigate the shared tab to `chrome://version` and
+   back, stop the extension's service worker from `chrome://extensions` (it
+   restarts and reconnects), then scan it again from a new conversation in A:
+   no share prompt appears. Close the tab and the share ends. Reloading or
+   updating the extension clears `chrome.storage.session`, so it counts as a
+   new browser instance and the tab must be shared again.
 4. With A's tab focused in Chrome, run `web_scan` from B without
    `switch_tab_id`: B reads its own tab, not A's. With no tab in scope, B is
    told to open one or ask for one instead of being handed the active tab.

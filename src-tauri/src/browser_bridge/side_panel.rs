@@ -123,6 +123,9 @@ fn progress_message(id: &str, event: &ProgressEvent) -> Option<Value> {
             "tool": request.tool,
             "message": clip(&request.message, APPROVAL_PREVIEW_MAX),
             "preview": clip(&request.preview, APPROVAL_PREVIEW_MAX),
+            // The panel offers "allow for this conversation" only where the
+            // desktop card would offer a session scope.
+            "session_scope": crate::approval_commands::side_panel_session_scope_available(request),
         })),
         ProgressEvent::Activity
         | ProgressEvent::TurnFinished { .. }
@@ -238,17 +241,18 @@ async fn answer_approval(app: &AppHandle, message: &Value) {
     let state = app.state::<AppState>();
     let approval_id = text(message, "approval_id");
     let approved = message.get("approved").and_then(Value::as_bool) == Some(true);
+    let for_conversation = text(message, "scope") == "session";
     let owned = crate::approval_commands::pending_confirmation_requests(state.inner())
         .iter()
         .any(|request| request.approval_id == approval_id && is_side_session(&request.frame_id));
     if !owned {
         return;
     }
-    if let Err(error) = crate::approval_commands::respond_remote_confirmation(
+    if let Err(error) = crate::approval_commands::respond_side_panel_confirmation(
         state.inner(),
         approval_id,
         approved,
-        None,
+        for_conversation,
     )
     .await
     {
@@ -403,6 +407,18 @@ mod tests {
         assert_eq!(approval["approval_id"], request.approval_id);
         assert_eq!(approval["tool"], "web_scan");
         assert_eq!(approval["preview"], "tab 42");
+        // A free-form message has no grant key, so it can only be allowed once.
+        assert_eq!(approval["session_scope"], false);
+
+        let tool_request = crate::ConfirmRequest::new(
+            "frame-1",
+            "Run tool 'web_scan'?".into(),
+            "web_scan",
+            String::new(),
+        );
+        let approval =
+            progress_message("a1", &ProgressEvent::ApprovalRequested(tool_request)).unwrap();
+        assert_eq!(approval["session_scope"], true);
 
         assert!(progress_message("a1", &ProgressEvent::TurnAnswer("done".into())).is_none());
         assert!(progress_message("a1", &ProgressEvent::Activity).is_none());

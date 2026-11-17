@@ -193,6 +193,55 @@ pub(crate) async fn respond_remote_confirmation(
     Ok(resolution)
 }
 
+/// Whether the browser side panel may offer "allow for this conversation" on
+/// a request: exactly the requests the desktop card offers a session scope
+/// for. Project and global scopes stay desktop-only.
+pub(crate) fn side_panel_session_scope_available(request: &ConfirmRequest) -> bool {
+    native_approval_scopes(
+        super::approval_grant_key(&request.message).is_some(),
+        &request.tool,
+        &request.message,
+    )
+    .contains(&wisp_dto::native_conversations::ApprovalScope::Session)
+}
+
+/// Scope a side-panel answer settles with. Only an approval of a request
+/// that has a grant key can be remembered, and only for its conversation.
+fn side_panel_scope(
+    pending: &PendingConfirm,
+    approved: bool,
+    for_conversation: bool,
+) -> &'static str {
+    let rememberable = pending.grant.is_some()
+        && native_approval_scopes(true, &pending.request.tool, &pending.request.message)
+            .contains(&wisp_dto::native_conversations::ApprovalScope::Session);
+    if approved && for_conversation && rememberable {
+        "session"
+    } else {
+        "once"
+    }
+}
+
+/// Answer from the browser side panel, the user's own surface for a
+/// conversation it started. "Allow for this conversation" records the same
+/// session grant the desktop card does, so later calls of that tool in the
+/// conversation stop asking (#1741). Everything else settles once.
+pub(crate) async fn respond_side_panel_confirmation(
+    state: &AppState,
+    approval_id: &str,
+    approved: bool,
+    for_conversation: bool,
+) -> Result<(), String> {
+    let (session_id, pending) = take_remote_confirmation(state, approval_id)?;
+    let scope = side_panel_scope(&pending, approved, for_conversation);
+    let decision = if approved {
+        wisp_tools::ConfirmDecision::Approved
+    } else {
+        wisp_tools::ConfirmDecision::Denied { feedback: None }
+    };
+    settle_confirmation(state, &session_id, pending, decision, Some(scope)).await
+}
+
 #[tauri::command]
 pub(super) async fn get_session_full_permission(
     state: State<'_, AppState>,
@@ -610,6 +659,46 @@ mod tests {
                 ApprovalScope::Global
             ]
         );
+    }
+
+    #[test]
+    fn side_panel_remembers_only_approved_grantable_requests_for_the_conversation() {
+        let mut entry = pending("approval");
+        entry.request = ConfirmRequest::new(
+            "session",
+            "Run tool 'web_scan'?".into(),
+            "web_scan",
+            String::new(),
+        );
+        assert!(side_panel_session_scope_available(&entry.request));
+        // Without a grant key nothing can be remembered.
+        assert_eq!(side_panel_scope(&entry, true, true), "once");
+        entry.grant = super::super::approval_grant_key(&entry.request.message);
+        assert!(entry.grant.is_some());
+        assert_eq!(side_panel_scope(&entry, true, true), "session");
+        assert_eq!(side_panel_scope(&entry, true, false), "once");
+        assert_eq!(side_panel_scope(&entry, false, true), "once");
+
+        // Special confirmations, such as a browser tab share, stay one-shot.
+        let mut share = pending("share");
+        share.request = ConfirmRequest::new(
+            "session",
+            "Share browser tab 7 “Docs” (https://example.com) with this project's agent?".into(),
+            "",
+            String::new(),
+        );
+        share.grant = super::super::approval_grant_key(&share.request.message);
+        assert!(!side_panel_session_scope_available(&share.request));
+        assert_eq!(side_panel_scope(&share, true, true), "once");
+        for tool in ["update_plan", "resource_conflict", "image_resize"] {
+            let mut special = pending("special");
+            special.request.tool = tool.into();
+            special.grant = Some(ApprovalGrantKey {
+                kind: "tool".into(),
+                target: tool.into(),
+            });
+            assert_eq!(side_panel_scope(&special, true, true), "once");
+        }
     }
 
     #[tokio::test]

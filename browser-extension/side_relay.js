@@ -97,7 +97,10 @@ function createSideRelay(chrome, deps) {
           type: "side_approval_response",
           id: message.id,
           approval_id: message.approvalId,
-          approved: !!message.approved
+          approved: !!message.approved,
+          // "session" remembers the approval for this conversation; Wisp
+          // honours it only where the desktop would offer that scope.
+          scope: message.scope === "session" ? "session" : "once"
         });
       }
     });

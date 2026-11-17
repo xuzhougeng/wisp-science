@@ -75,3 +75,25 @@ test("only side_ messages are routed to the panel", () => {
   assert.equal(root.isSideMessage({ type: "result", id: "1" }), false);
   assert.equal(root.isSideMessage(null), false);
 });
+
+test("an approval answer carries its scope, and anything unknown is once", () => {
+  const sent = [];
+  const relay = root.createSideRelay({}, { send: (message) => sent.push(message) });
+  let onMessage = null;
+  relay.attach({
+    onDisconnect: { addListener() {} },
+    onMessage: { addListener(listener) { onMessage = listener; } },
+    postMessage() {}
+  });
+  onMessage({ type: "approval", id: "a1", approvalId: "abc", approved: true, scope: "session" });
+  onMessage({ type: "approval", id: "a1", approvalId: "def", approved: true, scope: "global" });
+  onMessage({ type: "approval", id: "a1", approvalId: "ghi", approved: false });
+  assert.deepEqual(
+    sent.map((message) => [message.type, message.approval_id, message.approved, message.scope]),
+    [
+      ["side_approval_response", "abc", true, "session"],
+      ["side_approval_response", "def", true, "once"],
+      ["side_approval_response", "ghi", false, "once"]
+    ]
+  );
+});

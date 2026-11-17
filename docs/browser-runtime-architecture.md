@@ -129,7 +129,14 @@ The extension never writes project directories and never returns large base64 fi
   project (`browser_bridge/side_panel.rs`). A new panel conversation creates a
   session titled after the page; `side_started`, `side_delta`, `side_tool`,
   `side_approval`, and `side_done` / `side_error` return on the connection that
-  asked.
+  asked. Because the turn is IM-origin, every mutating tool and every page
+  access tool asks. The panel's card offers **Allow once**, **Deny** and, where
+  the desktop card would offer a conversation scope (`session_scope` on
+  `side_approval`), **Allow for this chat**: it records the same session grant
+  as the desktop's "allow for the rest of the conversation", so later calls of
+  that tool in the conversation stop asking (#1741). Project and global grants
+  are only made from the desktop; one made there also covers side panel turns.
+  The tab-share prompt is never remembered this way.
 
 Playwright is not used. The user's daily Chrome User Data directory is never passed as `--user-data-dir`.
 
@@ -149,11 +156,12 @@ can name another project, window or group to reach its tabs.
 | Embedded commands | Tab ids inside `{"cmd":"tabs"}` (`close`, `switch`) and `{"cmd":"cdp"}` get the same check as the outer tab id. CDP `Target.*` and `Browser.*` methods are refused in a scoped session because they can reach other targets. |
 | Window pinning | The first tab a project opens fixes its window (`window_id`). Later tab-create commands carry that `windowId`, so switching the browser's foreground window does not move where the agent's tabs appear. When that window was closed, the extension opens a **new** window for the same owner (never another open window) and the binding follows the new window. |
 | Tab groups | New tabs are placed in a native tab group titled `Wisp · <project name>` with a colour derived from the project id. The group is a label, not a boundary: the backend scope is what refuses out-of-scope access. |
-| Revalidation | Every extension snapshot re-checks the scope: a closed tab leaves it; a tab the user moved to another window leaves it and is reported once under `detached`; a new `browser_instance` (the browser process restarted, so tab/window/group ids may now belong to someone else) clears every scope on that lane. Nothing is persisted across an app restart, so stale ids are never reused. |
+| Revalidation | Every extension snapshot re-checks the scope: a closed tab leaves it; a tab the user moved to another window leaves it and is reported once under `detached`; a new `browser_instance` (the browser process restarted, so tab/window/group ids may now belong to someone else) clears every scope on that lane. Extension 0.5.1 also sends `tab_ids`, every open tab whether or not it is an http(s) page; a claimed tab that is still open but not scriptable at that moment (loading, a new tab before its URL commits, a browser page) keeps its owner and its `granted` mark, so the user is not asked to share it again once it is back. A share therefore lasts for as long as the tab is open in the same browser process, across turns, conversations of that project and extension reconnects. Without `tab_ids` (older extensions) a tab missing from the snapshot counts as closed. Reloading or updating the extension clears `chrome.storage.session`, where the instance id lives, so it also counts as a new instance. Nothing is persisted across an app restart, so stale ids are never reused: after restarting Wisp, a tab must be shared again. |
 | Cleanup | The per-turn ledger (and therefore auto-close and the cleanup prompt) now also covers popups the page opened from the project's tabs. Cleanup still closes only ledger tabs, never another project's or the user's. |
 
 Capability negotiation: extension 0.5.0 advertises `tab_scope`, honours
-`windowId` / `group` on tab-create commands and reports `browser_instance`.
+`windowId` / `group` on tab-create commands and reports `browser_instance`;
+0.5.1 adds `tab_ids`.
 With an older extension the access boundary above is still enforced by the
 backend, but `scope.window_pinning` reads `unsupported_extension` and no
 groups are created; the app does not claim pinning it cannot deliver.

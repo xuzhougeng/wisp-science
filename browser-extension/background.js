@@ -46,8 +46,8 @@ var isScriptable = function (url) {
   return /^https?:/i.test(url || "");
 };
 
-async function browserTabs() {
-  return (await chrome.tabs.query({}))
+async function browserTabs(all) {
+  return (all || await chrome.tabs.query({}))
     .filter(function (tab) { return isScriptable(tab.url); })
     .map(function (tab) {
       return {
@@ -93,7 +93,9 @@ function send(message) {
 }
 
 async function sendHandshake() {
-  send(handshakePayload(await browserTabs(), paused, await browserInstance()));
+  var all = await chrome.tabs.query({});
+  var liveIds = all.map(function (tab) { return tab.id; });
+  send(handshakePayload(await browserTabs(all), paused, await browserInstance(), liveIds));
 }
 
 // Drop a socket that still says OPEN but has not heard from Wisp in
