@@ -4,22 +4,21 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_dto::{CommandHook, HookEvent, ProjectHooks};
 
 use super::{
-    Workspace, chip,
-    shell::{error_banner, glyph},
-    surfaces::{self, switch},
+    Workspace,
+    settings_sections::setting,
+    shell::error_banner,
+    surfaces::{self, RecordRow, switch},
 };
 use crate::{
     assets::icon,
     backend::{Reply, receive},
     layers::Layer,
-    present::Tone,
     settings,
 };
 
@@ -175,64 +174,72 @@ impl Workspace {
         self.keep_project_hooks(reply, window, cx);
     }
 
+    /// The hook being added or changed, under the list: one setting row
+    /// for each field.
     fn hook_form(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
-        let label = |text: &'static str| div().text_xs().text_color(muted).child(text);
-        let Some((_, chosen)) = self.hook_editing else {
+        let Some((index, chosen)) = self.hook_editing else {
             return div();
         };
-        let mut events = div().h_flex().flex_wrap().gap_1();
+        let mut events = div().h_flex().flex_wrap().justify_end().gap_1();
         for (event, _) in settings::HOOK_EVENTS {
             events = events.child(
-                Button::new(SharedString::from(format!("hook-event-{}", event.as_str())))
-                    .label(event.as_str())
-                    .small()
-                    .selected(event == chosen)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some((_, current)) = &mut this.hook_editing {
-                            *current = event;
-                        }
-                        cx.notify();
-                    })),
+                surfaces::choice_chip(
+                    SharedString::from(format!("hook-event-{}", event.as_str())),
+                    event == chosen,
+                    cx,
+                )
+                .child(event.as_str())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some((_, current)) = &mut this.hook_editing {
+                        *current = event;
+                    }
+                    cx.notify();
+                })),
             );
         }
         let about = settings::HOOK_EVENTS
             .iter()
             .find(|(event, _)| *event == chosen)
             .map_or("", |(_, about)| *about);
+        let field = |input: &Entity<gpui_component::input::InputState>, width: f32| {
+            div().w(px(width)).child(surfaces::input(input, cx).small())
+        };
         let mut form = div()
             .v_flex()
-            .gap_2()
-            .p_3()
-            .w(px(620.))
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
-            .child(label(tr("When it runs")))
-            .child(events)
-            .child(div().text_xs().text_color(muted).child(tr(about)));
+            .child(surfaces::settings_heading(
+                if index.is_some() {
+                    tr("Change")
+                } else {
+                    tr("Add a hook")
+                },
+                cx,
+            ))
+            .child(setting(tr("When it runs"), tr(about), events, cx));
         if chosen.matches_tools() {
-            form = form
-                .child(label(tr(
-                    "Tools, as a regular expression of their names; empty is every tool",
-                )))
-                .child(Input::new(&self.hook_fields[0]).small());
+            form = form.child(setting(
+                tr("Tools"),
+                tr("A regular expression of their names; empty is every tool."),
+                field(&self.hook_fields[0], 300.),
+                cx,
+            ));
         }
-        form.child(label(tr(
-            "The command, run in the project folder with the event as JSON on stdin",
-        )))
-        .child(Input::new(&self.hook_fields[1]).small())
-        .child(label(tr("Timeout in seconds; empty is a minute")))
-        .child(
-            div()
-                .w(px(120.))
-                .child(Input::new(&self.hook_fields[2]).small()),
-        )
+        form.child(setting(
+            tr("Command"),
+            tr("Run in the project folder with the event as JSON on stdin."),
+            field(&self.hook_fields[1], 300.),
+            cx,
+        ))
+        .child(setting(
+            tr("Timeout"),
+            tr("In seconds; empty is a minute."),
+            field(&self.hook_fields[2], 120.),
+            cx,
+        ))
         .child(
             div()
                 .h_flex()
                 .gap_2()
-                .pt_1()
+                .pt_3()
                 .child(
                     Button::new("hook-save")
                         .label(tr("Save"))
@@ -244,6 +251,7 @@ impl Workspace {
                     Button::new("hook-cancel")
                         .label(tr("Cancel"))
                         .small()
+                        .ghost()
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.layers.close(Layer::HookForm);
                             this.hook_editing = None;
@@ -253,218 +261,187 @@ impl Workspace {
         )
     }
 
-    fn hook_row(&self, index: usize, hook: &CommandHook, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
+    /// One hook as a record row: its command, when it runs after it; a
+    /// switch, Change and Remove (last, in the danger colour) at its end.
+    fn hook_row(&self, index: usize, hook: &CommandHook, cx: &mut Context<Self>) -> RecordRow {
         let on = hook.enabled;
-        let about = div()
-            .v_flex()
-            .flex_1()
-            .min_w_0()
-            .gap_1()
-            .when(!on, |about| about.opacity(0.6))
-            .child(
-                div()
-                    .truncate()
-                    .text_sm()
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .child(hook.command.clone()),
+        surfaces::record_row(
+            SharedString::from(format!("hook-{index}")),
+            hook.command.clone(),
+        )
+        .icon("terminal")
+        .mono()
+        .suffix(settings::hook_detail(hook))
+        .when(!on, |row| row.opacity(0.6))
+        .action(
+            switch(
+                SharedString::from(format!("hook-on-{index}")),
+                on,
+                tr("Run this hook"),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(settings::hook_detail(hook)),
-            );
-        let actions = div()
-            .h_flex()
-            .gap_1()
-            .flex_shrink_0()
-            .child(
-                switch(
-                    SharedString::from(format!("hook-on-{index}")),
-                    on,
-                    tr("Run this hook"),
+            .on_change(cx.listener(move |this, _, window, cx| {
+                this.save_hooks(
+                    move |hooks| {
+                        if let Some(hook) = hooks.get_mut(index) {
+                            hook.enabled = !on;
+                        }
+                    },
+                    window,
+                    cx,
                 )
-                .on_change(cx.listener(move |this, _, window, cx| {
-                    this.save_hooks(
-                        move |hooks| {
-                            if let Some(hook) = hooks.get_mut(index) {
-                                hook.enabled = !on;
-                            }
-                        },
-                        window,
-                        cx,
-                    )
-                })),
+            })),
+        )
+        .action(
+            surfaces::icon_action(
+                SharedString::from(format!("hook-edit-{index}")),
+                "edit",
+                tr("Change"),
+                surfaces::IconTone::Faded,
+                cx,
             )
-            .child(
-                Button::new(SharedString::from(format!("hook-edit-{index}")))
-                    .icon(glyph("edit"))
-                    .small()
-                    .ghost()
-                    .tooltip(tr("Change"))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.edit_hook(Some(index), window, cx)
-                    })),
+            .on_click(
+                cx.listener(move |this, _, window, cx| this.edit_hook(Some(index), window, cx)),
+            ),
+        )
+        .action(
+            surfaces::danger_action(
+                SharedString::from(format!("hook-remove-{index}")),
+                "trash",
+                tr("Remove"),
+                cx,
             )
-            .child(
-                Button::new(SharedString::from(format!("hook-remove-{index}")))
-                    .icon(glyph("trash"))
-                    .small()
-                    .ghost()
-                    .tooltip(tr("Remove"))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.save_hooks(
-                            move |hooks| {
-                                if index < hooks.len() {
-                                    hooks.remove(index);
-                                }
-                            },
-                            window,
-                            cx,
-                        )
-                    })),
-            );
-        div()
-            .h_flex()
-            .items_start()
-            .gap_4()
-            .py_3()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(about)
-            .child(actions)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.save_hooks(
+                    move |hooks| {
+                        if index < hooks.len() {
+                            hooks.remove(index);
+                        }
+                    },
+                    window,
+                    cx,
+                )
+            })),
+        )
     }
 
     /// The open project's hooks file, to review and trust.
     fn project_hooks_section(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
-        let mut section = div().v_flex().gap_2().pt_6().child(
-            div()
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .child(tr("This project's hooks file")),
-        );
+        let mut section = div().v_flex().gap_2().child(surfaces::settings_heading(
+            tr("This project's hooks file"),
+            cx,
+        ));
         if self.state.project.is_none() {
-            return section.child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(tr("Open a project to review its .wisp/hooks.json.")),
-            );
+            return section.child(surfaces::settings_note(
+                tr("Open a project to review its .wisp/hooks.json."),
+                cx,
+            ));
         }
         let Some(file) = &self.project_hook_file else {
-            return section.child(div().text_xs().text_color(muted).child(tr(
-                "This project has no .wisp/hooks.json. One in Claude Code's layout runs once you trust it here.",
-            )));
+            return section.child(surfaces::settings_note_help(tr("This project has no .wisp/hooks.json."),
+                tr(
+                    "This project has no .wisp/hooks.json. One in Claude Code's layout runs once you trust it here.",
+                ),
+                cx,
+            ));
         };
-        section = section.child(
-            div()
-                .h_flex()
-                .gap_2()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_xs()
-                        .font_family(cx.theme().mono_font_family.clone())
-                        .child(file.path.clone()),
-                )
-                .child(if file.trusted {
-                    chip(tr("Trusted"), Tone::Success, cx)
-                } else {
-                    chip(tr("Not trusted: it does not run"), Tone::Attention, cx)
-                }),
-        );
-        if let Some(error) = &file.error {
-            section = section.child(error_banner(error, cx));
-        }
-        for hook in &file.hooks {
-            section = section.child(
-                div()
-                    .v_flex()
-                    .py_1()
-                    .child(
-                        div()
-                            .truncate()
-                            .text_xs()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .child(hook.command.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(settings::hook_detail(hook)),
-                    ),
-            );
-        }
         let sha = file.sha256.clone();
         let button = if file.trusted {
-            Button::new("project-hooks-untrust")
-                .label(tr("Stop trusting it"))
-                .small()
+            surfaces::outlined_action("project-hooks-untrust", "ban", tr("Stop trusting it"), cx)
                 .on_click(
                     cx.listener(|this, _, window, cx| this.trust_project_hooks(None, window, cx)),
                 )
         } else {
-            Button::new("project-hooks-trust")
-                .label(tr("Trust it as it is now"))
-                .small()
-                .disabled(file.error.is_some())
-                .tooltip(tr(
-                    "Its commands run in this project's turns until the file changes",
-                ))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.trust_project_hooks(Some(sha.clone()), window, cx)
-                }))
+            surfaces::outlined_action(
+                "project-hooks-trust",
+                "shield",
+                tr("Trust it as it is now"),
+                cx,
+            )
+            .disabled(file.error.is_some())
+            .tooltip(tr(
+                "Its commands run in this project's turns until the file changes",
+            ))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.trust_project_hooks(Some(sha.clone()), window, cx)
+            }))
         };
-        section.child(div().h_flex().child(button))
+        section = section.child(
+            div()
+                .h_flex()
+                .items_center()
+                .gap_2()
+                .child(surfaces::read_only(file.path.clone(), cx).flex_1())
+                .child(if file.trusted {
+                    surfaces::stamp(surfaces::StampKind::Success, tr("Trusted"), cx)
+                } else {
+                    surfaces::stamp(
+                        surfaces::StampKind::Waiting,
+                        tr("Not trusted: it does not run"),
+                        cx,
+                    )
+                })
+                .child(button),
+        );
+        if let Some(error) = &file.error {
+            section = section.child(error_banner(error, cx));
+        }
+        let rows: Vec<_> = file
+            .hooks
+            .iter()
+            .enumerate()
+            .map(|(index, hook)| {
+                surfaces::record_row(
+                    SharedString::from(format!("project-hook-{index}")),
+                    hook.command.clone(),
+                )
+                .icon("terminal")
+                .mono()
+                .suffix(settings::hook_detail(hook))
+            })
+            .collect();
+        if !rows.is_empty() {
+            section = section.child(surfaces::record_group(rows, cx));
+        }
+        section
     }
 
     pub(super) fn render_hook_settings(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
-        let mut page =
-            self.settings_page(cx)
-                .child(div().pb_2().text_xs().text_color(muted).child(tr(
+        let mut page = self.settings_page(cx).child(
+            surfaces::settings_note_help(
+                tr("Shell commands that run at points of a turn."),
+                tr(
                     "Shell commands that run at points of a turn, with the event as JSON on stdin, \
                  as in Claude Code and Codex. Exit 2 blocks; a JSON answer can block, ask or add \
                  context. The built-in hooks, automatic review and tool-failure analysis, are on \
                  the Conversation page.",
-                )));
-        let form_open = self.layers.contains(Layer::HookForm);
-        let editing = self.hook_editing.map(|(index, _)| index);
-        if self.command_hooks.is_empty() {
-            page = page.child(
-                div()
-                    .py_3()
-                    .text_sm()
-                    .text_color(muted)
-                    .child(tr("None yet.")),
-            );
-        }
-        for (index, hook) in self.command_hooks.iter().enumerate() {
-            page = page.child(self.hook_row(index, hook, cx));
-            if form_open && editing == Some(Some(index)) {
-                page = page.child(div().py_2().child(self.hook_form(cx)));
-            }
-        }
-        page = if form_open && editing == Some(None) {
-            page.child(div().py_2().child(self.hook_form(cx)))
-        } else {
-            page.child(
-                div().pt_3().h_flex().child(
-                    Button::new("hook-add")
-                        .icon(glyph("plus"))
-                        .label(tr("Add a hook"))
-                        .small()
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.edit_hook(None, window, cx)),
-                        ),
                 ),
+                cx,
             )
-        };
+            .pb_3(),
+        );
+        let form_open = self.layers.contains(Layer::HookForm);
+        if self.command_hooks.is_empty() {
+            page = page.child(surfaces::settings_note(tr("None yet."), cx).pb_2());
+        }
+        let rows: Vec<_> = self
+            .command_hooks
+            .iter()
+            .enumerate()
+            .map(|(index, hook)| self.hook_row(index, hook, cx))
+            .collect();
+        if !rows.is_empty() {
+            page = page.child(surfaces::record_group(rows, cx));
+        }
+        page =
+            if form_open {
+                page.child(self.hook_form(cx))
+            } else {
+                page.child(div().pt_3().h_flex().child(
+                    surfaces::outlined_action("hook-add", "plus", tr("Add a hook"), cx).on_click(
+                        cx.listener(|this, _, window, cx| this.edit_hook(None, window, cx)),
+                    ),
+                ))
+            };
         page.child(self.project_hooks_section(cx))
     }
 
@@ -482,11 +459,7 @@ impl Workspace {
                 .h_flex()
                 .gap_2()
                 .child(icon("circle-alert").text_color(attention))
-                .child(
-                    div()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(tr("A hook did not go as written")),
-                ),
+                .child(div().child(tr("A hook did not go as written"))),
         );
         // What each said is detail: a caption under the heading.
         for failure in failures.iter().take(3) {

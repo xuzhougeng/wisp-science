@@ -11,7 +11,7 @@ use gpui_component::{
 };
 
 use super::{
-    Workspace, chip,
+    Workspace,
     shell::{error_banner, glyph, icon_button},
     surfaces,
 };
@@ -21,7 +21,7 @@ use crate::{
     layers::Layer,
     method_search,
     panel::{self, PanelTab},
-    present::{self, Tone},
+    present,
 };
 
 impl Workspace {
@@ -105,32 +105,71 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The tabs that were taken away, to add one back: a menu under the
-    /// row's add button.
-    fn panel_tab_menu(&self, missing: &[PanelTab], cx: &mut Context<Self>) -> Div {
+    /// The strip's More menu: the tabs there is no room for on its line,
+    /// then taking the open tab away, then the tabs that were taken away,
+    /// to add one back. Each is an icon and a word.
+    fn panel_tab_menu(
+        &self,
+        overflow: &[PanelTab],
+        missing: &[PanelTab],
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let line = cx.theme().border;
+        let rule = move || div().h(px(1.)).mx_2().my_1().flex_shrink_0().bg(line);
         let mut menu = div()
             .absolute()
-            .top(px(30.))
+            .top(px(surfaces::ICON_BUTTON + 4.))
             .right_0()
-            .w(px(200.))
+            .w(px(220.))
             .v_flex()
             .p_1()
             .occlude()
-            .rounded(cx.theme().radius)
+            .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(cx.theme().border)
+            .border_color(line)
             .bg(cx.theme().popover)
             .shadow_md();
-        for tab in missing.iter().copied() {
+        for tab in overflow.iter().copied() {
             menu = menu.child(
-                Self::menu_row(
-                    SharedString::from(format!("panel-add-{}", tab.key())),
+                Self::menu_item(
+                    SharedString::from(format!("panel-more-{}", tab.key())),
+                    tab.icon(),
                     tab.label(),
-                    "",
-                    false,
                     cx,
                 )
-                .child(icon(tab.icon()).text_color(cx.theme().muted_foreground))
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.show_panel_tab(tab, window, cx)),
+                ),
+            );
+        }
+        if !overflow.is_empty() {
+            menu = menu.child(rule());
+        }
+        let open = self.panel_tab;
+        menu = menu.child(
+            Self::menu_item(
+                SharedString::from(format!("panel-take-away-{}", open.key())),
+                "minus",
+                tr("Remove this tab"),
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.layers.close(Layer::PanelTabMenu);
+                this.take_away_panel_tab(open, window, cx)
+            })),
+        );
+        if !missing.is_empty() {
+            menu = menu.child(rule());
+        }
+        for tab in missing.iter().copied() {
+            menu = menu.child(
+                Self::menu_item(
+                    SharedString::from(format!("panel-add-{}", tab.key())),
+                    tab.icon(),
+                    tab.label(),
+                    cx,
+                )
+                .child(icon("plus").text_color(cx.theme().muted_foreground))
                 .on_click(
                     cx.listener(move |this, _, window, cx| this.show_panel_tab(tab, window, cx)),
                 ),
@@ -618,85 +657,110 @@ impl Workspace {
     }
 
     /// The row of tabs at the top of the side panel.
+    /// The side panel's tab strip, on one line: the open tab a chip of its
+    /// icon and name, the others icon buttons named by their tooltip, in
+    /// the panel's order as far as the width allows; then More (the tabs
+    /// with no room, taking the open one away, adding one back) and the
+    /// close button.
     pub(super) fn panel_tabs(&self, cx: &mut Context<Self>) -> Div {
         let active = self
             .state
             .snapshot
             .as_ref()
             .map_or(0, |snapshot| panel::active_runs(&snapshot.run_cards));
-        // More tabs than fit the panel's width go on to a further line
-        // rather than past its edge.
+        let order = panel::visible(&self.kept_tabs, self.panel_tab);
+        let width = self.panel_width.get().unwrap_or(340.);
+        let (shown, overflow) = panel::strip(&order, self.panel_tab, panel::strip_capacity(width));
         let mut tabs = div()
             .h_flex()
-            .items_start()
-            .flex_wrap()
-            .gap_1()
+            .items_center()
+            .gap_0p5()
             .flex_1()
-            .min_w_0();
-        for tab in panel::visible(&self.kept_tabs, self.panel_tab) {
+            .min_w_0()
+            .overflow_hidden();
+        for tab in shown {
             let selected = self.panel_tab == tab;
-            // Each tab is its name; runs that are still going add their
-            // count.
+            // Runs that are still going add their count to the open tab.
             let label = match (tab, active) {
                 (PanelTab::Runs, 1..) => crate::i18n::fill(tr("Runs · {}"), &[&active]),
                 _ => tab.label().to_owned(),
             };
-            let button = Button::new(SharedString::from(format!("panel-tab-{}", tab.label())))
-                .on_click(
-                    cx.listener(move |this, _, window, cx| this.show_panel_tab(tab, window, cx)),
-                );
-            tabs = tabs.child(surfaces::panel_tab(button, label, selected, cx));
-            // The open tab can be taken out of the row.
-            if selected {
-                tabs = tabs.child(
-                    icon_button(
-                        SharedString::from(format!("panel-take-away-{}", tab.key())),
-                        "minus",
-                        tr("Take this tab away"),
-                    )
-                    .xsmall()
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.take_away_panel_tab(tab, window, cx)
-                    })),
-                );
-            }
+            tabs = tabs.child(surfaces::panel_tab(
+                SharedString::from(format!("panel-tab-{}", tab.key())),
+                tab.icon(),
+                label,
+                selected,
+                cx.listener(move |this, _, window, cx| this.show_panel_tab(tab, window, cx)),
+                cx,
+            ));
         }
         let missing = panel::missing(&self.kept_tabs, self.panel_tab);
-        let adding = self.layers.contains(Layer::PanelTabMenu);
-        let mut add = div().relative().flex_shrink_0();
-        if !missing.is_empty() {
-            add = add.child(
-                icon_button("panel-add-tab", "plus", tr("Add a tab"))
-                    .selected(adding)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if !this.layers.close(Layer::PanelTabMenu) {
-                            this.layers.open(Layer::PanelTabMenu);
-                        }
-                        cx.notify();
-                    })),
-            );
-            if adding {
-                add = add.child(deferred(self.panel_tab_menu(&missing, cx)));
-            }
+        let open = self.layers.contains(Layer::PanelTabMenu);
+        let mut more = div().relative().flex_none().child(
+            surfaces::icon_action(
+                "panel-more",
+                "more",
+                tr("More tabs"),
+                if open {
+                    surfaces::IconTone::Ink
+                } else {
+                    surfaces::IconTone::Faded
+                },
+                cx,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                if !this.layers.close(Layer::PanelTabMenu) {
+                    this.layers.open(Layer::PanelTabMenu);
+                }
+                cx.notify();
+            })),
+        );
+        if open {
+            more = more.child(deferred(self.panel_tab_menu(&overflow, &missing, cx)));
         }
-        // The words start where the tabs' content does: the strip's inset
-        // and a tab's own padding make the panel's `px_3`.
+        // The strip's width, measured, decides how many tabs it shows; a
+        // change draws it again.
+        let measured = self.panel_width.clone();
+        let weak = cx.entity().downgrade();
+        let measure = canvas(
+            move |bounds, window, cx| {
+                let width = Some(f32::from(bounds.size.width));
+                if measured.get() != width {
+                    measured.set(width);
+                    window.defer(cx, move |_, cx| {
+                        let _ = weak.update(cx, |_, cx| cx.notify());
+                    });
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
         div()
+            .relative()
             .h_flex()
-            .items_start()
-            .gap_2()
+            .items_center()
+            .gap_1()
             .pl_1p5()
             .pr_2()
-            .py_1p5()
-            .min_h(px(surfaces::PANEL_HEADER_HEIGHT))
+            .h(px(surfaces::PANEL_HEADER_HEIGHT))
             .flex_shrink_0()
             .border_b_1()
             .border_color(cx.theme().border)
+            .child(measure)
             .child(tabs)
-            .child(add)
+            .child(more)
             .child(
-                icon_button("panel-close", "close", tr("Close the panel"))
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_files(window, cx))),
+                surfaces::icon_action(
+                    "panel-close",
+                    "close",
+                    tr("Close the panel"),
+                    surfaces::IconTone::Faded,
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.toggle_files(window, cx))),
             )
     }
 
@@ -748,160 +812,149 @@ impl Workspace {
                 cx,
             ));
         }
+        // Each run is a record row, as in the conversation: its title, where
+        // it ran, its state and time, ask aside and stop at its end. A
+        // click opens it to its output and what else can be done with it.
+        let mut rows = Vec::new();
         for run in runs {
             let id = run.id.clone();
             let expanded = self.expanded_run.as_ref() == Some(&id);
-            let (status, tone) = present::run_status(run);
-            let toggle = id.clone();
-            let mut actions = div().h_flex().gap_1().child(
-                Button::new(SharedString::from(format!("run-{id}")))
-                    .label(if expanded {
-                        tr("Hide output")
-                    } else {
-                        tr("Output")
-                    })
-                    .xsmall()
-                    .ghost()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.expanded_run = if this.expanded_run.as_ref() == Some(&toggle) {
-                            None
-                        } else {
-                            Some(toggle.clone())
-                        };
-                        cx.notify();
-                    })),
-            );
             let searching = run.kind == "method_search";
-            if searching {
-                let open = self.open_search.as_ref() == Some(&id);
-                let wanted = id.clone();
-                actions = actions.child(
-                    Button::new(SharedString::from(format!("run-search-{id}")))
-                        .label(if open {
-                            tr("Hide search")
-                        } else {
-                            tr("Search")
-                        })
-                        .xsmall()
-                        .ghost()
-                        .selected(open)
-                        .tooltip(tr("The search's contract, progress and candidates"))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.toggle_search(wanted.clone(), window, cx)
-                        })),
-                );
-            }
-            {
-                let (asked, title) = (id.clone(), run.title.clone());
-                actions = actions.child(
-                    Button::new(SharedString::from(format!("run-ask-{id}")))
-                        .label(tr("Ask"))
-                        .xsmall()
-                        .ghost()
-                        .tooltip(tr("Ask aside about this run, with its live state"))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_aside_about_run(asked.clone(), title.clone(), window, cx)
-                        })),
-                );
-            }
+            let search_open = searching && self.open_search.as_ref() == Some(&id);
+            let asking = self
+                .run_cleaning
+                .as_ref()
+                .is_some_and(|(cleaning, _)| *cleaning == id)
+                && self.layers.contains(Layer::ConfirmCleanRun);
+            let mut row = self.run_record_row(&id, run, None, cx);
             if panel::can_cancel(&run.status) {
                 let cancel = id.clone();
-                actions = actions.child(
-                    Button::new(SharedString::from(format!("run-cancel-{id}")))
-                        .icon(glyph("stop"))
-                        .label(tr("Cancel"))
-                        .xsmall()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.cancel_run(cancel.clone(), false, window, cx)
-                        })),
+                row = row.action(
+                    surfaces::icon_action(
+                        SharedString::from(format!("run-cancel-{id}")),
+                        "stop",
+                        tr("Cancel"),
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.cancel_run(cancel.clone(), false, window, cx)
+                    })),
                 );
             } else if panel::can_force_cancel(run) {
                 // Its stop never came back: finished here as cancelled.
                 let cancel = id.clone();
-                actions = actions.child(
-                    Button::new(SharedString::from(format!("run-force-cancel-{id}")))
-                        .icon(glyph("ban"))
-                        .label(tr("Force cancel"))
-                        .xsmall()
-                        .tooltip(tr(
-                            "Mark it cancelled without waiting for the host to confirm the stop",
-                        ))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.cancel_run(cancel.clone(), true, window, cx)
-                        })),
-                );
-            }
-            // What a run left on its SSH host can be looked through.
-            if panel::can_clean(run) && run.kind == "ssh_direct" {
-                let (reviewed, title) = (id.clone(), run.title.clone());
-                actions = actions.child(
-                    icon_button(
-                        SharedString::from(format!("run-review-{id}")),
-                        "folder",
-                        tr("Look through what it left on its host"),
+                row = row.action(
+                    surfaces::icon_action(
+                        SharedString::from(format!("run-force-cancel-{id}")),
+                        "ban",
+                        tr("Mark it cancelled without waiting for the host to confirm the stop"),
+                        surfaces::IconTone::Faded,
+                        cx,
                     )
-                    .xsmall()
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_run_review(reviewed.clone(), title.clone(), window, cx)
+                        cx.stop_propagation();
+                        this.cancel_run(cancel.clone(), true, window, cx)
                     })),
                 );
             }
-            if panel::can_clean(run) {
-                let clean = id.clone();
-                actions = actions.child(
-                    icon_button(
-                        SharedString::from(format!("run-clean-{id}")),
-                        "trash",
-                        tr("Delete what this run left where it ran"),
-                    )
-                    .xsmall()
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.ask_clean_run(clean.clone(), cx)),
-                    ),
-                );
-            }
-            let mut card = surfaces::panel_entry(cx)
-                .child(
-                    div()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(run.title.clone()),
-                )
-                .child(
-                    div()
-                        .h_flex()
-                        .gap_2()
-                        .child(chip(run.kind.clone(), Tone::Neutral, cx))
-                        .child(chip(status, tone, cx))
-                        .child(div().flex_1())
-                        .child(actions),
-                );
-            // A run moving files says how far it has got.
+            // What it opens to: what else can be done with it, its progress
+            // and clean-up, and its output.
+            let mut below = div().v_flex().gap_2();
+            let mut has_below = false;
+            // A run moving files says how far it has got, open or not.
             if let Some(progress) = crate::transfers::progress(run) {
-                card = card.child(super::transfers_view::meter(&progress, cx));
+                below = below.child(super::transfers_view::meter(&progress, cx));
+                has_below = true;
             }
-            if run.cleaned_at.is_some() {
-                card = card.child(
-                    div()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(tr("Its workspace was cleaned.")),
-                );
-            } else if let Some(problem) = &run.cleanup_error {
-                card = card.child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().danger)
-                        .child(crate::i18n::host(problem)),
-                );
+            if asking && let Some((_, at_stake)) = &self.run_cleaning {
+                below = below.child(self.clean_question(&id, *at_stake, cx));
+                has_below = true;
             }
-            if let Some((cleaning, at_stake)) = &self.run_cleaning
-                && *cleaning == id
-                && self.layers.contains(Layer::ConfirmCleanRun)
-            {
-                card = card.child(self.clean_question(&id, *at_stake, cx));
-            }
-            if searching && self.open_search.as_ref() == Some(&id) {
-                card = card.child(self.render_method_search(run, window, cx));
+            if expanded || search_open {
+                has_below = true;
+                let mut tools = div().h_flex().flex_wrap().gap_1();
+                if searching {
+                    let wanted = id.clone();
+                    tools = tools.child(
+                        surfaces::labelled_action(
+                            SharedString::from(format!("run-search-{id}")),
+                            "search",
+                            if search_open {
+                                tr("Hide search")
+                            } else {
+                                tr("Search")
+                            },
+                            surfaces::IconSize::Inline,
+                            if search_open {
+                                surfaces::IconTone::Ink
+                            } else {
+                                surfaces::IconTone::Faded
+                            },
+                            cx,
+                        )
+                        .tooltip(tr("The search's contract, progress and candidates"))
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.toggle_search(wanted.clone(), window, cx)
+                            },
+                        )),
+                    );
+                }
+                // What a run left on its SSH host can be looked through.
+                if panel::can_clean(run) && run.kind == "ssh_direct" {
+                    let (reviewed, title) = (id.clone(), run.title.clone());
+                    tools = tools.child(
+                        surfaces::labelled_action(
+                            SharedString::from(format!("run-review-{id}")),
+                            "folder",
+                            tr("Look through what it left on its host"),
+                            surfaces::IconSize::Inline,
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.open_run_review(reviewed.clone(), title.clone(), window, cx)
+                            },
+                        )),
+                    );
+                }
+                if panel::can_clean(run) {
+                    let clean = id.clone();
+                    tools =
+                        tools.child(
+                            surfaces::danger_action(
+                                SharedString::from(format!("run-clean-{id}")),
+                                "trash",
+                                tr("Delete what this run left where it ran"),
+                                cx,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| this.ask_clean_run(clean.clone(), cx),
+                            )),
+                        );
+                }
+                below = below.child(tools);
+                if run.cleaned_at.is_some() {
+                    below = below.child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(tr("Its workspace was cleaned.")),
+                    );
+                } else if let Some(problem) = &run.cleanup_error {
+                    below = below.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().danger)
+                            .child(crate::i18n::host(problem)),
+                    );
+                }
+                if search_open {
+                    below = below.child(self.render_method_search(run, window, cx));
+                }
             }
             if expanded {
                 let whole = self.run_logs.get(&run.id);
@@ -909,7 +962,7 @@ impl Workspace {
                     Some(Ok(log)) => present::whole_log(log),
                     _ => present::run_output(run),
                 };
-                card = card.child(
+                below = below.child(
                     TextView::markdown(
                         SharedString::from(format!("run-output-{}", run.id)),
                         shown,
@@ -919,7 +972,7 @@ impl Workspace {
                     .selectable(true),
                 );
                 if let Some(Err(problem)) = whole {
-                    card = card.child(
+                    below = below.child(
                         div()
                             .text_xs()
                             .text_color(cx.theme().danger)
@@ -929,7 +982,7 @@ impl Workspace {
                 // The record keeps the last lines; the run's folder has all.
                 if present::has_whole_log(run) {
                     let wanted = run.id.clone();
-                    card = card.child(
+                    below = below.child(
                         div().h_flex().child(
                             Button::new(SharedString::from(format!("run-log-{}", run.id)))
                                 .label(if matches!(whole, Some(Ok(_))) {
@@ -947,7 +1000,22 @@ impl Workspace {
                     );
                 }
             }
-            list = list.child(card);
+            let toggle = id.clone();
+            rows.push(
+                row.below(has_below.then(|| below.into_any_element()))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.expanded_run = if this.expanded_run.as_ref() == Some(&toggle) {
+                            None
+                        } else {
+                            Some(toggle.clone())
+                        };
+                        cx.notify();
+                    })),
+            );
+        }
+        if !rows.is_empty() {
+            list = list.child(div().px_2().child(surfaces::record_group(rows, cx)));
         }
         list.into_any_element()
     }
@@ -1138,39 +1206,57 @@ impl Workspace {
             .map(|elapsed| elapsed.as_secs() as i64)
             .unwrap_or(0);
         let scope =
-            |id: &'static str, label: &'static str, all: bool| {
-                Button::new(id)
-                    .label(label)
-                    .xsmall()
-                    .ghost()
-                    .selected(self.artifacts_all == all)
+            |id: &'static str, icon_name: &str, label: &'static str, all: bool| {
+                surfaces::segment(id, icon_name, label, self.artifacts_all == all, cx)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.set_artifact_scope(all, window, cx)
                     }))
+                    .into_any_element()
             };
         let count = (!self.artifacts.is_empty()).then(|| self.artifacts.len().to_string().into());
         let header = surfaces::panel_header(tr("Artifacts"), count, cx)
             .child(
-                icon_button("artifacts-by-folder", "folder", tr("By folder"))
-                    .selected(self.artifacts_by_folder)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.artifacts_by_folder = !this.artifacts_by_folder;
-                        cx.notify();
-                    })),
+                surfaces::icon_action(
+                    "artifacts-by-folder",
+                    "folder",
+                    tr("By folder"),
+                    if self.artifacts_by_folder {
+                        surfaces::IconTone::On
+                    } else {
+                        surfaces::IconTone::Faded
+                    },
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.artifacts_by_folder = !this.artifacts_by_folder;
+                    cx.notify();
+                })),
             )
             .child(
-                icon_button("artifacts-reload", "refresh", tr("Reload"))
-                    .on_click(cx.listener(|this, _, window, cx| this.load_artifacts(window, cx))),
+                surfaces::icon_action(
+                    "artifacts-reload",
+                    "refresh",
+                    tr("Reload"),
+                    surfaces::IconTone::Faded,
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.load_artifacts(window, cx))),
             );
         // Whose files: the conversation's or the whole project's.
-        let scopes = div()
-            .h_flex()
-            .gap_1()
-            .px_3()
-            .pt_2()
-            .flex_shrink_0()
-            .child(scope("artifacts-own", tr("This conversation"), false))
-            .child(scope("artifacts-all", tr("Whole project"), true));
+        let scopes =
+            div()
+                .h_flex()
+                .gap_1()
+                .px_3()
+                .pt_2()
+                .flex_shrink_0()
+                .child(surfaces::segmented(
+                    [
+                        scope("artifacts-own", "chat", tr("This conversation"), false),
+                        scope("artifacts-all", "notebook", tr("Whole project"), true),
+                    ],
+                    cx,
+                ));
         let mut list = div()
             .id("artifacts")
             .v_flex()
@@ -1201,63 +1287,52 @@ impl Workspace {
             if let Some(heading) = heading {
                 list = list.child(surfaces::panel_section(heading, cx).px_3().pb_1());
             }
-            let mut name =
-                div()
-                    .id(SharedString::from(format!("artifact-{}", artifact.id)))
-                    .h_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap_2()
-                    .child(icon("doc").text_color(muted))
-                    .child(
-                        div()
-                            .v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .child(surfaces::panel_label(artifact.name.clone()))
-                            .child(
-                                div().truncate().text_xs().text_color(muted).child(
-                                    panel::artifact_detail(artifact, now, self.artifacts_all),
-                                ),
-                            ),
-                    );
+            // A record row: the file's icon, its name, where and when after
+            // it; its actions at the end. A click shows it in Files.
+            let opened = self.artifact_open.as_deref() == Some(artifact.id.as_str())
+                || self
+                    .artifact_origin
+                    .as_ref()
+                    .is_some_and(|(shown, _)| *shown == artifact.id);
+            let mut row = surfaces::record_row(
+                SharedString::from(format!("artifact-{}", artifact.id)),
+                artifact.name.clone(),
+            )
+            .icon("doc")
+            .suffix(panel::artifact_detail(artifact, now, self.artifacts_all))
+            .hover(move |style| style.bg(hover));
             if let Some(path) = artifact.path.clone() {
-                name = name
+                row = row
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.panel_tab = PanelTab::Files;
                         this.reveal_file(path.clone(), window, cx)
                     }));
             }
-            // A row that opens what is under it keeps the hairline under
-            // that instead.
-            let opened = self.artifact_open.as_deref() == Some(artifact.id.as_str())
-                || self
-                    .artifact_origin
-                    .as_ref()
-                    .is_some_and(|(shown, _)| *shown == artifact.id);
-            let mut row = surfaces::panel_row(("artifact-row", index), cx)
-                .gap_1()
-                .py_1()
-                .when(opened, |row| row.border_b_0())
-                .hover(|style| style.bg(hover))
-                .child(name);
-            // The star is beside the name, not inside it, so pressing it
-            // does not also open the file.
+            let tone = |on: bool| {
+                if on {
+                    surfaces::IconTone::On
+                } else {
+                    surfaces::IconTone::Faded
+                }
+            };
+            // A figure can be kept with the favorites.
             if let Some(path) = artifact
                 .path
                 .clone()
                 .filter(|path| crate::favorites::is_image(path))
             {
                 let session = artifact.session_id.clone();
-                row = row.child(
-                    icon_button(
+                row = row.action(
+                    surfaces::icon_action(
                         ("artifact-star", index),
                         "star",
                         tr("Save this figure to favorites"),
+                        surfaces::IconTone::Faded,
+                        cx,
                     )
-                    .xsmall()
                     .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
                         this.star_artifact(session.clone(), path.clone(), window, cx)
                     })),
                 );
@@ -1268,12 +1343,18 @@ impl Workspace {
                 .clone()
                 .filter(|_| self.state.session.is_some())
             {
-                row = row.child(
-                    icon_button(("artifact-centre", index), "doc", tr("Open in centre"))
-                        .xsmall()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_in_centre(path.clone(), window, cx)
-                        })),
+                row = row.action(
+                    surfaces::icon_action(
+                        ("artifact-centre", index),
+                        "external-link",
+                        tr("Open in centre"),
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.open_in_centre(path.clone(), window, cx)
+                    })),
                 );
             }
             if let Some(path) = artifact.path.clone() {
@@ -1282,15 +1363,16 @@ impl Workspace {
                     .artifact_origin
                     .as_ref()
                     .is_some_and(|(shown, _)| *shown == artifact.id);
-                row = row.child(
-                    icon_button(
+                row = row.action(
+                    surfaces::icon_action(
                         ("artifact-origin", index),
-                        "research-trail",
+                        "timeline",
                         tr("Which tool call wrote it"),
+                        tone(asked),
+                        cx,
                     )
-                    .xsmall()
-                    .selected(asked)
                     .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
                         this.toggle_artifact_origin(
                             id.clone(),
                             session.clone(),
@@ -1303,25 +1385,21 @@ impl Workspace {
             }
             let id = artifact.id.clone();
             let open = self.artifact_open.as_deref() == Some(artifact.id.as_str());
-            row = row.child(
-                icon_button(
+            row = row.action(
+                surfaces::icon_action(
                     ("artifact-versions", index),
                     "history",
                     tr("Its versions, to save a copy of one"),
+                    tone(open),
+                    cx,
                 )
-                .xsmall()
-                .selected(open)
                 .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
                     this.toggle_artifact_versions(id.clone(), window, cx)
                 })),
             );
-            list = list.child(row);
-            // What the row opened, with the row's hairline under it.
-            let mut details = div()
-                .v_flex()
-                .flex_shrink_0()
-                .border_b_1()
-                .border_color(cx.theme().border);
+            // What the row opened, under it.
+            let mut details = div().v_flex().flex_shrink_0();
             if let Some((_, found)) = self
                 .artifact_origin
                 .as_ref()
@@ -1380,9 +1458,11 @@ impl Workspace {
                     }
                 }
             }
-            if opened {
-                list = list.child(details);
-            }
+            list = list.child(
+                div()
+                    .px_2()
+                    .child(row.below(opened.then(|| details.into_any_element()))),
+            );
         }
         div()
             .v_flex()

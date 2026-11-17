@@ -214,7 +214,7 @@ impl Workspace {
                 div()
                     .h_flex()
                     .gap_2()
-                    .child(div().flex_1().font_weight(FontWeight::MEDIUM).child(label))
+                    .child(div().flex_1().child(label))
                     .child(
                         Button::new("console-restart")
                             .label(tr("Restart"))

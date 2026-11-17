@@ -7,7 +7,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_dto::MandateOverview;
 
@@ -204,16 +203,11 @@ impl Workspace {
             .rounded(cx.theme().radius)
             .border_1()
             .border_color(cx.theme().border)
-            .child(
-                div()
-                    .text_sm()
-                    .font_semibold()
-                    .child(if self.mandate_editing.is_some() {
-                        tr("Change the mandate")
-                    } else {
-                        tr("New mandate")
-                    }),
-            )
+            .child(div().text_sm().child(if self.mandate_editing.is_some() {
+                tr("Change the mandate")
+            } else {
+                tr("New mandate")
+            }))
             .child(label("Project"))
             .child(projects)
             .child(label(
@@ -222,14 +216,14 @@ impl Workspace {
             .child(
                 div()
                     .h(px(96.))
-                    .child(Input::new(&self.mandate_fields[1]).h_full()),
+                    .child(super::surfaces::input(&self.mandate_fields[1], cx).h_full()),
             )
             .child(label("Name (optional)"))
-            .child(Input::new(&self.mandate_fields[0]).small())
+            .child(super::surfaces::input(&self.mandate_fields[0], cx).small())
             .child(label(
                 "A measure of progress: name, target, period (optional)",
             ))
-            .child(Input::new(&self.mandate_fields[2]).small())
+            .child(super::surfaces::input(&self.mandate_fields[2], cx).small())
             .child(label("Rounds"))
             .child(presets(
                 &mandates::CADENCES,
@@ -322,14 +316,13 @@ impl Workspace {
                 div()
                     .h_flex()
                     .gap_2()
-                    .child(chip(status, tone, cx))
+                    .child(super::surfaces::status(status, tone, cx))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .truncate()
                             .text_sm()
-                            .font_semibold()
                             .child(mandate.name.clone()),
                     )
                     .child(chip(project, Tone::Neutral, cx)),
@@ -375,7 +368,7 @@ impl Workspace {
                         .child(
                             div()
                                 .flex_1()
-                                .child(Input::new(&self.mandate_fields[3]).small()),
+                                .child(super::surfaces::input(&self.mandate_fields[3], cx).small()),
                         )
                         .child(
                             Button::new(("mandate-send", index))
@@ -405,12 +398,10 @@ impl Workspace {
             card = card.child(asked);
         }
         if let Some(report) = overview.reports.first() {
-            let mut shown = div().v_flex().gap_0p5().child(
-                div()
-                    .text_xs()
-                    .font_semibold()
-                    .child(report.body.headline.clone()),
-            );
+            let mut shown = div()
+                .v_flex()
+                .gap_0p5()
+                .child(div().text_xs().child(report.body.headline.clone()));
             for item in report
                 .body
                 .done
@@ -534,12 +525,27 @@ impl Workspace {
                 nav_row("mandates-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_mandates(window, cx))),
             )
-            .child(surfaces::title(tr("Research mandates")).px_2().pt_3())
-            .child(div().px_2().pb_2().text_xs().text_color(muted).child(tr(
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .pt_3()
+                    .pb_1()
+                    .child(surfaces::title(tr("Research mandates")))
+                    // What the page is for, a tooltip away, not a paragraph in
+                    // the rail.
+                    .child(surfaces::help(
+                        "mandates-help",
+                        tr(
                 "Standing goals a project's agent works on in rounds, in one conversation of \
                  the project, while the app is open. A mandate asks you when it needs something \
                  only you can give, and reports on a cadence; both reach the research assistant.",
-            )))
+                        ),
+                        cx,
+                    )),
+            )
             .child(
                 div().px_1().child(
                     Button::new("mandate-new")
@@ -551,15 +557,8 @@ impl Workspace {
                         })),
                 ),
             );
-        let mut body = div()
-            .id("mandates-body")
-            .v_flex()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .p_6()
-            .gap_3()
-            .overflow_y_scroll();
+        // The page's records in a centred column (`surfaces::page_column`).
+        let mut body = surfaces::page_column();
         if let Some(error) = &self.error {
             body = body.child(error_banner(error, cx));
         }
@@ -582,6 +581,10 @@ impl Workspace {
                 }
             }
         }
-        div().h_flex().size_full().child(side).child(body)
+        div()
+            .h_flex()
+            .size_full()
+            .child(side)
+            .child(surfaces::page_scroll("mandates-body", body))
     }
 }

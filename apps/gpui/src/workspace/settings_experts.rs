@@ -3,13 +3,16 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Selectable, Sizable, StyledExt,
+    ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::{Expert, ExpertInput};
 
-use super::Workspace;
+use super::{
+    Workspace,
+    settings_sections::{setting, stacked_setting},
+    surfaces,
+};
 use crate::{
     backend::{Reply, receive},
     layers::Layer,
@@ -101,43 +104,54 @@ impl Workspace {
         self.change_experts(reply, window, cx);
     }
 
+    /// The form of a new or changed expert, under the list in the same
+    /// column: a setting row for each field, then Save and Cancel.
     fn expert_form(&self, builtin: bool, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
-        let label = |text: &'static str| div().text_xs().text_color(muted).child(text);
+        let field = |at: usize| {
+            div()
+                .w(px(300.))
+                .child(surfaces::input(&self.expert_fields[at], cx))
+        };
+        let adding = self.expert_editing.as_deref() == Some("");
         let mut form = div()
             .v_flex()
-            .gap_2()
-            .p_3()
-            .w(px(620.))
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
-            .child(label(tr("Name")))
-            .child(Input::new(&self.expert_fields[0]).small())
-            .child(label(tr(
-                "Description, for you: what the expert is for. The model is not shown it.",
-            )))
-            .child(Input::new(&self.expert_fields[1]).small());
+            .w_full()
+            .child(surfaces::settings_heading(
+                if adding {
+                    tr("Add an expert")
+                } else {
+                    tr("Change")
+                },
+                cx,
+            ))
+            .child(setting(tr("Name"), "", field(0), cx))
+            .child(setting(
+                tr("Description"),
+                tr("For you: what the expert is for. The model is not shown it."),
+                field(1),
+                cx,
+            ));
         form = if builtin {
-            form.child(label(tr(
-                "This expert ships with Wisp: its instructions cannot be changed.",
-            )))
+            form.child(setting(
+                tr("Instructions"),
+                tr("This expert ships with Wisp: its instructions cannot be changed."),
+                div(),
+                cx,
+            ))
         } else {
-            form.child(label(tr(
-                "Instructions: what the model works under for the whole conversation.",
-            )))
-            .child(
+            form.child(stacked_setting(
+                tr("Instructions"),
+                tr("What the model works under for the whole conversation."),
                 div()
                     .h(px(220.))
-                    .child(Input::new(&self.expert_fields[2]).h_full()),
-            )
+                    .child(surfaces::input(&self.expert_fields[2], cx).h_full()),
+                cx,
+            ))
         };
         // The model it runs on: the conversation's, or one of its own.
         let mut models = div().h_flex().flex_wrap().gap_1().child(
-            Button::new("expert-model-own")
-                .label(tr("The conversation's"))
-                .small()
-                .selected(self.expert_model.is_empty())
+            surfaces::choice_chip("expert-model-own", self.expert_model.is_empty(), cx)
+                .child(tr("The conversation's"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.expert_model.clear();
                     cx.notify();
@@ -151,21 +165,20 @@ impl Workspace {
         for (index, profile) in profiles.into_iter().enumerate() {
             let id = profile.id.clone();
             models = models.child(
-                Button::new(("expert-model", index))
-                    .label(profile.name.clone())
-                    .small()
-                    .selected(self.expert_model == profile.id)
+                surfaces::choice_chip(("expert-model", index), self.expert_model == profile.id, cx)
+                    .child(profile.name.clone())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.expert_model = id.clone();
                         cx.notify();
                     })),
             );
         }
-        let form = form
-            .child(label(tr(
-                "Model: a conversation started as this expert runs on it.",
-            )))
-            .child(models);
+        let form = form.child(stacked_setting(
+            tr("Model"),
+            tr("A conversation started as this expert runs on it."),
+            models,
+            cx,
+        ));
         // What its conversations may use, as the WebView's specialists.
         let skills: Vec<(String, String)> = self
             .skills
@@ -186,15 +199,23 @@ impl Workspace {
                 .map(|row| (row.server.id.clone(), row.server.name.clone())),
         );
         let form = form
-            .child(label(tr("Skills its conversations may use")))
-            .child(self.expert_reach_choice(true, &skills, cx))
-            .child(label(tr("Connectors its conversations may use")))
-            .child(self.expert_reach_choice(false, &connectors, cx));
+            .child(stacked_setting(
+                tr("Skills its conversations may use"),
+                "",
+                self.expert_reach_choice(true, &skills, cx),
+                cx,
+            ))
+            .child(stacked_setting(
+                tr("Connectors its conversations may use"),
+                "",
+                self.expert_reach_choice(false, &connectors, cx),
+                cx,
+            ));
         form.child(
             div()
                 .h_flex()
                 .gap_2()
-                .pt_1()
+                .pt_3()
                 .child(
                     Button::new("expert-save")
                         .label(tr("Save"))
@@ -206,6 +227,7 @@ impl Workspace {
                     Button::new("expert-cancel")
                         .label(tr("Cancel"))
                         .small()
+                        .ghost()
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.layers.close(Layer::ExpertForm);
                             this.expert_editing = None;
@@ -217,6 +239,7 @@ impl Workspace {
 
     /// Every one, or only those picked from `options` (id and label): the
     /// skills (`skills`) or the connectors the expert in the form may use.
+    /// The two ways are a segmented control; the ones to pick, chips.
     fn expert_reach_choice(
         &self,
         skills: bool,
@@ -236,40 +259,45 @@ impl Workspace {
                 this.expert_connectors = list;
             }
         };
-        let mut choice = div()
-            .h_flex()
-            .gap_1()
-            .child(
-                Button::new(SharedString::from(format!("expert-{kind}-every")))
-                    .label(if skills {
+        let ways = surfaces::segmented(
+            [
+                surfaces::plain_segment(
+                    SharedString::from(format!("expert-{kind}-every")),
+                    if skills {
                         tr("Every skill")
                     } else {
                         tr("Every connector")
-                    })
-                    .small()
-                    .selected(chosen.is_none())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        set(this, None);
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Button::new(SharedString::from(format!("expert-{kind}-only")))
-                    .label(tr("Only these"))
-                    .small()
-                    .selected(chosen.is_some())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        let current = if skills {
-                            &this.expert_skills
-                        } else {
-                            &this.expert_connectors
-                        };
-                        if current.is_none() {
-                            set(this, Some(Vec::new()));
-                        }
-                        cx.notify();
-                    })),
-            );
+                    },
+                    chosen.is_none(),
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    set(this, None);
+                    cx.notify();
+                }))
+                .into_any_element(),
+                surfaces::plain_segment(
+                    SharedString::from(format!("expert-{kind}-only")),
+                    tr("Only these"),
+                    chosen.is_some(),
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let current = if skills {
+                        &this.expert_skills
+                    } else {
+                        &this.expert_connectors
+                    };
+                    if current.is_none() {
+                        set(this, Some(Vec::new()));
+                    }
+                    cx.notify();
+                }))
+                .into_any_element(),
+            ],
+            cx,
+        );
+        let choice = div().h_flex().child(ways);
         let Some(picked) = chosen else {
             return choice;
         };
@@ -278,10 +306,8 @@ impl Workspace {
             let on = picked.contains(id);
             let id = id.clone();
             chips = chips.child(
-                Button::new(SharedString::from(format!("expert-{kind}-{index}")))
-                    .label(name.clone())
-                    .xsmall()
-                    .selected(on)
+                surfaces::choice_chip(SharedString::from(format!("expert-{kind}-{index}")), on, cx)
+                    .child(name.clone())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let current = if skills {
                             &this.expert_skills
@@ -302,161 +328,187 @@ impl Workspace {
         {
             let gone = id.clone();
             chips = chips.child(
-                Button::new(SharedString::from(format!("expert-{kind}-gone-{index}")))
-                    .label(id.clone())
-                    .xsmall()
-                    .selected(true)
-                    .tooltip(tr("Not found here any more"))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        let current = if skills {
-                            &this.expert_skills
-                        } else {
-                            &this.expert_connectors
-                        };
-                        let next = crate::settings::toggled(current, &gone);
-                        set(this, next);
-                        cx.notify();
-                    })),
+                surfaces::choice_chip(
+                    SharedString::from(format!("expert-{kind}-gone-{index}")),
+                    true,
+                    cx,
+                )
+                .child(id.clone())
+                .tooltip(|window, cx| {
+                    gpui_component::tooltip::Tooltip::new(tr("Not found here any more"))
+                        .build(window, cx)
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let current = if skills {
+                        &this.expert_skills
+                    } else {
+                        &this.expert_connectors
+                    };
+                    let next = crate::settings::toggled(current, &gone);
+                    set(this, next);
+                    cx.notify();
+                })),
             );
         }
-        choice = div().v_flex().gap_1().child(choice).child(chips);
-        choice
+        div().v_flex().gap_2().child(choice).child(chips)
     }
 
-    fn expert_row(&self, expert: &Expert, cx: &mut Context<Self>) -> Div {
+    /// One expert as a record row: its name, its description (or where it
+    /// comes from) after it; the model it runs on and what it may reach on
+    /// lines under it. Change is an icon button, Remove
+    /// last in the danger colour; the remove question opens under it.
+    fn expert_row(&self, expert: &Expert, cx: &mut Context<Self>) -> surfaces::RecordRow {
         let muted = cx.theme().muted_foreground;
         let id = expert.id.clone();
         let asking = self.layers.contains(Layer::ConfirmRemoveExpert)
             && self.expert_editing.as_deref() == Some(id.as_str());
-        let mut about = div().v_flex().flex_1().min_w_0().gap_1().child(
-            div()
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .child(expert.name.clone()),
-        );
         let description = match (expert.description.is_empty(), expert.builtin) {
             (false, _) => expert.description.clone(),
             (true, true) => tr("Ships with Wisp").into(),
             (true, false) => String::new(),
         };
+        let mut row = surfaces::record_row(
+            SharedString::from(format!("expert-{id}")),
+            expert.name.clone(),
+        )
+        .icon("user");
+        if !description.is_empty() {
+            row = row.suffix(description);
+        }
+        let mut under = div().v_flex().gap_0p5();
+        let mut opened = false;
         if let Some(note) =
             crate::settings::expert_model_note(self.settings.current(), &expert.model)
         {
-            about = about.child(div().text_xs().text_color(muted).child(note));
+            opened = true;
+            under = under.child(div().text_xs().text_color(muted).child(note));
         }
         if let Some(reach) = crate::settings::expert_reach(expert) {
-            about = about.child(div().text_xs().text_color(muted).child(reach));
+            opened = true;
+            under = under.child(div().text_xs().text_color(muted).child(reach));
         }
-        if !description.is_empty() {
-            about = about.child(div().text_xs().text_color(muted).child(description));
-        }
-        let mut actions = div().h_flex().gap_1().flex_shrink_0();
         if asking {
-            actions = actions
-                .child(
-                    Button::new(SharedString::from(format!("expert-remove-yes-{id}")))
-                        .label(tr("Remove"))
-                        .small()
-                        .danger()
-                        .on_click(cx.listener({
-                            let id = id.clone();
-                            move |this, _, window, cx| {
-                                let reply = this.backend.delete_expert(id.clone());
-                                this.change_experts(reply, window, cx)
-                            }
-                        })),
-                )
-                .child(
-                    Button::new(SharedString::from(format!("expert-remove-no-{id}")))
-                        .label(tr("Keep"))
-                        .small()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.layers.close(Layer::ConfirmRemoveExpert);
-                            this.expert_editing = None;
-                            cx.notify();
-                        })),
-                );
-        } else {
-            let editing = expert.clone();
-            actions = actions.child(
-                Button::new(SharedString::from(format!("expert-edit-{id}")))
-                    .label(tr("Change"))
-                    .small()
-                    .ghost()
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.edit_expert(Some(&editing), window, cx)
-                    })),
-            );
-            if !expert.builtin {
-                actions = actions.child(
-                    Button::new(SharedString::from(format!("expert-remove-{id}")))
-                        .label(tr("Remove"))
-                        .small()
-                        .ghost()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.layers.close(Layer::ExpertForm);
-                            this.expert_editing = Some(id.clone());
-                            this.layers.open(Layer::ConfirmRemoveExpert);
-                            cx.notify();
-                        })),
-                );
-            }
-        }
-        let mut row = div()
-            .h_flex()
-            .items_start()
-            .gap_4()
-            .py_3()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(about)
-            .child(actions);
-        if asking {
-            row = div().v_flex().child(row).child(
+            opened = true;
+            under = under.child(
                 div()
-                    .pb_2()
-                    .text_xs()
-                    .text_color(cx.theme().danger)
-                    .child(tr(
-                        "Remove this expert? Conversations started as it keep the instructions \
+                    .h_flex()
+                    .items_center()
+                    .gap_2()
+                    .pt_1()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(cx.theme().danger)
+                            .child(tr(
+                                "Remove this expert? Conversations started as it keep the instructions \
                      they were given.",
-                    )),
+                            )),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("expert-remove-yes-{id}")))
+                            .label(tr("Remove"))
+                            .small()
+                            .danger()
+                            .on_click(cx.listener({
+                                let id = id.clone();
+                                move |this, _, window, cx| {
+                                    let reply = this.backend.delete_expert(id.clone());
+                                    this.change_experts(reply, window, cx)
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("expert-remove-no-{id}")))
+                            .label(tr("Keep"))
+                            .small()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.layers.close(Layer::ConfirmRemoveExpert);
+                                this.expert_editing = None;
+                                cx.notify();
+                            })),
+                    ),
             );
         }
-        row
+        let editing = expert.clone();
+        row =
+            row.action(
+                surfaces::icon_action(
+                    SharedString::from(format!("expert-edit-{id}")),
+                    "edit",
+                    tr("Change"),
+                    surfaces::IconTone::Faded,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.edit_expert(Some(&editing), window, cx)
+                })),
+            );
+        if !expert.builtin {
+            let removing = id.clone();
+            row = row.action(
+                surfaces::danger_action(
+                    SharedString::from(format!("expert-remove-{id}")),
+                    "trash",
+                    tr("Remove"),
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.layers.close(Layer::ExpertForm);
+                    this.expert_editing = Some(removing.clone());
+                    this.layers.open(Layer::ConfirmRemoveExpert);
+                    cx.notify();
+                })),
+            );
+        }
+        row.below(opened.then(|| under.into_any_element()))
     }
 
     pub(super) fn render_expert_settings(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
-        let mut page =
-            self.settings_page(cx)
-                .child(div().pb_2().text_xs().text_color(muted).child(tr(
+        let mut page = self.settings_page(cx).child(
+            surfaces::settings_note_help(
+                tr("Personas a conversation can be started as."),
+                tr(
                     "An expert is a persona a conversation is started as: a name and the \
                  instructions the model works under throughout. Choose one in the composer \
                  before the first message.",
-                )));
+                ),
+                cx,
+            )
+            .pb_3(),
+        );
         let form_open = self.layers.contains(Layer::ExpertForm);
         let editing = self.expert_editing.as_deref();
-        for expert in &self.experts {
-            page = page.child(self.expert_row(expert, cx));
-            if form_open && editing == Some(expert.id.as_str()) {
-                page = page.child(div().py_2().child(self.expert_form(expert.builtin, cx)));
-            }
+        let hover = cx.theme().list_hover;
+        let paper = cx.theme().popover;
+        let rows: Vec<_> = self
+            .experts
+            .iter()
+            .map(|expert| {
+                let chosen = form_open && editing == Some(expert.id.as_str());
+                self.expert_row(expert, cx)
+                    .when(chosen, |row| row.bg(paper))
+                    .when(!chosen, |row| row.hover(move |style| style.bg(hover)))
+            })
+            .collect();
+        if !rows.is_empty() {
+            page = page.child(surfaces::record_group(rows, cx));
         }
-        if form_open && editing == Some("") {
-            page = page.child(div().py_2().child(self.expert_form(false, cx)));
+        if form_open {
+            let builtin = self
+                .experts
+                .iter()
+                .find(|expert| Some(expert.id.as_str()) == editing)
+                .is_some_and(|expert| expert.builtin);
+            page.child(self.expert_form(builtin, cx))
         } else {
-            page = page.child(
-                div().pt_3().h_flex().child(
-                    Button::new("expert-add")
-                        .label(tr("Add an expert"))
-                        .small()
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.edit_expert(None, window, cx)),
-                        ),
+            page.child(div().pt_3().h_flex().child(
+                surfaces::outlined_action("expert-add", "plus", tr("Add an expert"), cx).on_click(
+                    cx.listener(|this, _, window, cx| this.edit_expert(None, window, cx)),
                 ),
-            );
+            ))
         }
-        page
     }
 }

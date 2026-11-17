@@ -6,7 +6,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::{ScheduleInput, ScheduleRow};
 
@@ -97,12 +96,7 @@ impl Workspace {
             .rounded(cx.theme().radius)
             .border_1()
             .border_color(cx.theme().border)
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Daily recap")),
-            )
+            .child(div().text_sm().child(tr("Daily recap")))
             .child(div().text_xs().text_color(muted).child(tr(
                 "Each day after this time, a recap is drafted from the records of each \
                  project's last three days that have none yet. Drafts wait on the project's \
@@ -125,7 +119,11 @@ impl Workspace {
                             }),
                         ),
                     )
-                    .child(div().w(px(80.)).child(Input::new(&self.recap_time).small()))
+                    .child(
+                        div()
+                            .w(px(80.))
+                            .child(super::surfaces::input(&self.recap_time, cx).small()),
+                    )
                     .child(
                         Button::new("daily-recap-time")
                             .label(tr("Save"))
@@ -136,15 +134,18 @@ impl Workspace {
                     )
                     .child(div().flex_1())
                     .child(
-                        Button::new("daily-recap-now")
-                            .label(tr("Run now"))
-                            .small()
-                            .ghost()
-                            .disabled(running)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                let reply = this.backend.run_daily_recap_now();
-                                this.show_daily_recap(reply, false, window, cx);
-                            })),
+                        super::surfaces::icon_action(
+                            "daily-recap-now",
+                            "play",
+                            tr("Run now"),
+                            super::surfaces::IconTone::Faded,
+                            cx,
+                        )
+                        .disabled(running)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            let reply = this.backend.run_daily_recap_now();
+                            this.show_daily_recap(reply, false, window, cx);
+                        })),
                     ),
             )
             .child(
@@ -317,7 +318,7 @@ impl Workspace {
                 when = when.child(label(tr("Every (hours)"))).child(
                     div()
                         .w(px(70.))
-                        .child(Input::new(&self.schedule_fields[2]).small()),
+                        .child(super::surfaces::input(&self.schedule_fields[2], cx).small()),
                 );
             }
             Repeat::Daily | Repeat::Weekly => {
@@ -341,7 +342,7 @@ impl Workspace {
                 when = when.child(label(tr("Time (HH:MM)"))).child(
                     div()
                         .w(px(80.))
-                        .child(Input::new(&self.schedule_fields[3]).small()),
+                        .child(super::surfaces::input(&self.schedule_fields[3], cx).small()),
                 );
             }
         }
@@ -353,22 +354,17 @@ impl Workspace {
             .rounded(cx.theme().radius)
             .border_1()
             .border_color(cx.theme().border)
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("New scheduled task")),
-            )
+            .child(div().text_sm().child(tr("New scheduled task")))
             .child(label(tr("Project")))
             .child(projects)
             .child(label(tr("Prompt")))
             .child(
                 div()
                     .h(px(140.))
-                    .child(Input::new(&self.schedule_fields[1]).h_full()),
+                    .child(super::surfaces::input(&self.schedule_fields[1], cx).h_full()),
             )
             .child(label(tr("Name. Empty takes the prompt's first line")))
-            .child(Input::new(&self.schedule_fields[0]).small())
+            .child(super::surfaces::input(&self.schedule_fields[0], cx).small())
             .child(label(tr("Repeat")))
             .child(repeats)
             .child(when)
@@ -437,18 +433,12 @@ impl Workspace {
                 div()
                     .h_flex()
                     .gap_2()
-                    .child(
-                        div()
-                            .truncate()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(row.name.clone()),
-                    )
+                    .child(div().truncate().text_sm().child(row.name.clone()))
                     .child(chip(row.project_name.clone(), Tone::Neutral, cx))
                     .children(
                         row.session
                             .is_some()
-                            .then(|| chip(tr("A conversation's timer"), Tone::Active, cx)),
+                            .then(|| chip(tr("A conversation's timer"), Tone::Neutral, cx)),
                     ),
             )
             .child(
@@ -462,9 +452,9 @@ impl Workspace {
                 div()
                     .h_flex()
                     .gap_3()
-                    .child(chip(
+                    // How often, as a fact.
+                    .child(super::surfaces::fact(
                         schedules::cadence_label(row.interval_secs),
-                        Tone::Active,
                         cx,
                     ))
                     .child(
@@ -506,10 +496,7 @@ impl Workspace {
             let (run, toggle, delete) = (id.clone(), id.clone(), id.clone());
             actions = actions
                 .child(
-                    Button::new(SharedString::from(format!("schedule-run-{id}")))
-                        .label(tr("Run now"))
-                        .small()
-                        .ghost()
+                    super::surfaces::icon_action(SharedString::from(format!("schedule-run-{id}")), "play", tr("Run now"), super::surfaces::IconTone::Faded, cx)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             let reply = this.backend.run_schedule_now(run.clone());
                             this.change_schedules(
@@ -532,10 +519,7 @@ impl Workspace {
                     })),
                 )
                 .child(
-                    Button::new(SharedString::from(format!("schedule-delete-{id}")))
-                        .label(tr("Delete"))
-                        .small()
-                        .ghost()
+                    super::surfaces::danger_action(SharedString::from(format!("schedule-delete-{id}")), "trash", tr("Delete"), cx)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.layers.close(Layer::ScheduleForm);
                             this.schedule_deleting = Some(delete.clone());
@@ -571,11 +555,26 @@ impl Workspace {
                 nav_row("schedules-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_schedules(window, cx))),
             )
-            .child(surfaces::title(tr("Scheduled tasks")).px_2().pt_3())
-            .child(div().px_2().pb_2().text_xs().text_color(muted).child(tr(
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .pt_3()
+                    .pb_1()
+                    .child(surfaces::title(tr("Scheduled tasks")))
+                    // What the page is for, a tooltip away, not a paragraph in
+                    // the rail.
+                    .child(surfaces::help(
+                        "schedules-help",
+                        tr(
                 "Prompts sent on a schedule while the app is open, or any time you need \
                  them. Each firing is a conversation of its own in the task's project.",
-            )))
+                        ),
+                        cx,
+                    )),
+            )
             .child(
                 div().px_1().child(
                     Button::new("schedule-new")
@@ -588,15 +587,8 @@ impl Workspace {
                 ),
             );
 
-        let mut body = div()
-            .id("schedules-body")
-            .v_flex()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .p_6()
-            .gap_3()
-            .overflow_y_scroll();
+        // The page's records in a centred column (`surfaces::page_column`).
+        let mut body = surfaces::page_column();
         if let Some(error) = &self.error {
             body = body.child(error_banner(error, cx));
         }
@@ -608,18 +600,23 @@ impl Workspace {
         }
         body = body.child(self.daily_recap_card(cx));
         let Some(rows) = &self.schedules else {
-            return div().h_flex().size_full().child(side).child(
-                body.child(
-                    div()
-                        .text_sm()
-                        .text_color(muted)
-                        .child(if self.error.is_some() {
-                            ""
-                        } else {
-                            tr("Loading…")
-                        }),
-                ),
-            );
+            return div()
+                .h_flex()
+                .size_full()
+                .child(side)
+                .child(surfaces::page_scroll(
+                    "schedules-body",
+                    body.child(
+                        div()
+                            .text_sm()
+                            .text_color(muted)
+                            .child(if self.error.is_some() {
+                                ""
+                            } else {
+                                tr("Loading…")
+                            }),
+                    ),
+                ));
         };
         if rows.is_empty() {
             body = body.child(div().text_sm().text_color(muted).child(tr(
@@ -649,6 +646,10 @@ impl Workspace {
                     .child(tr("Templates")),
             )
             .child(templates);
-        div().h_flex().size_full().child(side).child(body)
+        div()
+            .h_flex()
+            .size_full()
+            .child(side)
+            .child(surfaces::page_scroll("schedules-body", body))
     }
 }

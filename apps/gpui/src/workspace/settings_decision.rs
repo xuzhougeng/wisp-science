@@ -3,13 +3,17 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_dto::{DECISION_PRESETS, DECISION_THINK_MODES, DecisionModelSettings, DecisionPreset};
 
-use super::{Workspace, settings_sections::setting, surfaces::switch};
+use super::{
+    Workspace,
+    settings_sections::{explained_setting, setting},
+    shell::glyph,
+    surfaces::{self, switch},
+};
 use crate::{
     backend::{Reply, receive},
     decision,
@@ -122,50 +126,55 @@ impl Workspace {
         let enabled = draft.enabled;
         let stored = saved.has_key(&draft.preset);
 
-        let mut services = div().h_flex().flex_wrap().gap_1().justify_end();
-        for preset in DECISION_PRESETS {
-            services = services.child(
-                Button::new(SharedString::from(format!("decision-preset-{}", preset.id)))
-                    .label(decision::preset_label(preset.id))
-                    .small()
-                    .selected(draft.preset == preset.id)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        let next = decision::picked(&this.decision_draft, preset);
-                        this.show_decision_draft(next, window, cx);
-                        this.decision_note = None;
-                        this.settings_error = None;
-                        cx.notify();
-                    })),
-            );
-        }
-        let mut thinking = div().h_flex().flex_wrap().gap_1().justify_end();
-        for mode in DECISION_THINK_MODES {
-            thinking = thinking.child(
-                Button::new(SharedString::from(format!("decision-think-{mode}")))
-                    .label(decision::think_label(mode))
-                    .small()
-                    .selected(draft.think_mode == *mode)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.decision_draft.think_mode = (*mode).to_owned();
-                        this.decision_note = None;
-                        this.settings_error = None;
-                        cx.notify();
-                    })),
-            );
-        }
+        // One service of a few, and one way of thinking of a few: a
+        // segmented control each.
+        let services = surfaces::segmented(
+            DECISION_PRESETS.iter().map(|preset| {
+                surfaces::plain_segment(
+                    SharedString::from(format!("decision-preset-{}", preset.id)),
+                    decision::preset_label(preset.id),
+                    draft.preset == preset.id,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    let next = decision::picked(&this.decision_draft, preset);
+                    this.show_decision_draft(next, window, cx);
+                    this.decision_note = None;
+                    this.settings_error = None;
+                    cx.notify();
+                }))
+                .into_any_element()
+            }),
+            cx,
+        );
+        let thinking = surfaces::segmented(
+            DECISION_THINK_MODES.iter().map(|mode| {
+                surfaces::plain_segment(
+                    SharedString::from(format!("decision-think-{mode}")),
+                    decision::think_label(mode),
+                    draft.think_mode == *mode,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.decision_draft.think_mode = (*mode).to_owned();
+                    this.decision_note = None;
+                    this.settings_error = None;
+                    cx.notify();
+                }))
+                .into_any_element()
+            }),
+            cx,
+        );
         let field = |index: usize, width: f32| {
             div()
                 .w(px(width))
-                .child(Input::new(&self.decision_fields[index]).small())
+                .child(surfaces::input(&self.decision_fields[index], cx).small())
         };
-        let mut key_control = div().h_flex().gap_2().child(field(3, 220.));
+        let mut key_control = div().h_flex().items_center().gap_1().child(field(3, 260.));
         if stored {
             let preset = draft.preset.clone();
             key_control = key_control.child(
-                Button::new("decision-forget-key")
-                    .label(tr("Forget key"))
-                    .small()
-                    .ghost()
+                surfaces::danger_action("decision-forget-key", "trash", tr("Forget key"), cx)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.settings_error = None;
                         let reply = this.backend.clear_decision_model_key(preset.clone());
@@ -183,10 +192,12 @@ impl Workspace {
 
         let mut actions = div()
             .h_flex()
-            .gap_3()
+            .items_center()
+            .gap_2()
             .pt_4()
             .child(
                 Button::new("decision-save")
+                    .icon(glyph("save"))
                     .label(tr("Save"))
                     .small()
                     .primary()
@@ -200,20 +211,21 @@ impl Workspace {
                     ),
             )
             .child(
-                Button::new("decision-test")
-                    .label(if self.decision_testing {
+                surfaces::outlined_action(
+                    "decision-test",
+                    "bolt",
+                    if self.decision_testing {
                         tr("Testing…")
                     } else {
                         tr("Test connection")
-                    })
-                    .small()
-                    .disabled(self.decision_testing)
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.test_decision_model(window, cx)),
-                    ),
+                    },
+                    cx,
+                )
+                .disabled(self.decision_testing)
+                .on_click(cx.listener(|this, _, window, cx| this.test_decision_model(window, cx))),
             );
         if let Some(note) = &self.decision_note {
-            actions = actions.child(div().text_xs().text_color(muted).child(note.clone()));
+            actions = actions.child(surfaces::settings_note(note.clone(), cx));
         }
 
         page.child(
@@ -221,16 +233,21 @@ impl Workspace {
                 .v_flex()
                 .gap_1()
                 .pb_2()
-                .child(div().w(px(640.)).text_xs().text_color(muted).child(tr(
-                    "A decision model answers yes/no, choice and score questions with a \
+                .child(surfaces::settings_note_help(
+                    tr("Answers typed questions with a probability for each option."),
+                    tr(
+                        "A decision model answers yes/no, choice and score questions with a \
                      probability for every option instead of writing text, usually within \
                      milliseconds. With one in use, the model's map_items tool can decide \
                      over many items at once. It applies from a conversation's next turn.",
-                )))
+                    ),
+                    cx,
+                ))
                 .child(div().text_sm().child(decision::status(saved))),
         )
-        .child(setting(
+        .child(explained_setting(
             tr("Use a decision model"),
+            "",
             tr("Off, map_items still runs its worker step on the sub-agent model."),
             switch("decision-enabled", enabled, tr("Use a decision model")).on_change(cx.listener(
                 |this, _, _, cx| {
@@ -248,27 +265,30 @@ impl Workspace {
             services,
             cx,
         ))
-        .child(setting(
+        .child(explained_setting(
             tr("Base URL"),
+            "",
             tr("Where the service answers. Empty takes the service's own address."),
-            field(0, 320.),
+            field(0, 300.),
             cx,
         ))
         .child(setting(
             tr("Model"),
             tr("The model to ask for. Empty lets the server pick."),
-            field(1, 320.),
+            field(1, 300.),
             cx,
         ))
         .child(setting(tr("API key"), key_note, key_control, cx))
-        .child(setting(
+        .child(explained_setting(
             tr("Thinking"),
+            "",
             tr("For servers that can think before answering when they are unsure."),
             thinking,
             cx,
         ))
-        .child(setting(
+        .child(explained_setting(
             tr("Timeout"),
+            "",
             tr("Seconds to wait for an answer, from 1 to 600. Empty takes the service's own."),
             field(2, 90.),
             cx,

@@ -143,7 +143,6 @@ impl Workspace {
                     .truncate()
                     .text_sm()
                     .text_color(tone)
-                    .when(reading, |title| title.font_weight(FontWeight::MEDIUM))
                     .child(said),
             )
             // While the reviewer reads, the WebView's line under its title
@@ -225,7 +224,7 @@ impl Workspace {
                         .py_4()
                         .v_flex()
                         .gap_0p5()
-                        .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(title))
+                        .child(div().text_sm().child(title))
                         .child(div().text_xs().text_color(muted).child(note)),
                 );
             }
@@ -241,7 +240,6 @@ impl Workspace {
                         div()
                             .pt_2()
                             .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
                             .text_color(tone_color(tone, cx))
                             .child(outcome),
                     )
@@ -275,7 +273,6 @@ impl Workspace {
                             .child(
                                 div()
                                     .text_xs()
-                                    .font_weight(FontWeight::MEDIUM)
                                     .text_color(tone_color(tone, cx))
                                     .child(heading),
                             )

@@ -7,7 +7,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::{PromotionPreview, TurnRef};
 
@@ -326,7 +325,6 @@ impl Workspace {
                         .child(
                             div()
                                 .text_sm()
-                                .font_weight(FontWeight::MEDIUM)
                                 .child(summary.exploration.name.clone()),
                         )
                         .child(chip(
@@ -403,12 +401,10 @@ impl Workspace {
                     .h_flex()
                     .gap_2()
                     .child(glyph("flask").text_color(flask))
-                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(
-                        crate::i18n::fill(
-                            tr("Mainline checkpoint · {} exploration(s) in this round"),
-                            &[&state.candidate_count],
-                        ),
-                    )),
+                    .child(div().text_sm().child(crate::i18n::fill(
+                        tr("Mainline checkpoint · {} exploration(s) in this round"),
+                        &[&state.candidate_count],
+                    ))),
             );
             // Why it cannot be written to is said once, by the card in the
             // composer's place.
@@ -464,10 +460,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         let muted = cx.theme().muted_foreground;
-        let mut list = div()
-            .v_flex()
-            .gap_1()
-            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(title));
+        let mut list = div().v_flex().gap_1().child(div().text_sm().child(title));
         if files.is_empty() {
             return list.child(div().text_xs().text_color(muted).child(tr("None.")));
         }
@@ -612,7 +605,7 @@ impl Workspace {
         .child(div().text_xs().text_color(muted).child(tr(
                 "The exploration continues this conversation up to the chosen answer, in its own copy of the project's files as they are now (earlier file versions are not brought back). Keep one later, or discard them.",
             )))
-            .child(Input::new(&self.explore_name).small());
+            .child(super::surfaces::input(&self.explore_name, cx).small());
         if let Some(Err(error)) = &self.explore_note {
             card = card.child(chip(crate::i18n::host(error), Tone::Danger, cx));
         }

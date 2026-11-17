@@ -122,6 +122,38 @@ pub fn kind_label(kind: &str) -> &'static str {
     }
 }
 
+/// The icon of a record's kind, from the shared vocabulary, in place of a
+/// word: a question asked `chat`, a run `flask`, a file `doc`, a decision
+/// `check-square`, a next step `arrow-right`, a note of one's own
+/// `note-plus`, and the rest each its own.
+pub fn kind_icon(kind: &str) -> &'static str {
+    match kind {
+        "session" => "chat",
+        "run" => "flask",
+        "artifact" => "doc",
+        "decision" => "check-square",
+        "next" => "arrow-right",
+        "progress" | "finding" => "note-plus",
+        "paper" => "book",
+        "data_asset" => "database",
+        "archive" => "archive",
+        _ => "research-trail",
+    }
+}
+
+/// How a record's state reads as a stamp: a run's progress, a source that
+/// is gone.
+pub fn status_tone(entry: &ResearchJourneyEntry) -> Tone {
+    match (entry.kind.as_str(), entry.status.as_str()) {
+        ("run", "succeeded") => Tone::Success,
+        ("run", "failed") => Tone::Danger,
+        ("run", "cancelled") => Tone::Neutral,
+        ("run", _) => Tone::Active,
+        ("artifact", _) => Tone::Attention,
+        _ => Tone::Neutral,
+    }
+}
+
 /// The kinds a researcher can record themselves, with their labels.
 pub const CATEGORIES: [(&str, &str); 4] = [
     ("progress", "Progress"),
@@ -511,6 +543,34 @@ pub fn summary(journey: &ResearchJourney, shown: usize) -> String {
 mod tests {
     use super::*;
     use chrono::FixedOffset;
+
+    #[test]
+    fn a_records_kind_is_an_icon_of_its_own() {
+        let kinds = [
+            "session",
+            "run",
+            "artifact",
+            "decision",
+            "next",
+            "progress",
+            "paper",
+            "data_asset",
+            "archive",
+            "other",
+        ];
+        for kind in kinds {
+            assert!(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join(format!("assets/icons/{}.svg", kind_icon(kind)))
+                    .exists(),
+                "{kind}"
+            );
+        }
+        assert_eq!(kind_icon("session"), "chat");
+        assert_eq!(kind_icon("run"), "flask");
+        assert_eq!(kind_icon("decision"), "check-square");
+        assert_eq!(kind_icon("next"), "arrow-right");
+    }
 
     fn zone(hours: i32) -> FixedOffset {
         FixedOffset::east_opt(hours * 3_600).unwrap()

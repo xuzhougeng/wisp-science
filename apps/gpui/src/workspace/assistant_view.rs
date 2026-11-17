@@ -98,19 +98,22 @@ impl Workspace {
             .child(
                 div()
                     .text_xs()
-                    .font_semibold()
                     .child(assistant::summary(&self.assistant_plan)),
             );
         for (index, item) in self.assistant_plan.iter().enumerate() {
             let (status, tone) = assistant::status(&item.status);
-            let mut row = div().h_flex().gap_2().child(chip(status, tone, cx)).child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_sm()
-                    .child(item.title.clone()),
-            );
+            let mut row = div()
+                .h_flex()
+                .gap_2()
+                .child(super::surfaces::status(status, tone, cx))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_sm()
+                        .child(item.title.clone()),
+                );
             if let Some(project) = &item.project_name {
                 row = row.child(chip(project.clone(), Tone::Neutral, cx));
             }

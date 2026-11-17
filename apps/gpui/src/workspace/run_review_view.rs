@@ -6,7 +6,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 
 use super::{
@@ -369,7 +368,7 @@ impl Workspace {
             .child(
                 div()
                     .w(px(220.))
-                    .child(Input::new(&self.run_review_filter).small()),
+                    .child(super::surfaces::input(&self.run_review_filter, cx).small()),
             )
             .child(
                 icon_button("review-reload", "refresh", tr("Read it again"))

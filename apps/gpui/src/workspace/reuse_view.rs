@@ -10,7 +10,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 
 use super::{
@@ -345,12 +344,7 @@ impl Workspace {
                         .v_flex()
                         .flex_1()
                         .min_w_0()
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(tr("Choose the last turn to quote")),
-                        )
+                        .child(div().text_sm().child(tr("Choose the last turn to quote")))
                         .child(div().text_xs().text_color(muted).line_clamp(2).child(body)),
                 )
                 .child(
@@ -435,7 +429,7 @@ impl Workspace {
                     "Extract when this approach applies, its steps, checks and limits. Review the draft before reusing or saving it.",
                 )))
                 .child(label(tr("What worked well? (optional)")))
-                .child(Input::new(&self.reuse_fields[0]).small().disabled(!idle))
+                .child(super::surfaces::input(&self.reuse_fields[0], cx).small().disabled(!idle))
                 .child(
                     div().h_flex().child(
                         Button::new("reuse-generate")
@@ -458,7 +452,7 @@ impl Workspace {
                 .child(
                     div()
                         .h(px(220.))
-                        .child(Input::new(&self.reuse_fields[1]).h_full().disabled(!idle)),
+                        .child(super::surfaces::input(&self.reuse_fields[1], cx).h_full().disabled(!idle)),
                 )
                 .when(dialog.shortened, |card| {
                     card.child(label(tr(
@@ -553,7 +547,7 @@ impl Workspace {
         }
         card = card
             .child(label(tr("Destination")))
-            .child(Input::new(&self.reuse_fields[2]).small())
+            .child(super::surfaces::input(&self.reuse_fields[2], cx).small())
             .child(list)
             .child(label(tr(
                 "The quote is added to the destination’s draft. Add your request and send when ready.",

@@ -3,7 +3,7 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Icon, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Icon, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     input::Input,
     text::TextView,
@@ -11,7 +11,7 @@ use gpui_component::{
 use serde_json::json;
 use wisp_server::desktop::{RUNS_LOCALLY, Remember};
 
-use super::{Workspace, chip, surfaces, tone_color};
+use super::{Workspace, surfaces, tone_color};
 use crate::{
     assets::{icon, icon_path},
     compose::{self, Chip},
@@ -47,8 +47,9 @@ pub(super) fn icon_button(id: impl Into<ElementId>, name: &str, tooltip: &'stati
         .tooltip(tr(tooltip))
 }
 
-/// One line of sidebar navigation. The caller attaches the click handler only
-/// when `enabled`, so a dimmed row cannot be activated.
+/// One line of sidebar navigation: its icon (faded, ink when the row is
+/// chosen or under the pointer) and its word. The caller attaches the
+/// click handler only when `enabled`, so a dimmed row cannot be activated.
 pub(super) fn nav_row(
     id: impl Into<ElementId>,
     name: &str,
@@ -74,7 +75,17 @@ pub(super) fn nav_row(
                 .hover(|style| style.bg(accent.opacity(0.7)))
         })
         .when(!enabled, |row| row.opacity(0.5))
-        .child(icon(name).text_color(theme.muted_foreground))
+        .group(surfaces::ICON_HOVER)
+        .child(surfaces::sized_icon(
+            name,
+            surfaces::IconSize::Inline,
+            if selected {
+                surfaces::IconTone::Ink
+            } else {
+                surfaces::IconTone::Faded
+            },
+            cx,
+        ))
         .child(div().flex_1().min_w_0().truncate().child(label.into()))
 }
 
@@ -126,12 +137,137 @@ impl Workspace {
         )
     }
 
-    pub(super) fn render_sidebar(&self, cx: &mut Context<Self>) -> Div {
+    /// The sidebar's navigation folded into one row of icon buttons, for a
+    /// window too short to give the conversations half the sidebar: the
+    /// same seven places in the same order, each its name as tooltip, the
+    /// open one in ink on white. It wraps only when the sidebar is too
+    /// narrow for seven.
+    fn folded_nav(&self, disabled: bool, has_project: bool, cx: &mut Context<Self>) -> Div {
+        use surfaces::IconTone;
+        let panel_on =
+            |tab: PanelTab| self.layers.contains(Layer::FilesPanel) && self.panel_tab == tab;
+        let paper = cx.theme().popover;
+        let line = cx.theme().border;
+        let place = |id: &'static str,
+                     icon_name: &str,
+                     name: SharedString,
+                     open: bool,
+                     enabled: bool,
+                     cx: &mut Context<Self>| {
+            surfaces::icon_action(
+                id,
+                icon_name,
+                name,
+                if open { IconTone::Ink } else { IconTone::Faded },
+                cx,
+            )
+            .when(open, |button| {
+                button.bg(paper).border_1().border_color(line)
+            })
+            .disabled(!enabled)
+        };
+        let new_chat_key = if cfg!(target_os = "macos") {
+            "⌘N"
+        } else {
+            "Ctrl+N"
+        };
+        div()
+            .h_flex()
+            .flex_wrap()
+            .flex_shrink_0()
+            .gap_0p5()
+            .py_1()
+            .child(
+                place(
+                    "new-chat",
+                    "plus",
+                    crate::i18n::fill(tr("New conversation ({})"), &[&new_chat_key]).into(),
+                    false,
+                    !disabled && has_project,
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.create_session(window, cx))),
+            )
+            .child(
+                place(
+                    "files",
+                    "folder",
+                    tr("Files").into(),
+                    panel_on(PanelTab::Files),
+                    has_project,
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, window, cx| {
+                    // With the panel on another tab, this is a way to Files.
+                    if this.layers.contains(Layer::FilesPanel) && this.panel_tab != PanelTab::Files
+                    {
+                        this.show_panel_tab(PanelTab::Files, window, cx)
+                    } else {
+                        this.toggle_files(window, cx)
+                    }
+                })),
+            )
+            .child(
+                place(
+                    "memos",
+                    "note-plus",
+                    tr("Memos").into(),
+                    panel_on(PanelTab::Memos),
+                    has_project,
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if this.layers.contains(Layer::FilesPanel) && this.panel_tab == PanelTab::Memos
+                    {
+                        this.toggle_files(window, cx)
+                    } else {
+                        this.show_panel_tab(PanelTab::Memos, window, cx)
+                    }
+                })),
+            )
+            .child(
+                place(
+                    "capabilities",
+                    "sparkles",
+                    tr("Capabilities").into(),
+                    false,
+                    has_project,
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.open_capabilities(window, cx))),
+            )
+            .child(
+                place(
+                    "journey",
+                    "research-trail",
+                    tr("Journey").into(),
+                    false,
+                    has_project,
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.open_journey(window, cx))),
+            )
+            .child(
+                place(
+                    "papers",
+                    "book",
+                    tr("Papers").into(),
+                    false,
+                    has_project,
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.open_papers(window, cx))),
+            )
+            .child(
+                place("favorites", "star", tr("Favorites").into(), false, true, cx)
+                    .on_click(cx.listener(|this, _, window, cx| this.open_favorites(window, cx))),
+            )
+    }
+
+    pub(super) fn render_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let disabled = self.pending;
         let has_project = self.state.project.is_some();
         let muted = cx.theme().muted_foreground;
-        let accent = cx.theme().sidebar_accent;
-        let radius = cx.theme().radius;
         let project_name = self
             .state
             .project
@@ -150,22 +286,22 @@ impl Workspace {
         let has_project =
             has_project && !crate::assistant::is_assistant_project(self.state.project.as_deref());
 
-        let mut new_chat =
-            nav_row(
-                "new-chat",
-                "plus",
-                tr("New conversation"),
-                false,
-                !disabled && has_project,
-                cx,
-            )
-            .child(div().text_xs().text_color(muted).child(
-                if cfg!(target_os = "macos") {
-                    "⌘N"
-                } else {
-                    "Ctrl+N"
-                },
-            ));
+        let mut new_chat = nav_row(
+            "new-chat",
+            "plus",
+            tr("New conversation"),
+            false,
+            !disabled && has_project,
+            cx,
+        )
+        .child(surfaces::fact(
+            if cfg!(target_os = "macos") {
+                "⌘N"
+            } else {
+                "Ctrl+N"
+            },
+            cx,
+        ));
         if !disabled && has_project {
             new_chat = new_chat
                 .on_click(cx.listener(|this, _, window, cx| this.create_session(window, cx)));
@@ -209,6 +345,8 @@ impl Workspace {
             }));
         }
 
+        let sidebar_height = f32::from(window.viewport_size().height) - surfaces::TITLE_BAR_HEIGHT;
+        let fold = present::nav_folds(sidebar_height);
         let mut sidebar = div()
             .v_flex()
             .w(px(256.))
@@ -231,101 +369,65 @@ impl Workspace {
                     )
                     .child(surfaces::title(project_name).flex_1().min_w_0().truncate()),
             )
-            .child(new_chat)
-            .child(files)
-            .child(memos)
+            // Short of room, the navigation folds into one row of icons so
+            // the conversations keep at least half the sidebar.
+            .when(fold, |sidebar| {
+                sidebar.child(self.folded_nav(disabled, has_project, cx))
+            })
+            .when(!fold, |sidebar| {
+                sidebar
+                    .child(new_chat)
+                    .child(files)
+                    .child(memos)
+                    .child(
+                        nav_row(
+                            "capabilities",
+                            "sparkles",
+                            tr("Capabilities"),
+                            false,
+                            has_project,
+                            cx,
+                        )
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_capabilities(window, cx)),
+                        ),
+                    )
+                    .child(
+                        nav_row(
+                            "journey",
+                            "research-trail",
+                            tr("Journey"),
+                            false,
+                            has_project,
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| this.open_journey(window, cx))),
+                    )
+                    .child(
+                        nav_row("papers", "book", tr("Papers"), false, has_project, cx).on_click(
+                            cx.listener(|this, _, window, cx| this.open_papers(window, cx)),
+                        ),
+                    )
+                    .child(
+                        nav_row("favorites", "star", tr("Favorites"), false, true, cx).on_click(
+                            cx.listener(|this, _, window, cx| this.open_favorites(window, cx)),
+                        ),
+                    )
+            })
             .child(
-                nav_row(
-                    "capabilities",
-                    "sparkles",
-                    tr("Capabilities"),
-                    false,
-                    has_project,
-                    cx,
-                )
-                .on_click(cx.listener(|this, _, window, cx| this.open_capabilities(window, cx))),
-            )
-            .child(
-                nav_row("journey", "timeline", tr("Journey"), false, has_project, cx)
-                    .on_click(cx.listener(|this, _, window, cx| this.open_journey(window, cx))),
-            )
-            .child(
-                nav_row("papers", "doc", tr("Papers"), false, has_project, cx)
-                    .on_click(cx.listener(|this, _, window, cx| this.open_papers(window, cx))),
-            )
-            .child(
-                nav_row("favorites", "star", tr("Favorites"), false, true, cx)
-                    .on_click(cx.listener(|this, _, window, cx| this.open_favorites(window, cx))),
-            )
-            .child(
+                // White, with the fields' line, like the home page's.
                 div().py_1().child(
-                    Input::new(&self.search)
-                        .small()
-                        .prefix(icon("search").text_color(muted)),
+                    surfaces::field(cx).child(
+                        Input::new(&self.search)
+                            .small()
+                            .appearance(false)
+                            .prefix(icon("search").text_color(muted)),
+                    ),
                 ),
             );
 
-        // The conversation on screen is being attended to already.
-        let waiting: Vec<_> = self
-            .inbox
-            .iter()
-            .filter(|row| Some(&row.id) != self.state.session.as_ref())
-            .collect();
-        if !waiting.is_empty() {
-            let attention = tone_color(Tone::Attention, cx);
-            let mut inbox = div()
-                .id("inbox")
-                .v_flex()
-                .flex_shrink_0()
-                .max_h(px(150.))
-                .overflow_y_scroll();
-            for row in waiting {
-                let project = row.project_id.clone();
-                let session = row.id.clone();
-                let mut line = div()
-                    .id(SharedString::from(format!("inbox-{session}")))
-                    .v_flex()
-                    .px_2()
-                    .py_1()
-                    .rounded(radius)
-                    .child(
-                        div()
-                            .truncate()
-                            .text_sm()
-                            .child(present::one_line(&row.title)),
-                    )
-                    .child(
-                        div()
-                            .truncate()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(row.project_name.clone()),
-                    );
-                if !disabled {
-                    line = line
-                        .cursor_pointer()
-                        .hover(|style| style.bg(accent.opacity(0.7)))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_session(project.clone(), session.clone(), window, cx)
-                        }));
-                }
-                inbox = inbox.child(line);
-            }
-            sidebar = sidebar
-                .child(
-                    div()
-                        .h_flex()
-                        .gap_2()
-                        .px_2()
-                        .pt_2()
-                        .text_xs()
-                        .text_color(attention)
-                        .child(icon("bell").text_color(attention))
-                        .child(tr("Needs you")),
-                )
-                .child(inbox);
-        }
-
+        // What waits for the user is under the bell in the window's bar
+        // (`render_waiting`), so the conversations have this room.
         sidebar = sidebar
             .child(self.render_list_heading(cx))
             .child(self.render_session_list(cx));
@@ -343,137 +445,12 @@ impl Workspace {
         )
     }
 
-    fn render_topbar(&self, cx: &mut Context<Self>) -> Div {
-        let title = self
-            .current_row()
-            .map(|row| present::one_line(&row.title))
-            .unwrap_or_else(|| {
-                // The assistant's conversation is not among the listed ones.
-                if self
-                    .state
-                    .session
-                    .as_deref()
-                    .is_some_and(wisp_server::desktop::is_assistant)
-                {
-                    tr("Research assistant").into()
-                } else {
-                    tr("New research").into()
-                }
-            });
-        let mut heading = div()
-            .v_flex()
-            .flex_1()
-            .min_w_0()
-            .child(surfaces::title(title).truncate());
-        if let Some(snapshot) = &self.state.snapshot {
-            heading = heading.child(
-                div()
-                    .truncate()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(snapshot.model_id.clone()),
-            );
-        }
-        let sidebar = icon_button(
-            "toggle-sidebar",
-            "panel-left",
-            if self.sidebar_hidden {
-                "Show the sidebar"
-            } else {
-                "Hide the sidebar"
-            },
-        )
-        .selected(!self.sidebar_hidden)
-        .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)));
-        div()
-            .h_flex()
-            .gap_3()
-            .px_4()
-            .h(px(52.))
-            .flex_shrink_0()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(sidebar)
-            .child(heading)
-            .child(
-                div()
-                    .h_flex()
-                    .gap_1()
-                    .child(
-                        icon_button("palette", "search", tr("Search everything")).on_click(
-                            cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)),
-                        ),
-                    )
-                    .child(
-                        icon_button("terminal-toggle", "terminal", tr("Terminals"))
-                            .selected(self.terminal.open)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_terminal_dock(window, cx)
-                            })),
-                    )
-                    .child({
-                        let open = self.layers.contains(Layer::Outline);
-                        let button = div().relative().child(
-                            icon_button("outline", "list", tr("Outline: what you asked, in order"))
-                                .selected(open)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    if this.layers.close(Layer::Outline) {
-                                        this.focus_composer(window, cx);
-                                    } else {
-                                        this.layers.open(Layer::Outline);
-                                    }
-                                    cx.notify();
-                                })),
-                        );
-                        if open {
-                            // Painted last, over the transcript below.
-                            button.child(deferred(self.outline_menu(cx)))
-                        } else {
-                            button
-                        }
-                    })
-                    .child({
-                        let open = self.layers.contains(Layer::ConversationMenu);
-                        let button = div().relative().child(
-                            icon_button("conversation-menu", "more", tr("Conversation actions"))
-                                .selected(open)
-                                .disabled(self.current_row().is_none())
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.toggle_conversation_menu(window, cx)
-                                })),
-                        );
-                        // Painted last, over the transcript below.
-                        match open.then(|| self.conversation_menu(cx)).flatten() {
-                            Some(menu) => button.child(deferred(menu)),
-                            None => button,
-                        }
-                    })
-                    .child(
-                        icon_button("refresh", "refresh", tr("Refresh"))
-                            .disabled(self.pending)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.error = None;
-                                this.refresh_lists(window, cx);
-                                this.start_poll(window, cx);
-                                this.reload_files(window, cx);
-                            })),
-                    )
-                    .child(
-                        icon_button("files-toggle", "panel", tr("Files"))
-                            .selected(self.layers.contains(Layer::FilesPanel))
-                            .disabled(self.state.project.is_none())
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.toggle_files(window, cx)),
-                            ),
-                    ),
-            )
-    }
-
     /// The small actions under a message. They show while the pointer is
     /// over the message, and stay under the latest message (a compaction
-    /// line after it is not one) and one just copied.
-    fn message_actions(&self, index: usize, cx: &mut Context<Self>) -> Div {
-        let actions = self.message_action_items(index, cx);
+    /// line after it is not one), one just copied, and one whose More menu
+    /// is open.
+    fn message_actions(&self, index: usize, over: bool, cx: &mut Context<Self>) -> Div {
+        let actions = self.message_action_items(index, over, cx);
         // The turn a range of turns to quote starts at stays marked.
         let starts_range = self
             .reuse_start()
@@ -482,6 +459,7 @@ impl Workspace {
         if controls::latest_message(&self.rows) == Some(index)
             || self.copied == Some(index)
             || starts_range
+            || self.message_menu == Some(index)
         {
             return actions;
         }
@@ -490,158 +468,237 @@ impl Workspace {
             .group_hover(MESSAGE, |style| style.visible())
     }
 
-    fn message_action_items(&self, index: usize, cx: &mut Context<Self>) -> Div {
+    /// Three icon buttons (copy, favourite, ask aside), More for the rest
+    /// of what can be done with the message, and at the right end what the
+    /// turn cost, as a fact.
+    /// `over` lays them over a question's corner, on the paper, with no
+    /// line of their own.
+    fn message_action_items(&self, index: usize, over: bool, cx: &mut Context<Self>) -> Div {
+        use surfaces::IconTone;
         let copied = self.copied == Some(index);
-        let actions = div()
-            .h_flex()
-            .child(
-                icon_button(
-                    ("copy-row", index),
-                    if copied { "check" } else { "copy" },
-                    if copied { tr("Copied") } else { tr("Copy") },
-                )
-                .xsmall()
-                .on_click(cx.listener(move |this, _, window, cx| this.copy_row(index, window, cx))),
-            )
-            .child(
-                icon_button(("remember-row", index), "memory", tr("Save to memory"))
-                    .xsmall()
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| {
-                            this.remember_row(index, window, cx)
-                        }),
-                    ),
-            );
         let starred = self
             .rows
             .get(index)
             .is_some_and(|row| crate::favorites::saved_id(&self.saved, &row.text).is_some());
-        let actions = actions.child(
-            icon_button(
-                ("star-row", index),
-                if starred { "star-filled" } else { "star" },
-                if starred {
-                    tr("In your favorites. Click to remove")
+        let menu_open = self.message_menu == Some(index);
+        let mut more = div().relative().child(
+            surfaces::icon_action(
+                ("more-row", index),
+                "more",
+                tr("More actions"),
+                if menu_open {
+                    IconTone::Ink
                 } else {
-                    tr("Save to favorites")
+                    IconTone::Faded
                 },
+                cx,
             )
-            .xsmall()
-            .on_click(cx.listener(move |this, _, window, cx| this.star_row(index, window, cx))),
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_message_menu(index, cx))),
         );
-        // A selection can be copied with Cmd+C; the whole message can be
-        // quoted here, or asked about aside.
-        let actions = actions
+        if menu_open {
+            more = more.child(deferred(self.message_menu(index, over, cx)));
+        }
+        // What the turn cost, after its last answer.
+        let tokens = controls::turn_tokens_at(&self.rows, index, &self.turn_tokens).map(|tokens| {
+            let calls = tokens.calls;
+            div()
+                .id(("turn-tokens", index))
+                .child(surfaces::fact(controls::turn_tokens_line(tokens), cx))
+                .tooltip(move |window, cx| {
+                    gpui_component::tooltip::Tooltip::new(crate::i18n::fill(
+                        tr("This turn, over {} model calls"),
+                        &[&calls],
+                    ))
+                    .build(window, cx)
+                })
+        });
+        div()
+            .when(!over, |actions| actions.w_full())
+            .when(over, |actions| {
+                actions.rounded(cx.theme().radius).bg(cx.theme().background)
+            })
+            .h_flex()
+            .items_center()
+            .gap_0p5()
             .child(
-                icon_button(("quote-row", index), "bubble", tr("Quote in the composer"))
-                    .xsmall()
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.quote_row(index, window, cx)),
-                    ),
+                surfaces::icon_action(
+                    ("copy-row", index),
+                    if copied { "check" } else { "copy" },
+                    if copied { tr("Copied") } else { tr("Copy") },
+                    IconTone::Faded,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| this.copy_row(index, window, cx))),
             )
             .child(
-                icon_button(
-                    ("aside-row", index),
-                    "circle-help",
-                    tr("Ask aside about this"),
+                surfaces::icon_action(
+                    ("star-row", index),
+                    if starred { "star-filled" } else { "star" },
+                    if starred {
+                        tr("In your favorites. Click to remove")
+                    } else {
+                        tr("Save to favorites")
+                    },
+                    if starred {
+                        IconTone::Ink
+                    } else {
+                        IconTone::Faded
+                    },
+                    cx,
                 )
-                .xsmall()
+                .on_click(cx.listener(move |this, _, window, cx| this.star_row(index, window, cx))),
+            )
+            .child(
+                surfaces::icon_action(
+                    ("aside-row", index),
+                    "bubble",
+                    tr("Ask aside about this"),
+                    IconTone::Faded,
+                    cx,
+                )
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.ask_aside_about_row(index, window, cx)
                 })),
-            );
+            )
+            .child(more)
+            .when(!over, |actions| actions.child(div().flex_1()))
+            .children(tokens)
+    }
+
+    /// Opens or closes the More menu under one message.
+    fn toggle_message_menu(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.message_menu == Some(index) && self.layers.close(Layer::MessageMenu) {
+            self.message_menu = None;
+        } else {
+            self.message_menu = Some(index);
+            self.layers.open(Layer::MessageMenu);
+        }
+        cx.notify();
+    }
+
+    /// The rest of what can be done with a message, in a menu over its More
+    /// button: save it to memory, quote it, reuse a range of turns, and by
+    /// its kind edit it, branch, review or explore from it. Each is an icon
+    /// and a word; one that cannot be taken now is dimmed and inert.
+    /// It opens downward from a question's corner and upward from under an
+    /// answer (`down`), towards the room there is.
+    fn message_menu(&self, index: usize, down: bool, cx: &mut Context<Self>) -> Div {
+        type Run = fn(&mut Workspace, usize, &mut Window, &mut Context<Workspace>);
+        let item = |id: &'static str,
+                    icon_name: &str,
+                    label: &'static str,
+                    enabled: bool,
+                    run: Run,
+                    cx: &mut Context<Self>| {
+            let row = Self::menu_item((id, index), icon_name, label, cx);
+            if !enabled {
+                return row.opacity(0.5).cursor_default();
+            }
+            row.on_click(cx.listener(move |this, _, window, cx| {
+                this.layers.close(Layer::MessageMenu);
+                this.message_menu = None;
+                run(this, index, window, cx);
+                cx.notify();
+            }))
+        };
         // Rewinding and branching work on saved turns of a conversation
         // that is at rest and still part of everyday work.
         let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
-        // Quote / reuse only reads the turns, so it is offered in a
-        // read-only conversation too, on the user's messages.
-        let actions = if crate::reuse::offered(&self.rows, index, self.reuse_acp(), running) {
-            let start = self
-                .reuse_start()
-                .and_then(|selection| selection.row(&self.rows));
-            let (name, tooltip) = crate::reuse::action(start.is_some());
-            actions.child(
-                icon_button(("reuse-row", index), name, tooltip)
-                    .xsmall()
-                    .selected(start == Some(index))
-                    .disabled(self.reuse_loading)
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.reuse_turn(index, window, cx)),
-                    ),
-            )
-        } else {
-            actions
-        };
         let archived = self.current_row().is_none_or(|row| row.shelved);
         let idle = !running && !self.pending;
         // A read-only conversation's messages are not edited, a branch is
         // not branched again, and a frozen one is not reviewed.
         let offered = self.offered();
-        // What the turn cost, after its last answer.
-        let actions = match controls::turn_tokens_at(&self.rows, index, &self.turn_tokens) {
-            Some(tokens) => {
-                let calls = tokens.calls;
-                actions.child(
-                    div()
-                        .id(("turn-tokens", index))
-                        .ml_2()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(controls::turn_tokens_line(tokens))
-                        .tooltip(move |window, cx| {
-                            gpui_component::tooltip::Tooltip::new(crate::i18n::fill(
-                                tr("This turn, over {} model calls"),
-                                &[&calls],
-                            ))
-                            .build(window, cx)
-                        }),
-                )
-            }
-            None => actions,
-        };
+        let mut menu = div()
+            .absolute()
+            .when(down, |menu| {
+                menu.top(px(surfaces::ICON_BUTTON + 4.)).right_0()
+            })
+            .when(!down, |menu| {
+                menu.bottom(px(surfaces::ICON_BUTTON + 4.)).left_0()
+            })
+            .w(px(250.))
+            .v_flex()
+            .p_1()
+            .occlude()
+            .rounded(cx.theme().radius_lg)
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().popover)
+            .shadow_md()
+            .child(item(
+                "remember-row",
+                "memory",
+                tr("Save to memory"),
+                true,
+                |this, index, window, cx| this.remember_row(index, window, cx),
+                cx,
+            ))
+            .child(item(
+                "quote-row",
+                "square-pen",
+                tr("Quote in the composer"),
+                true,
+                |this, index, window, cx| this.quote_row(index, window, cx),
+                cx,
+            ));
+        // Quote / reuse only reads the turns, so it is offered in a
+        // read-only conversation too, on the user's messages.
+        if crate::reuse::offered(&self.rows, index, self.reuse_acp(), running) {
+            let start = self
+                .reuse_start()
+                .and_then(|selection| selection.row(&self.rows));
+            let (name, tooltip) = crate::reuse::action(start.is_some());
+            menu = menu.child(item(
+                "reuse-row",
+                name,
+                tooltip,
+                !self.reuse_loading,
+                |this, index, window, cx| this.reuse_turn(index, window, cx),
+                cx,
+            ));
+        }
         match self.rows.get(index).map(|row| row.role.as_str()) {
-            Some("user") if !archived && offered.edit => actions.child(
-                icon_button(("edit-row", index), "edit", tr("Edit and send again"))
-                    .xsmall()
-                    .disabled(!idle)
-                    .on_click(cx.listener(move |this, _, _, cx| this.ask_rewind(index, cx))),
-            ),
-            Some("assistant") if controls::turn_of(&self.rows, index).is_some() => actions
-                .when(offered.branch, |actions| {
-                    actions.child(
-                        icon_button(("branch-row", index), "branch", tr("Branch from here"))
-                            .xsmall()
-                            .disabled(!idle)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.branch_from(index, window, cx)
-                            })),
-                    )
+            Some("user") if !archived && offered.edit => menu.child(item(
+                "edit-row",
+                "edit",
+                tr("Edit and send again"),
+                idle,
+                |this, index, _, cx| this.ask_rewind(index, cx),
+                cx,
+            )),
+            Some("assistant") if controls::turn_of(&self.rows, index).is_some() => menu
+                .when(offered.branch, |menu| {
+                    menu.child(item(
+                        "branch-row",
+                        "branch",
+                        tr("Branch from here"),
+                        idle,
+                        |this, index, window, cx| this.branch_from(index, window, cx),
+                        cx,
+                    ))
                 })
-                .when(offered.review, |actions| {
-                    actions.child(
-                        icon_button(("review-row", index), "review", tr("Review this turn"))
-                            .xsmall()
-                            .disabled(!idle)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_review_of(index, window, cx)
-                            })),
-                    )
+                .when(offered.review, |menu| {
+                    menu.child(item(
+                        "review-row",
+                        "review",
+                        tr("Review this turn"),
+                        idle,
+                        |this, index, window, cx| this.open_review_of(index, window, cx),
+                        cx,
+                    ))
                 })
-                .when(self.can_explore(), |actions| {
-                    actions.child(
-                        icon_button(
-                            ("explore-row", index),
-                            "flask",
-                            tr("Start an exploration from here"),
-                        )
-                        .xsmall()
-                        .disabled(!idle)
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| this.ask_explore_from(index, window, cx),
-                        )),
-                    )
+                .when(self.can_explore(), |menu| {
+                    menu.child(item(
+                        "explore-row",
+                        "compass",
+                        tr("Start an exploration from here"),
+                        idle,
+                        |this, index, window, cx| this.ask_explore_from(index, window, cx),
+                        cx,
+                    ))
                 }),
-            _ => actions,
+            _ => menu,
         }
     }
 
@@ -671,7 +728,7 @@ impl Workspace {
                     .h_flex()
                     .gap_2()
                     .child(icon("circle-help").text_color(info))
-                    .child(div().font_weight(FontWeight::MEDIUM).child(if waiting {
+                    .child(div().child(if waiting {
                         tr("Wisp needs your decision")
                     } else {
                         tr("Wisp asked")
@@ -691,12 +748,7 @@ impl Workspace {
                     .border_1()
                     .border_color(cx.theme().border)
                     .bg(cx.theme().popover)
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(label),
-                    )
+                    .child(div().flex_shrink_0().child(label))
                     .child(
                         div()
                             .flex_1()
@@ -750,7 +802,7 @@ impl Workspace {
                     .gap_2()
                     .text_sm()
                     .child(icon("plan").text_color(muted))
-                    .child(div().font_weight(FontWeight::MEDIUM).child(tr("Plan"))),
+                    .child(div().child(tr("Plan"))),
             );
         for step in steps {
             let (glyph_name, color) = match step.status {
@@ -803,7 +855,7 @@ impl Workspace {
                     .h_flex()
                     .gap_2()
                     .child(icon("plan").text_color(accent))
-                    .child(div().font_weight(FontWeight::MEDIUM).child(if waiting {
+                    .child(div().child(if waiting {
                         tr("Proposed plan — waiting for you")
                     } else {
                         tr("Proposed plan")
@@ -866,8 +918,10 @@ impl Workspace {
         div().w_full().px_6().py_2().child(card).into_any_element()
     }
 
-    /// One transcript row, with the cards of runs no row names that are
-    /// placed with it: above a message of yours sent after the run was
+    /// One transcript row as part of the record (`surfaces::entry_row`): a
+    /// message of the user's opens an entry, with its number and time in the
+    /// gutter and its dot on the record line. The cards of runs no row names
+    /// are placed with it: above a message of yours sent after the run was
     /// made, or below the last row.
     pub(super) fn row(
         &self,
@@ -876,22 +930,181 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let body = self.row_body(index, window, cx);
+        let number = present::entry_number(&self.rows, index);
+        let time = number
+            .and_then(|_| self.rows.get(index)?.timestamp)
+            .map(|at| crate::home::clock(unix_now(), at))
+            .filter(|time| !time.is_empty())
+            .map(SharedString::from);
+        let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
+        let dot = match number {
+            None => surfaces::EntryDot::None,
+            Some(_) if running && present::latest_entry(&self.rows) == Some(index) => {
+                surfaces::EntryDot::Live
+            }
+            Some(_) => surfaces::EntryDot::Open,
+        };
         if !self.own_run_cards.contains_key(&index) {
-            return body;
+            return surfaces::entry_row(number, time, dot, body, cx).into_any_element();
         }
         let (above, below) = self.own_run_cards_at(index, window, cx);
+        let above = (!above.is_empty()).then(|| {
+            surfaces::entry_row(
+                None,
+                None,
+                surfaces::EntryDot::None,
+                div().w_full().v_flex().children(above).into_any_element(),
+                cx,
+            )
+        });
         div()
             .w_full()
             .v_flex()
             .children(above)
-            .child(body)
-            .children(below)
+            .child(surfaces::entry_row(
+                number,
+                time,
+                dot,
+                div()
+                    .w_full()
+                    .v_flex()
+                    .child(body)
+                    .children(below)
+                    .into_any_element(),
+                cx,
+            ))
             .into_any_element()
     }
 
-    /// One transcript row. Your messages sit in a bubble on the right, Wisp's
-    /// answers are plain text, and tool calls fold into one line each.
+    /// Whether row `index` is drawn as a record row: a tool call (not a
+    /// question, plan or agents' card), a thought, a review or a branch
+    /// brought back. Consecutive ones read as one group.
+    fn is_record_row(&self, index: usize) -> bool {
+        let Some(item) = self.rows.get(index) else {
+            return false;
+        };
+        match item.role.as_str() {
+            "tool" => {
+                controls::question(item).is_none()
+                    && controls::plan_steps(item).is_none()
+                    && controls::execution_steps(item).is_none()
+                    && !self.agent_cards.contains_key(&index)
+            }
+            "reasoning" => !item.text.trim().is_empty(),
+            "review" => wisp_server::desktop::Review::from_report_json(&item.text).is_some(),
+            "branch_merge" => true,
+            _ => false,
+        }
+    }
+
+    /// The row of a call that started or watched a run: the run's title,
+    /// where it ran after it, the run's own state as a stamp (live while it
+    /// goes on), how long it has run as the value, and two icon buttons:
+    /// ask aside about the run, and open it in the Runs tab. The rest of the
+    /// run's card is what the row opens to.
+    fn run_record(
+        &self,
+        index: usize,
+        run: &str,
+        key: &str,
+        cx: &mut Context<Self>,
+    ) -> surfaces::RecordRow {
+        use surfaces::{IconTone, StampKind};
+        let item = self.rows.get(index);
+        let tool_ms = item.and_then(|row| row.duration_ms);
+        let record = self
+            .state
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.run_cards.iter().find(|card| card.id == run));
+        let row = match record {
+            Some(card) => self.run_record_row(key, card, tool_ms, cx),
+            // The state the row was saved with, when the record is not
+            // there, and the call's own time.
+            None => {
+                let (state, tone) = present::run_state(
+                    item.and_then(|row| row.run.as_ref())
+                        .map_or("", |run| run.status.as_str()),
+                    None,
+                );
+                let mut row = surfaces::record_row(
+                    SharedString::from(format!("run-row-{key}")),
+                    item.map(present::heading)
+                        .unwrap_or_else(|| tr("Run").to_owned()),
+                )
+                .icon("flask")
+                .value_column();
+                if let Some(ms) = tool_ms {
+                    row = row.value(present::duration_label(ms));
+                }
+                if let Some(kind) = StampKind::from_tone(tone) {
+                    row = row.stamp(kind, state);
+                }
+                row
+            }
+        };
+        let shown = run.to_owned();
+        row.action(
+            surfaces::icon_action(
+                SharedString::from(format!("run-row-show-{key}")),
+                "external-link",
+                tr("The run's whole output, log and clean-up in the Runs tab"),
+                IconTone::Faded,
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.expanded_run = Some(shown.clone());
+                this.show_panel_tab(PanelTab::Runs, window, cx);
+            })),
+        )
+    }
+
+    /// How far a row of the user's stands below what comes before it: the
+    /// space between entries (28 px), less the row of actions an answer
+    /// already ends on; the first row stands close to the top.
+    fn entry_gap(&self, index: usize) -> Pixels {
+        let Some(before) = index.checked_sub(1).and_then(|at| self.rows.get(at)) else {
+            return px(8.);
+        };
+        let answer = !matches!(
+            before.role.as_str(),
+            "user" | "tool" | "reasoning" | "review" | "branch_merge" | "compaction"
+        ) && !before.text.is_empty();
+        if answer { px(4.) } else { px(28.) }
+    }
+
+    /// A record row in the transcript, inset as the answers are; the first
+    /// of a run of them carries the group's hairline above it.
+    fn transcript_record(
+        &self,
+        index: usize,
+        record: surfaces::RecordRow,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let first = index == 0 || !self.is_record_row(index - 1);
+        let row = if first {
+            surfaces::record_group([record], cx).into_any_element()
+        } else {
+            record.into_any_element()
+        };
+        // The row's own inset (4 px) puts its icon on the answers' text
+        // edge; a group stands 8 px below what comes before it.
+        div()
+            .w_full()
+            .pl(px(20.))
+            .pr_6()
+            .when(first, |row| row.pt_2())
+            .child(row)
+            .into_any_element()
+    }
+
+    /// One transcript row. Your messages are the questions that open the
+    /// entries, set as titles on the paper; Wisp's answers are plain text;
+    /// tool calls, thoughts, reviews and branches brought back are record
+    /// rows that open to what they hold.
     fn row_body(&self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        use surfaces::{IconSize, IconTone, StampKind};
         let Some(item) = self.rows.get(index) else {
             return div().into_any_element();
         };
@@ -902,29 +1115,51 @@ impl Workspace {
         match item.role.as_str() {
             "user" => {
                 let text = compose::user_text(item);
+                // Its actions lie over its top right corner, so they take
+                // no height under the question.
                 let mut message = div()
                     .group(MESSAGE)
+                    .relative()
                     .w_full()
                     .v_flex()
-                    .items_end()
+                    .items_start()
                     .gap_1()
                     .px_6()
-                    .py_2();
+                    .pt(self.entry_gap(index));
                 if !text.is_empty() {
+                    // A question past three lines is folded until opened.
+                    let key = format!("question-{}", present::tool_key(item, index));
+                    let long = present::long_question(&text);
+                    let open = self.open_tools.contains(&key);
                     message = message.child(
-                        div()
-                            .max_w(px(680.))
-                            .px_4()
-                            .py_2()
-                            .rounded(cx.theme().radius_lg)
-                            .bg(cx.theme().muted)
+                        surfaces::question(present::title_question(&text), long && !open)
+                            .w_full()
                             .child(TextView::markdown(id, text, window, cx).selectable(true)),
                     );
+                    if long {
+                        message = message.child(
+                            surfaces::labelled_action(
+                                ("question-fold", index),
+                                if open { "chevron-up" } else { "chevron-down" },
+                                if open {
+                                    tr("Show less")
+                                } else {
+                                    tr("Show all")
+                                },
+                                IconSize::Inline,
+                                IconTone::Faded,
+                                cx,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| this.toggle_tool(key.clone(), index, cx),
+                            )),
+                        );
+                    }
                 }
                 if !item.attachments.is_empty() {
                     // The files the message carried, by name; the full path
                     // is in the copied text.
-                    let mut files = div().h_flex().flex_wrap().justify_end().gap_1();
+                    let mut files = div().h_flex().flex_wrap().gap_1();
                     for path in &item.attachments {
                         files = files.child(
                             Self::chip_box(cx)
@@ -942,7 +1177,7 @@ impl Workspace {
                     .and_then(|session| self.sent_references.get(session))
                     .map_or(&[][..], |sent| compose::sent_with(sent, &self.rows, index));
                 if !referenced.is_empty() {
-                    let mut chips = div().h_flex().flex_wrap().justify_end().gap_1();
+                    let mut chips = div().h_flex().flex_wrap().gap_1();
                     for chip in referenced {
                         chips = chips.child(
                             Self::chip_box(cx)
@@ -953,7 +1188,12 @@ impl Workspace {
                     message = message.child(chips);
                 }
                 message
-                    .child(self.message_actions(index, cx))
+                    .child(
+                        self.message_actions(index, true, cx)
+                            .absolute()
+                            .top(self.entry_gap(index))
+                            .right_6(),
+                    )
                     .into_any_element()
             }
             "tool" => {
@@ -974,56 +1214,53 @@ impl Workspace {
                 let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
                 let key = present::tool_key(item, index);
                 let open = self.open_tools.contains(&key);
-                let muted = cx.theme().muted_foreground;
-                let mut header = div()
-                    .id(SharedString::from(format!("tool-{key}")))
-                    .h_flex()
-                    .gap_2()
-                    .px_3()
-                    .h(px(34.))
-                    .cursor_pointer()
-                    .child(
-                        icon(if open {
-                            "chevron-down"
-                        } else {
-                            "chevron-right"
-                        })
-                        .text_color(muted),
-                    )
-                    .child(icon("wrench").text_color(muted))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_sm()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .child(present::heading(item)),
-                    );
-                if let Some((label, tone)) = present::tool_status(item, running) {
-                    header = header.child(chip(label, tone, cx));
-                }
-                let header = header.on_click(
-                    cx.listener(move |this, _, _, cx| this.toggle_tool(key.clone(), index, cx)),
-                );
-                let mut card = div()
-                    .v_flex()
-                    .rounded(cx.theme().radius)
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .child(header);
-                // The run this call started or watched, as it stands now:
-                // one card per run, under the call that waits on it while
-                // it goes on and under the call that submitted it after.
+                let toggle = key.clone();
+                // A call that started or watched a run is that run's row.
                 if let Some((run, _)) = self.run_card_rows.get(&index) {
-                    card = card.child(self.run_card(Some(index), run, open, window, cx));
-                }
-                if open {
-                    card = card.child(div().px_3().pb_3().child(
-                        TextView::markdown(id, present::body(item), window, cx).selectable(true),
+                    let record = self.run_record(index, run, &key, cx);
+                    let below = open.then(|| self.run_card(Some(index), run, true, window, cx));
+                    let record = record.below(below).cursor_pointer().on_click(cx.listener(
+                        move |this, _, _, cx| this.toggle_tool(toggle.clone(), index, cx),
                     ));
+                    return self.transcript_record(index, record, cx);
                 }
-                div().w_full().px_6().py_1().child(card).into_any_element()
+                // A built-in tool is named by an identifier, set as one; what
+                // it works on, when its input says, leads.
+                let name = present::heading(item);
+                let mut record = match present::tool_summary(item) {
+                    Some(summary) => {
+                        surfaces::record_row(SharedString::from(format!("tool-{key}")), summary)
+                            .lead(name)
+                            .mono()
+                    }
+                    None if item.kind.is_some() => {
+                        // An ACP agent's call is named by its title.
+                        surfaces::record_row(SharedString::from(format!("tool-{key}")), name)
+                    }
+                    None => {
+                        surfaces::record_row(SharedString::from(format!("tool-{key}")), name).mono()
+                    }
+                }
+                .icon(present::tool_icon(item))
+                .value_column();
+                if let Some(ms) = item.duration_ms {
+                    record = record.value(present::duration_label(ms));
+                }
+                if let Some((word, tone)) = present::tool_outcome(item, running)
+                    && let Some(kind) = StampKind::from_tone(tone)
+                {
+                    record = record.stamp(kind, word);
+                }
+                // The call's input and output while it is open.
+                let below = open.then(|| {
+                    TextView::markdown(id, present::body(item), window, cx)
+                        .selectable(true)
+                        .into_any_element()
+                });
+                let record = record.below(below).cursor_pointer().on_click(
+                    cx.listener(move |this, _, _, cx| this.toggle_tool(toggle.clone(), index, cx)),
+                );
+                self.transcript_record(index, record, cx)
             }
             "reasoning" if item.text.trim().is_empty() => div().into_any_element(),
             // What the model thought before answering, folded like a tool
@@ -1031,34 +1268,26 @@ impl Workspace {
             "reasoning" => {
                 let key = present::tool_key(item, index);
                 let open = self.open_tools.contains(&key);
-                let muted = cx.theme().muted_foreground;
-                let header = div()
-                    .id(SharedString::from(format!("thought-{key}")))
-                    .h_flex()
-                    .gap_2()
-                    .px_3()
-                    .h(px(30.))
-                    .cursor_pointer()
-                    .child(
-                        icon(if open {
-                            "chevron-down"
-                        } else {
-                            "chevron-right"
-                        })
-                        .text_color(muted),
-                    )
-                    .child(icon("brain").text_color(muted))
-                    .child(div().text_sm().text_color(muted).child(tr("Thought")))
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.toggle_tool(key.clone(), index, cx)),
-                    );
-                let mut card = div().v_flex().child(header);
-                if open {
-                    card = card.child(div().px_3().pb_2().text_sm().text_color(muted).child(
-                        TextView::markdown(id, item.text.clone(), window, cx).selectable(true),
-                    ));
-                }
-                div().w_full().px_6().py_1().child(card).into_any_element()
+                let below = open.then(|| {
+                    div()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(
+                            TextView::markdown(id, item.text.clone(), window, cx).selectable(true),
+                        )
+                        .into_any_element()
+                });
+                let record = surfaces::record_row(
+                    SharedString::from(format!("thought-{key}")),
+                    tr("Thought"),
+                )
+                .icon("brain")
+                .value_column()
+                .below(below)
+                .cursor_pointer()
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.toggle_tool(key.clone(), index, cx)),
+                );
+                self.transcript_record(index, record, cx)
             }
             // A review kept with the conversation, after what it read: what
             // it found in a line, and the whole report a click away.
@@ -1066,101 +1295,43 @@ impl Workspace {
                 None => div().into_any_element(),
                 Some(found) => {
                     let (said, tone) = crate::review::outcome(&found);
-                    let colour = tone_color(tone, cx);
-                    let summary = found.summary.clone();
-                    let line = div()
-                        .h_flex()
-                        .gap_2()
-                        .px_3()
-                        .py_1p5()
-                        .rounded(cx.theme().radius)
-                        .border_1()
-                        .border_color(cx.theme().border)
-                        .child(icon("review").text_color(colour))
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .text_sm()
-                                .text_color(colour)
-                                .child(said),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(summary),
-                        )
-                        .child(
-                            Button::new(("review-row-see", index))
-                                .label(tr("See"))
-                                .xsmall()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.see_review(found.clone(), cx)
-                                })),
+                    let mut record = surfaces::record_row(
+                        SharedString::from(format!("review-row-see-{index}")),
+                        found.summary.clone(),
+                    )
+                    .icon("review")
+                    .value_column();
+                    if let Some(kind) = StampKind::from_tone(tone) {
+                        record = record.stamp(kind, said);
+                    } else {
+                        record = record.lead(said);
+                    }
+                    let record = record
+                        .cursor_pointer()
+                        .tooltip(|window, cx| {
+                            gpui_component::tooltip::Tooltip::new(tr("See")).build(window, cx)
+                        })
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.see_review(found.clone(), cx)),
                         );
-                    div().w_full().px_6().py_1().child(line).into_any_element()
+                    self.transcript_record(index, record, cx)
                 }
             },
-            // A branch's summary brought back here: a card naming the
-            // branch, opening to what was brought back, as in the WebView.
+            // A branch's summary brought back here: a row naming the branch,
+            // opening to what was brought back, as in the WebView.
             "branch_merge" => {
                 let key = present::tool_key(item, index);
                 let open = self.open_tools.contains(&key);
-                let muted = cx.theme().muted_foreground;
                 let title = item.tool_name.clone().unwrap_or_default();
-                let header = div()
-                    .id(SharedString::from(format!("merged-{key}")))
-                    .h_flex()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
-                    .cursor_pointer()
-                    .child(icon("branch").text_color(cx.theme().primary))
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(tr("Merged branch result")),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_sm()
-                            .text_color(muted)
-                            .child(title),
-                    )
-                    .child(
-                        icon(if open {
-                            "chevron-down"
-                        } else {
-                            "chevron-right"
-                        })
-                        .text_color(muted),
-                    )
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.toggle_tool(key.clone(), index, cx)),
-                    );
-                let mut card = div()
-                    .v_flex()
-                    .rounded(cx.theme().radius_lg)
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .child(header);
-                if open {
-                    card = card.child(div().px_3().pb_2().text_sm().child(
+                let below = open.then(|| {
+                    let mut below = div().v_flex().gap_2().child(
                         TextView::markdown(id, item.text.clone(), window, cx).selectable(true),
-                    ));
+                    );
                     if let (Some(project), Some(branch)) =
                         (self.state.project.clone(), item.input.clone())
                     {
-                        card = card.child(
-                            div().h_flex().px_3().pb_2().child(
+                        below = below.child(
+                            div().h_flex().child(
                                 Button::new(SharedString::from(format!("merged-open-{index}")))
                                     .icon(glyph("branch"))
                                     .label(tr("Open the branch"))
@@ -1177,8 +1348,19 @@ impl Workspace {
                             ),
                         );
                     }
-                }
-                div().w_full().px_6().py_1().child(card).into_any_element()
+                    below.into_any_element()
+                });
+                let record =
+                    surfaces::record_row(SharedString::from(format!("merged-{key}")), title)
+                        .icon("branch")
+                        .lead(tr("Merged branch result"))
+                        .value_column()
+                        .below(below)
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.toggle_tool(key.clone(), index, cx)
+                        }));
+                self.transcript_record(index, record, cx)
             }
             // Where the conversation was compacted, as the host placed it.
             "compaction" => match crate::compaction::card(item) {
@@ -1186,19 +1368,36 @@ impl Workspace {
                 None => div().into_any_element(),
             },
             _ if item.text.is_empty() => div().into_any_element(),
-            _ => div()
-                .group(MESSAGE)
-                .w_full()
-                .v_flex()
-                .gap_1()
-                .px_6()
-                .py_2()
-                .child(TextView::markdown(id, item.text.clone(), window, cx).selectable(true))
-                .children(self.inline_pictures(&item.text, cx))
-                .children(self.written_pictures(index, cx))
-                .children(self.generated_section(index, cx))
-                .child(self.message_actions(index, cx))
-                .into_any_element(),
+            _ => {
+                // An answer the entry goes on after (a tool call, a thought)
+                // lays its actions over its corner: a line of them would
+                // stand between the text and what follows. The entry's
+                // last answer keeps them under it.
+                let ends_entry = self
+                    .rows
+                    .get(index + 1)
+                    .is_none_or(|next| next.role == "user");
+                let actions = self.message_actions(index, !ends_entry, cx);
+                let actions = if ends_entry {
+                    actions
+                } else {
+                    actions.absolute().top_2().right_6()
+                };
+                div()
+                    .group(MESSAGE)
+                    .relative()
+                    .w_full()
+                    .v_flex()
+                    .gap_1()
+                    .px_6()
+                    .pt_2()
+                    .child(TextView::markdown(id, item.text.clone(), window, cx).selectable(true))
+                    .children(self.inline_pictures(&item.text, cx))
+                    .children(self.written_pictures(index, cx))
+                    .children(self.generated_section(index, cx))
+                    .child(actions)
+                    .into_any_element()
+            }
         }
     }
 
@@ -1236,11 +1435,7 @@ impl Workspace {
                                 .h_flex()
                                 .gap_2()
                                 .child(icon("image").text_color(attention))
-                                .child(
-                                    div()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .child(tr("Resize large image for model input?")),
-                                ),
+                                .child(div().child(tr("Resize large image for model input?"))),
                         )
                         .child(div().text_sm().truncate().child(picture.to_owned()))
                         .child(
@@ -1336,39 +1531,36 @@ impl Workspace {
                     );
             }
             buttons = buttons.child(answer(tr("Deny"), "ban", false, Remember::No));
-            approvals =
-                approvals.child(
-                    surfaces::bar(SharedString::from(format!("approval-{id}")), cx)
-                        .v_flex()
-                        .gap_2()
-                        .child(
-                            div()
-                                .h_flex()
-                                .gap_2()
-                                .child(icon("shield").text_color(attention))
-                                .child(div().font_weight(FontWeight::MEDIUM).child(
-                                    crate::i18n::fill(
-                                        tr("{} needs your approval"),
-                                        &[&approval.tool],
-                                    ),
-                                )),
-                        )
-                        .child(div().text_sm().child(approval.message.clone()))
-                        // A long preview scrolls by itself; the answer stays in view.
-                        .child(
-                            div()
-                                .id(SharedString::from(format!("approval-preview-{id}")))
-                                .max_h(px(110.))
-                                .overflow_y_scroll()
-                                .p_2()
-                                .rounded(cx.theme().radius)
-                                .bg(cx.theme().muted)
-                                .text_xs()
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .child(approval.preview.clone()),
-                        )
-                        .child(buttons),
-                );
+            approvals = approvals.child(
+                surfaces::bar(SharedString::from(format!("approval-{id}")), cx)
+                    .v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .child(icon("shield").text_color(attention))
+                            .child(div().child(crate::i18n::fill(
+                                tr("{} needs your approval"),
+                                &[&approval.tool],
+                            ))),
+                    )
+                    .child(div().text_sm().child(approval.message.clone()))
+                    // A long preview scrolls by itself; the answer stays in view.
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("approval-preview-{id}")))
+                            .max_h(px(110.))
+                            .overflow_y_scroll()
+                            .p_2()
+                            .rounded(cx.theme().radius)
+                            .bg(cx.theme().muted)
+                            .text_xs()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .child(approval.preview.clone()),
+                    )
+                    .child(buttons),
+            );
         }
         Some(approvals)
     }
@@ -1390,11 +1582,7 @@ impl Workspace {
                     .h_flex()
                     .gap_2()
                     .child(icon("plan").text_color(attention))
-                    .child(
-                        div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(tr("Wisp proposes a plan — approve it to start")),
-                    ),
+                    .child(div().child(tr("Wisp proposes a plan — approve it to start"))),
             );
         for (number, step) in steps.iter().enumerate() {
             card = card.child(div().text_sm().child(format!("{}. {step}", number + 1)));
@@ -1471,6 +1659,37 @@ impl Workspace {
             .border_color(cx.theme().border)
             .bg(cx.theme().popover)
             .shadow_md()
+    }
+
+    /// One item of a menu: its icon and its word, the icon faded until the
+    /// pointer is over the item. The caller adds what a click does, or
+    /// dims it.
+    pub(super) fn menu_item(
+        id: impl Into<ElementId>,
+        icon_name: &str,
+        label: impl Into<SharedString>,
+        cx: &App,
+    ) -> Stateful<Div> {
+        let hover = cx.theme().list_hover;
+        div()
+            .id(id)
+            .group(surfaces::ICON_HOVER)
+            .h_flex()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .h(px(30.))
+            .rounded(cx.theme().radius)
+            .text_sm()
+            .cursor_pointer()
+            .hover(move |style| style.bg(hover))
+            .child(surfaces::sized_icon(
+                icon_name,
+                surfaces::IconSize::Inline,
+                surfaces::IconTone::Faded,
+                cx,
+            ))
+            .child(div().flex_1().min_w_0().truncate().child(label.into()))
     }
 
     pub(super) fn menu_row(
@@ -1567,18 +1786,27 @@ impl Workspace {
             } else {
                 setting.name.clone()
             };
+            // A segment of the conditions line: a flag is on (teal) or off,
+            // a choice shows what is chosen; the tooltip names the setting.
             let button = match &setting.value {
                 AcpValue::Flag(on) => {
                     let (target, on) = (id.clone(), *on);
-                    Button::new(SharedString::from(format!("acp-setting-{id}")))
-                        .icon(glyph(if on { "check-square" } else { "square" }))
-                        .label(name)
-                        .small()
-                        .ghost()
-                        .selected(on)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.set_acp_setting(target.clone(), AcpPick::Flag(!on), window, cx)
-                        }))
+                    surfaces::condition(
+                        SharedString::from(format!("acp-setting-{id}")),
+                        if on { "check" } else { "square" },
+                        name.clone(),
+                        name,
+                        if on {
+                            surfaces::IconTone::On
+                        } else {
+                            surfaces::IconTone::Faded
+                        },
+                        cx,
+                    )
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.set_acp_setting(target.clone(), AcpPick::Flag(!on), window, cx)
+                    }))
                 }
                 AcpValue::Choice { current, choices } => {
                     let label = choices
@@ -1588,18 +1816,22 @@ impl Workspace {
                         .filter(|label| !label.is_empty())
                         .unwrap_or_else(|| current.clone());
                     let target = id.clone();
-                    Button::new(SharedString::from(format!("acp-setting-{id}")))
-                        .icon(glyph(if setting.id == "mode" {
+                    surfaces::condition(
+                        SharedString::from(format!("acp-setting-{id}")),
+                        if setting.id == "mode" {
                             "controls"
                         } else {
                             "adjustments"
-                        }))
-                        .label(format!("{name}: {label}"))
-                        .small()
-                        .ghost()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.toggle_acp_setting(target.clone(), window, cx)
-                        }))
+                        },
+                        label,
+                        name,
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.toggle_acp_setting(target.clone(), window, cx)
+                    }))
                 }
             };
             let mut place = div().relative().child(button);
@@ -1823,7 +2055,7 @@ impl Workspace {
     }
 
     /// What the user asked in the open conversation, as places to jump to.
-    fn outline_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn outline_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let hover = cx.theme().list_hover;
         let entries = crate::outline::entries(&self.rows);
@@ -1937,6 +2169,7 @@ impl Workspace {
     }
 
     fn render_composer(&self, running: bool, cx: &mut Context<Self>) -> Div {
+        type Toggle = fn(&mut Workspace, &mut Window, &mut Context<Workspace>);
         let attached = self.attached();
         let typed = self.composer.read(cx).value();
         // Files alone are a message.
@@ -1953,275 +2186,285 @@ impl Workspace {
         let full = options.full_access;
 
         let planning = options.plan_first;
-        // A setting at its usual value is an icon; one that changes what
-        // Wisp does says so in words.
-        let plan = Button::new("plan-first")
-            .icon(glyph("plan"))
-            .when(planning, |button| button.label(tr("Planning")))
-            .small()
-            .ghost()
-            .selected(planning)
-            .tooltip(if planning {
-                tr("Wisp investigates and proposes a plan; it changes nothing until you approve")
-            } else {
-                tr("Have Wisp propose a plan before it changes anything")
-            })
-            .on_click(cx.listener(|this, _, window, cx| this.toggle_plan_first(window, cx)));
-
-        let access = Button::new("access")
-            .icon(glyph(if full { "bolt" } else { "shield" }))
-            .when(full, |button| button.label(tr("Full access")))
-            .small()
-            .ghost()
-            .selected(full || self.layers.contains(Layer::ConfirmFullAccess))
-            .tooltip(if full {
-                tr("Wisp changes files and runs commands without asking")
-            } else {
-                tr("Wisp asks before it changes files or runs commands")
-            })
-            .on_click(cx.listener(|this, _, window, cx| this.toggle_full_access(window, cx)));
-        let effort_open = self.layers.contains(Layer::EffortMenu);
-        let mut effort = div().relative().child(
-            Button::new("effort")
-                .icon(glyph("gauge"))
-                .label(controls::effort_label(&options.reasoning_effort))
-                .small()
-                .ghost()
-                .selected(effort_open)
-                .tooltip(tr("How hard the model thinks, from the next message"))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.toggle_composer_menu(Layer::EffortMenu, window, cx)
-                })),
-        );
-        if effort_open {
-            // Painted after everything else: a parent's border is drawn over
-            // its own children, and the composer box has one.
-            effort = effort.child(deferred(self.effort_menu(&options.reasoning_effort, cx)));
-        }
-
-        // OpenAI's priority processing, where the model offers it.
-        let fast = self
-            .status
-            .as_ref()
-            .is_some_and(|status| status.fast_available)
-            .then(|| {
-                Button::new("fast")
-                    .icon(glyph("bolt"))
-                    .small()
-                    .ghost()
-                    .selected(options.fast)
-                    .tooltip(if options.fast {
-                        tr("Fast is on: requests ask for priority processing, which may use more quota. Click to turn it off from the next message")
-                    } else {
-                        tr("Fast is off. Click to ask for priority processing from the next message; it may use more quota")
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_fast(window, cx)))
-            });
-
-        let model_open = self.layers.contains(Layer::ModelMenu);
-        let mut model = div().relative().child(
-            Button::new("model")
-                .icon(glyph("bot"))
-                .label(settings::model_label(
-                    self.settings.current(),
-                    &options.model,
-                ))
-                .small()
-                .ghost()
-                .selected(model_open)
-                .tooltip(tr(
-                    "The model this conversation runs on, from the next message",
-                ))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.toggle_composer_menu(Layer::ModelMenu, window, cx)
-                })),
-        );
-        if model_open {
-            model = model.child(deferred(self.model_menu(&options.model, cx)));
-        }
-
-        // Requests kept under a name, to put into the message box.
-        let quick = (!self.quick_actions.is_empty()).then(|| {
-            let open = self.layers.contains(Layer::QuickMenu);
-            let button = div().relative().child(
-                Button::new("quick-actions")
-                    .icon(glyph("bolt"))
-                    .small()
-                    .ghost()
-                    .selected(open)
-                    .tooltip(tr("Quick actions: put a saved request into the message"))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        // One may have been added or removed since.
-                        this.load_quick_actions(window, cx);
-                        this.toggle_composer_menu(Layer::QuickMenu, window, cx)
-                    })),
-            );
-            if open {
-                let mut menu = Self::composer_menu(320., cx);
-                for action in &self.quick_actions {
-                    let (prompt, id) = (action.prompt.clone(), action.id.clone());
-                    let starts = !action.workflow.is_empty();
-                    menu = menu.child(
-                        Self::menu_row(
-                            SharedString::from(format!("quick-choice-{}", action.id)),
-                            action.name.clone(),
-                            if starts {
-                                tr("Starts a workflow on what is typed")
-                            } else {
-                                ""
-                            },
-                            false,
-                            cx,
-                        )
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                if starts {
-                                    this.start_quick_action(id.clone(), window, cx)
-                                } else {
-                                    this.use_quick_action(prompt.clone(), window, cx)
-                                }
-                            },
-                        )),
-                    );
-                }
-                button.child(deferred(menu))
-            } else {
-                button
-            }
-        });
-
-        // Who runs the conversation: Wisp, or an ACP agent chosen before
-        // the first message and named for good afterwards.
         let started = !self.rows.is_empty() || running;
         let by_agent = !options.acp_agent.is_empty();
+        let fast_offered = self
+            .status
+            .as_ref()
+            .is_some_and(|status| status.fast_available);
+
+        // The `+` button at the left end: what can be put into the message,
+        // and the modes that change what Wisp does, in one menu. The menus
+        // it leads to (quick actions, the `/` list, also opened by typing
+        // `/`) open above it.
+        let plus_open = self.layers.contains(Layer::PlusMenu);
+        let mut plus = div().relative().flex_none().child(
+            surfaces::icon_action(
+                "composer-plus",
+                "plus",
+                tr("Put something into the message, or switch a mode on"),
+                if plus_open {
+                    surfaces::IconTone::Ink
+                } else {
+                    surfaces::IconTone::Faded
+                },
+                cx,
+            )
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.toggle_composer_menu(Layer::PlusMenu, window, cx)
+            })),
+        );
+        if plus_open {
+            // Painted after everything else: a parent's border is drawn over
+            // its own children, and the composer box has one.
+            plus = plus.child(deferred(self.plus_menu(by_agent, fast_offered, cx)));
+        }
+        if let Some(menu) = self.slash_menu(cx) {
+            plus = plus.child(deferred(menu));
+        }
+        if self.layers.contains(Layer::QuickMenu) {
+            let mut menu = Self::composer_menu(320., cx);
+            for action in &self.quick_actions {
+                let (prompt, id) = (action.prompt.clone(), action.id.clone());
+                let starts = !action.workflow.is_empty();
+                menu = menu.child(
+                    Self::menu_row(
+                        SharedString::from(format!("quick-choice-{}", action.id)),
+                        action.name.clone(),
+                        if starts {
+                            tr("Starts a workflow on what is typed")
+                        } else {
+                            ""
+                        },
+                        false,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if starts {
+                            this.start_quick_action(id.clone(), window, cx)
+                        } else {
+                            this.use_quick_action(prompt.clone(), window, cx)
+                        }
+                    })),
+                );
+            }
+            plus = plus.child(deferred(menu));
+        }
+
+        // The conditions line: one segment for each condition, its icon and
+        // its value; a click opens the picker it had before.
+        let mut conditions: Vec<AnyElement> = Vec::new();
+        // Who runs the conversation: Wisp, or an ACP agent chosen before
+        // the first message and named for good afterwards.
         let agents = self.acp_agents.as_deref().unwrap_or_default();
-        let agent = (by_agent || (!agents.is_empty() && !started)).then(|| {
+        if by_agent || (!agents.is_empty() && !started) {
             let open = self.layers.contains(Layer::AgentMenu);
-            let button = div().relative().child(
-                Button::new("acp-agent")
-                    .icon(glyph("terminal"))
-                    .label(if by_agent {
-                        crate::acp::agent_label(agents, &options.acp_agent)
-                    } else {
-                        "Wisp".to_owned()
-                    })
-                    .small()
-                    .ghost()
-                    .selected(open || by_agent)
-                    .disabled(by_agent || started)
-                    .tooltip(if by_agent {
-                        tr("An ACP agent runs this conversation; start a new one for Wisp")
-                    } else {
-                        tr("Who runs this conversation: Wisp or an ACP agent")
-                    })
+            let segment = surfaces::condition(
+                "acp-agent",
+                "swarm",
+                if by_agent {
+                    crate::acp::agent_label(agents, &options.acp_agent)
+                } else {
+                    "Wisp".to_owned()
+                },
+                if by_agent {
+                    tr("An ACP agent runs this conversation; start a new one for Wisp")
+                } else {
+                    tr("Who runs this conversation: Wisp or an ACP agent")
+                },
+                surfaces::IconTone::Faded,
+                cx,
+            )
+            .when(!(by_agent || started), |segment| {
+                segment
+                    .cursor_pointer()
                     .on_click(cx.listener(|this, _, window, cx| {
                         // One may have been added or removed since.
                         this.load_acp_agents(window, cx);
                         this.toggle_composer_menu(Layer::AgentMenu, window, cx)
-                    })),
-            );
-            if open {
-                button.child(deferred(self.agent_menu(cx)))
-            } else {
-                button
-            }
-        });
-        let expert =
-            (!self.experts.is_empty() && (!started || !options.expert.is_empty())).then(|| {
-                let open = self.layers.contains(Layer::ExpertMenu);
-                let button = div().relative().child(
-                    Button::new("expert")
-                        .icon(glyph("user"))
-                        .label(settings::expert_label(&self.experts, &options.expert))
-                        .small()
-                        .ghost()
-                        .selected(open)
-                        .disabled(started)
-                        .tooltip(if started {
-                            tr("The expert this conversation was started as")
-                        } else {
-                            tr("Start this conversation as an expert")
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            // One may have been added or removed since.
-                            this.load_experts(window, cx);
-                            this.toggle_composer_menu(Layer::ExpertMenu, window, cx)
-                        })),
-                );
-                if open {
-                    button.child(deferred(self.expert_menu(&options.expert, cx)))
-                } else {
-                    button
-                }
+                    }))
             });
-
-        // Offered once there is a host to choose, or a choice to undo.
-        let hosts = self.environments.as_ref();
-        let runs_on = (hosts.is_some_and(|view| !view.hosts.is_empty())
-            || !options.runs_on.is_empty())
-        .then(|| {
-            let open = self.layers.contains(Layer::RunsOnMenu);
-            let place = div().relative().child(
-                Button::new("runs-on")
-                    .icon(glyph("server"))
-                    .label(settings::runs_on_label(
-                        &options.runs_on,
-                        hosts.and_then(|view| view.default.as_deref()),
-                    ))
-                    .small()
-                    .ghost()
-                    .selected(open)
-                    .tooltip(tr(
-                        "Where this conversation's runs start, from the next message",
-                    ))
+            let mut place = div().relative().child(segment);
+            if open {
+                place = place.child(deferred(self.agent_menu(cx)));
+            }
+            conditions.push(place.into_any_element());
+        }
+        conditions.extend(
+            self.acp_settings(cx)
+                .into_iter()
+                .map(IntoElement::into_any_element),
+        );
+        if !by_agent {
+            let model_open = self.layers.contains(Layer::ModelMenu);
+            let mut model = div().relative().child(
+                surfaces::condition(
+                    "model",
+                    "bot",
+                    settings::model_label(self.settings.current(), &options.model),
+                    tr("The model this conversation runs on, from the next message"),
+                    surfaces::IconTone::Faded,
+                    cx,
+                )
+                .cursor_pointer()
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.toggle_composer_menu(Layer::ModelMenu, window, cx)
+                })),
+            );
+            if model_open {
+                model = model.child(deferred(self.model_menu(&options.model, cx)));
+            }
+            conditions.push(model.into_any_element());
+            let effort_open = self.layers.contains(Layer::EffortMenu);
+            let mut effort = div().relative().child(
+                surfaces::condition(
+                    "effort",
+                    "gauge",
+                    controls::effort_label(&options.reasoning_effort),
+                    tr("How hard the model thinks, from the next message"),
+                    surfaces::IconTone::Faded,
+                    cx,
+                )
+                .cursor_pointer()
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.toggle_composer_menu(Layer::EffortMenu, window, cx)
+                })),
+            );
+            if effort_open {
+                effort = effort.child(deferred(self.effort_menu(&options.reasoning_effort, cx)));
+            }
+            conditions.push(effort.into_any_element());
+            // Offered once there is a host to choose, or a choice to undo.
+            let hosts = self.environments.as_ref();
+            if hosts.is_some_and(|view| !view.hosts.is_empty()) || !options.runs_on.is_empty() {
+                let default = hosts.and_then(|view| view.default.as_deref());
+                let open = self.layers.contains(Layer::RunsOnMenu);
+                let mut place = div().relative().child(
+                    surfaces::condition(
+                        "runs-on",
+                        settings::runs_on_icon(&options.runs_on, default),
+                        settings::runs_on_label(&options.runs_on, default),
+                        tr("Where this conversation's runs start, from the next message"),
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .cursor_pointer()
                     .on_click(cx.listener(|this, _, window, cx| {
                         // A host may have been added or checked since.
                         this.load_environments(window, cx);
                         this.toggle_composer_menu(Layer::RunsOnMenu, window, cx)
                     })),
-            );
-            if open {
-                place.child(deferred(self.runs_on_menu(&options.runs_on, cx)))
-            } else {
-                place
+                );
+                if open {
+                    place = place.child(deferred(self.runs_on_menu(&options.runs_on, cx)));
+                }
+                conditions.push(place.into_any_element());
             }
-        });
+            if !self.experts.is_empty() && (!started || !options.expert.is_empty()) {
+                let open = self.layers.contains(Layer::ExpertMenu);
+                let mut place = div().relative().child(
+                    surfaces::condition(
+                        "expert",
+                        "user",
+                        settings::expert_label(&self.experts, &options.expert),
+                        if started {
+                            tr("The expert this conversation was started as")
+                        } else {
+                            tr("Start this conversation as an expert")
+                        },
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .when(!started, |segment| {
+                        segment
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                // One may have been added or removed since.
+                                this.load_experts(window, cx);
+                                this.toggle_composer_menu(Layer::ExpertMenu, window, cx)
+                            }))
+                    }),
+                );
+                if open {
+                    place = place.child(deferred(self.expert_menu(&options.expert, cx)));
+                }
+                conditions.push(place.into_any_element());
+            }
+        }
+        // A mode that changes what Wisp does shows only while it is on, in
+        // teal; a click turns it off. At its usual value it is in `+`.
+        for (on, id, glyph_name, word, tooltip, toggle) in [
+            (
+                planning && !by_agent,
+                "plan-first",
+                "plan",
+                tr("Planning"),
+                tr("Wisp investigates and proposes a plan; it changes nothing until you approve"),
+                (|this, window, cx| this.toggle_plan_first(window, cx)) as Toggle,
+            ),
+            (
+                full,
+                "access",
+                "shield",
+                tr("Full access"),
+                tr("Wisp changes files and runs commands without asking"),
+                |this, window, cx| this.toggle_full_access(window, cx),
+            ),
+            (
+                options.auto_review && !by_agent,
+                "auto-review",
+                "review",
+                tr("Reviewing"),
+                tr("Each turn that used a tool is reviewed when it ends"),
+                |this, window, cx| this.toggle_auto_review(window, cx),
+            ),
+            (
+                options.fast && fast_offered,
+                "fast",
+                "bolt",
+                tr("Fast"),
+                tr(
+                    "Fast is on: requests ask for priority processing, which may use more quota. Click to turn it off from the next message",
+                ),
+                |this, window, cx| this.toggle_fast(window, cx),
+            ),
+        ] {
+            if on {
+                conditions.push(
+                    surfaces::condition(id, glyph_name, word, tooltip, surfaces::IconTone::On, cx)
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, window, cx| toggle(this, window, cx)))
+                        .into_any_element(),
+                );
+            }
+        }
 
-        let mut actions = div().h_flex().flex_shrink_0().gap_2();
+        // The right end: how full the context is, then send, or stop while
+        // a turn runs.
+        let mut actions = div().h_flex().flex_none().items_center().gap_2();
         let usage = self
             .status
             .as_ref()
             .and_then(|status| status.usage.as_ref());
         if let Some(percent) = usage.and_then(controls::context_percent) {
+            let warning = surfaces::stamp_color(surfaces::StampKind::Waiting, cx);
             actions = actions.child(
                 div()
                     .id("context-meter")
-                    .text_xs()
-                    .text_color(if percent >= 90 {
-                        cx.theme().danger
-                    } else {
-                        muted
-                    })
                     .cursor_pointer()
-                    .hover(|meter| meter.text_color(cx.theme().foreground))
-                    .tooltip(|window, cx| {
-                        gpui_component::tooltip::Tooltip::new(tr("See what the model is sent"))
-                            .build(window, cx)
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(crate::i18n::fill(
+                            tr("Context {}% full. Click to see what the model is sent"),
+                            &[&percent],
+                        ))
+                        .build(window, cx)
                     })
                     .on_click(cx.listener(|this, _, window, cx| this.open_model_view(window, cx)))
-                    .child(crate::i18n::fill(tr("Context {}%"), &[&percent])),
-            );
-        }
-        if running {
-            actions = actions.child(
-                Button::new("stop")
-                    .icon(glyph("stop"))
-                    .label(tr("Stop"))
-                    .small()
-                    .disabled(self.pending)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.control("native_conversation_stop", json!({}), window, cx)
-                    })),
+                    .child(
+                        surfaces::fact(format!("{percent}%"), cx)
+                            .when(percent >= 90, |meter| meter.text_color(warning))
+                            .hover(|meter| meter.text_color(cx.theme().foreground)),
+                    ),
             );
         }
         // While a turn runs, what is written waits for it to end.
@@ -2230,20 +2473,38 @@ impl Workspace {
             && !self.loading_history
             && !sendable.trim().is_empty()
             && self.state.snapshot.as_ref().is_some_and(|s| !s.read_only);
-        actions = actions.child(
-            Button::new("send")
-                .icon(glyph(if running { "clock" } else { "arrow-up" }))
-                .label(if running { tr("Queue") } else { tr("Send") })
-                .small()
-                .primary()
-                .disabled(!(can_send || can_queue))
-                .tooltip(if running {
-                    tr("Send it when this turn ends")
-                } else {
-                    tr("Send")
-                })
+        if running {
+            if can_queue {
+                actions = actions.child(
+                    surfaces::icon_action(
+                        "queue",
+                        "clock",
+                        tr("Send it when this turn ends"),
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
+                );
+            }
+            actions = actions.child(
+                surfaces::send_button("stop", "stop", tr("Stop"), cx)
+                    .disabled(self.pending)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.control("native_conversation_stop", json!({}), window, cx)
+                    })),
+            );
+        } else {
+            actions = actions.child(
+                surfaces::send_button(
+                    "send",
+                    "arrow-up",
+                    crate::i18n::fill(tr("Send ({})"), &[&self.send_key.label()]),
+                    cx,
+                )
+                .disabled(!can_send)
                 .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
-        );
+            );
+        }
 
         // `px_4` is the inset `surfaces::above_composer` shares, so the bars
         // there line up with the box below.
@@ -2262,6 +2523,9 @@ impl Workspace {
             .as_ref()
             .map(|status| status.runtimes.as_slice())
             .unwrap_or_default();
+        // What the turn uses so far, while it runs; once it is saved the
+        // entry's own actions say it.
+        let usage = usage.filter(|_| running);
         if usage.is_some() || !allowed.is_empty() || !runtimes.is_empty() {
             let mut line = div()
                 .h_flex()
@@ -2334,7 +2598,7 @@ impl Workspace {
             }
             line = line.child(div().flex_1());
             if let Some(usage) = usage {
-                line = line.child(controls::usage_line(usage));
+                line = line.child(surfaces::fact(controls::usage_line(usage), cx));
             }
             area = area.child(line);
         }
@@ -2450,23 +2714,6 @@ impl Workspace {
             }
             editor = editor.child(chips);
         }
-        let attach = div()
-            .h_flex()
-            .child(
-                icon_button("attach-files", "attach", tr("Attach files"))
-                    .disabled(self.pending)
-                    .on_click(cx.listener(|this, _, window, cx| this.attach_files(window, cx))),
-            )
-            .child(
-                icon_button(
-                    "attach-context",
-                    "link",
-                    tr("Add a project file, a conversation or a skill"),
-                )
-                .on_click(
-                    cx.listener(|this, _, window, cx| this.toggle_attach_palette(window, cx)),
-                ),
-            );
         area.child(
             editor
                 .child(
@@ -2485,56 +2732,163 @@ impl Workspace {
                         ),
                 )
                 .child(
+                    // `+` first and send last on the first line; the
+                    // conditions between wrap onto a second line where the
+                    // column is narrower than they are.
                     div()
                         .h_flex()
-                        .items_end()
-                        .justify_between()
+                        .items_start()
                         .gap_2()
+                        .child(plus)
                         .child(
-                            // The settings wrap onto a second line where the
-                            // column is narrower than they are; Send stays.
                             div()
                                 .h_flex()
                                 .flex_1()
                                 .min_w_0()
+                                .min_h(px(surfaces::ICON_BUTTON))
+                                .items_center()
                                 .flex_wrap()
-                                .gap_1()
-                                .child(attach)
-                                .children(quick)
-                                .child(self.slash_button(cx))
-                                .children(agent)
-                                .children(self.acp_settings(cx))
-                                .when(!by_agent, |row| row.child(plan))
-                                .child(access)
-                                .when(!by_agent, |row| {
-                                    row.child(model)
-                                        .child(effort)
-                                        .children(fast)
-                                        .children(runs_on)
-                                        .children(expert)
-                                })
-                                .when(!by_agent, |row| row.child(
-                                    Button::new("auto-review")
-                                        .icon(glyph("review"))
-                                        .when(options.auto_review, |button| {
-                                            button.label(tr("Reviewing"))
-                                        })
-                                        .small()
-                                        .ghost()
-                                        .selected(options.auto_review)
-                                        .tooltip(if options.auto_review {
-                                            tr("Each turn that used a tool is reviewed when it ends")
-                                        } else {
-                                            tr("Have each turn that used a tool reviewed when it ends")
-                                        })
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.toggle_auto_review(window, cx)
-                                        })),
-                                )),
+                                .gap_x(px(surfaces::CONDITION_GAP))
+                                .gap_y_1()
+                                .children(conditions),
                         )
                         .child(actions),
                 ),
         )
+    }
+
+    /// The composer's `+` menu: first what can be put into the message
+    /// (files, a project file, conversation or skill, a quick action, a
+    /// command, workflow or skill from the `/` list), each an icon and a
+    /// word with its key at the right; then the modes that change what Wisp
+    /// does, each checked while it is on.
+    fn plus_menu(&self, by_agent: bool, fast_offered: bool, cx: &mut Context<Self>) -> Div {
+        type Run = fn(&mut Workspace, &mut Window, &mut Context<Workspace>);
+        let options = self.options();
+        let line = cx.theme().border;
+        let teal = cx.theme().primary;
+        let item = |id: &'static str,
+                    icon_name: &str,
+                    label: &'static str,
+                    key: Option<&'static str>,
+                    checked: Option<bool>,
+                    enabled: bool,
+                    run: Run,
+                    cx: &mut Context<Self>| {
+            let row = Self::menu_item(id, icon_name, label, cx)
+                .children(key.map(|key| surfaces::fact(key, cx)))
+                .children(
+                    checked
+                        .filter(|on| *on)
+                        .map(|_| icon("check").text_color(teal)),
+                );
+            if !enabled {
+                return row.opacity(0.5).cursor_default();
+            }
+            row.on_click(cx.listener(move |this, _, window, cx| {
+                this.layers.close(Layer::PlusMenu);
+                run(this, window, cx);
+                cx.notify();
+            }))
+        };
+        let mut menu = Self::composer_menu(300., cx)
+            .child(item(
+                "attach-files",
+                "attach",
+                tr("Attach files"),
+                None,
+                None,
+                !self.pending,
+                |this, window, cx| this.attach_files(window, cx),
+                cx,
+            ))
+            .child(item(
+                "attach-context",
+                "link",
+                tr("Add a project file, a conversation or a skill"),
+                Some("@"),
+                None,
+                true,
+                |this, window, cx| this.toggle_attach_palette(window, cx),
+                cx,
+            ));
+        // Requests kept under a name, to put into the message box.
+        if !self.quick_actions.is_empty() {
+            menu = menu.child(item(
+                "quick-actions",
+                "file-play",
+                tr("Quick actions"),
+                None,
+                None,
+                true,
+                |this, window, cx| {
+                    // One may have been added or removed since.
+                    this.load_quick_actions(window, cx);
+                    this.toggle_composer_menu(Layer::QuickMenu, window, cx)
+                },
+                cx,
+            ));
+        }
+        menu = menu
+            .child(item(
+                "slash-commands",
+                "skill",
+                tr("Commands, workflows and skills"),
+                Some("/"),
+                None,
+                true,
+                |this, window, cx| this.open_slash_menu(window, cx),
+                cx,
+            ))
+            .child(div().h(px(1.)).mx_2().my_1().flex_shrink_0().bg(line));
+        if !by_agent {
+            menu = menu.child(item(
+                "plan-first-switch",
+                "plan",
+                tr("Plan first"),
+                None,
+                Some(options.plan_first),
+                true,
+                |this, window, cx| this.toggle_plan_first(window, cx),
+                cx,
+            ));
+        }
+        // Turning full access on still asks first.
+        menu = menu.child(item(
+            "access-switch",
+            "shield",
+            tr("Full access"),
+            None,
+            Some(options.full_access),
+            true,
+            |this, window, cx| this.toggle_full_access(window, cx),
+            cx,
+        ));
+        if !by_agent {
+            menu = menu.child(item(
+                "auto-review-switch",
+                "review",
+                tr("Review turns"),
+                None,
+                Some(options.auto_review),
+                true,
+                |this, window, cx| this.toggle_auto_review(window, cx),
+                cx,
+            ));
+        }
+        if fast_offered {
+            menu = menu.child(item(
+                "fast-switch",
+                "bolt",
+                tr("Fast"),
+                None,
+                Some(options.fast),
+                true,
+                |this, window, cx| this.toggle_fast(window, cx),
+                cx,
+            ));
+        }
+        menu
     }
 
     /// What stands in the composer's place in a read-only conversation: a
@@ -2585,8 +2939,9 @@ impl Workspace {
     pub(super) fn render_conversation(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
         let drop_tint = cx.theme().primary.opacity(0.06);
-        // The tabs and the conversation's header stay over a document
-        // shown in the centre; what follows them is the conversation.
+        // The tabs and the conversation's actions are in the window's bar
+        // (`render_project_bar`); what follows is the conversation, or a
+        // document shown in the centre.
         let page = div()
             .v_flex()
             .flex_1()
@@ -2597,9 +2952,7 @@ impl Workspace {
             .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(drop_tint))
             .on_drop(cx.listener(|this, dropped: &ExternalPaths, window, cx| {
                 this.attach_dropped(dropped.paths(), window, cx)
-            }))
-            .children(self.render_tabs(cx))
-            .child(self.render_topbar(cx));
+            }));
         let mut content = div().v_flex().flex_1().min_w_0().min_h_0();
         if let Some(bar) = self.render_conversation_bar(cx) {
             content = content.child(bar);

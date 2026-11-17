@@ -7,27 +7,20 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_dto::ProjectSummary;
 
 use super::{
     Workspace, chip,
-    shell::{error_banner, glyph, icon_button},
-    surfaces::{self, DialogWidth},
+    shell::{error_banner, glyph},
+    surfaces::{self, DialogWidth, IconSize, IconTone, StampKind},
 };
 use crate::{
-    assets::icon,
     backend::receive,
     home,
     layers::Layer,
     present::{self, Tone},
 };
-
-/// A project's card: the page's card with room inside.
-fn card(id: SharedString, cx: &App) -> Stateful<Div> {
-    surfaces::card(id, cx).px_4().py_3()
-}
 
 impl Workspace {
     /// The stronger question on a project's card: its folder goes too.
@@ -79,7 +72,7 @@ impl Workspace {
                         &[&folder.name],
                     )),
             )
-            .child(Input::new(&self.delete_name_input).small())
+            .child(super::surfaces::input(&self.delete_name_input, cx).small())
             .child(
                 div()
                     .h_flex()
@@ -99,7 +92,10 @@ impl Workspace {
             )
     }
 
-    fn project_card(
+    /// A project's cell in the grid: its name (Title), its folder (a fact),
+    /// a line of icons and numbers, a stamp when something waits for the
+    /// user, and its actions, which show under the pointer.
+    fn project_cell(
         &self,
         project: &ProjectSummary,
         now: i64,
@@ -107,44 +103,42 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let id = project.id.clone();
-        let muted = cx.theme().muted_foreground;
-        let ring = cx.theme().ring;
+        let hover = cx.theme().list_hover;
+        let group = SharedString::from(format!("project-cell-{id}"));
         let mut top = div()
             .h_flex()
+            .items_center()
             .gap_2()
             .child(surfaces::title(project.name.clone()).min_w_0().truncate());
-        for (label, tone) in home::activity(project) {
-            top = top.child(chip(label, tone, cx));
+        if project.needs_you_count > 0 {
+            top = top.child(surfaces::stamp_with(
+                StampKind::Waiting,
+                "bell",
+                project.needs_you_count.to_string(),
+                cx,
+            ));
         }
         if let Some((label, tone)) = home::folder_badge(project) {
             top = top.child(chip(label, tone, cx));
         }
-        top = top.child(div().flex_1()).child(
-            div()
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(muted)
-                .child(home::age(now, project.updated_at)),
-        );
-        let card = card(SharedString::from(format!("project-{id}")), cx)
+        let cell = div()
+            .id(SharedString::from(format!("project-{id}")))
+            .group(group.clone())
             .v_flex()
             .gap_1()
+            .px_4()
+            .py_3()
             .child(top)
             .child(
-                div()
-                    .truncate()
-                    .text_xs()
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .text_color(muted)
-                    .child(home::short_path(&project.workspace_dir, home_dir)),
+                surfaces::fact(home::short_path(&project.workspace_dir, home_dir), cx).truncate(),
             );
         if self.removing.as_ref() == Some(&id) {
             if let Some(question) = &self.removing_folder {
-                return card.child(self.render_delete_folder(question, cx));
+                return cell.child(self.render_delete_folder(question, cx));
             }
             // Not a link while the question is open: a stray click must not
             // open the project that is about to be removed.
-            return card
+            return cell
                 .child(
                     div()
                         .pt_1()
@@ -195,8 +189,8 @@ impl Workspace {
         }
         let starred = project.starred;
         let star_id = id.clone();
-        let mut actions = div().h_flex().gap_1().child(
-            icon_button(
+        let mut actions = div().h_flex().gap_0p5().child(
+            surfaces::icon_action(
                 SharedString::from(format!("star-{id}")),
                 if starred { "star-filled" } else { "star" },
                 if starred {
@@ -204,19 +198,27 @@ impl Workspace {
                 } else {
                     tr("Keep first")
                 },
+                if starred {
+                    IconTone::Ink
+                } else {
+                    IconTone::Faded
+                },
+                cx,
             )
             .on_click(cx.listener(move |this, _, window, cx| {
-                // The card underneath opens the project; this click is not that.
+                // The cell underneath opens the project; this click is not that.
                 cx.stop_propagation();
                 this.toggle_star(star_id.clone(), !starred, window, cx)
             })),
         );
         let settings_id = id.clone();
         actions = actions.child(
-            icon_button(
+            surfaces::icon_action(
                 SharedString::from(format!("project-settings-{id}")),
                 "adjustments",
                 tr("Project settings"),
+                IconTone::Faded,
+                cx,
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
@@ -225,10 +227,12 @@ impl Workspace {
         );
         let window_id = id.clone();
         actions = actions.child(
-            icon_button(
+            surfaces::icon_action(
                 SharedString::from(format!("project-window-{id}")),
                 "dock",
                 tr("Open in a new window"),
+                IconTone::Faded,
+                cx,
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
@@ -238,10 +242,12 @@ impl Workspace {
         let (export_id, package_id) = (id.clone(), id.clone());
         actions = actions
             .child(
-                icon_button(
+                surfaces::icon_action(
                     SharedString::from(format!("project-export-{id}")),
                     "archive-export",
                     tr("Export the project as an archive"),
+                    IconTone::Faded,
+                    cx,
                 )
                 .disabled(self.pending)
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -250,10 +256,12 @@ impl Workspace {
                 })),
             )
             .child(
-                icon_button(
+                surfaces::icon_action(
                     SharedString::from(format!("project-package-{id}")),
                     "folder-move",
                     tr("Export the project as a folder another computer opens in place"),
+                    IconTone::Faded,
+                    cx,
                 )
                 .disabled(self.pending)
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -264,10 +272,12 @@ impl Workspace {
         if wisp_server::desktop::removable(&id) {
             let remove_id = id.clone();
             actions = actions.child(
-                icon_button(
+                surfaces::icon_action(
                     SharedString::from(format!("remove-{id}")),
                     "trash",
                     tr("Remove from Wisp"),
+                    IconTone::Faded,
+                    cx,
                 )
                 .disabled(self.pending)
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -276,23 +286,70 @@ impl Workspace {
                 })),
             );
         }
-        card.child(
+        // Icons and numbers: conversations, artifacts, when it was last
+        // touched, and what is running. The words are its tooltip.
+        let number = |icon: &str, text: String, cx: &App| {
             div()
                 .h_flex()
-                .child(
-                    div()
-                        .flex_1()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(home::counts(project)),
-                )
-                .child(actions),
-        )
-        .cursor_pointer()
-        .hover(|style| style.border_color(ring.opacity(0.6)))
-        .on_click(
-            cx.listener(move |this, _, window, cx| this.enter_project(id.clone(), window, cx)),
-        )
+                .flex_none()
+                .items_center()
+                .gap_1()
+                .child(surfaces::sized_icon(
+                    icon,
+                    IconSize::Inline,
+                    IconTone::Faded,
+                    cx,
+                ))
+                .child(surfaces::fact(text, cx))
+        };
+        let mut said = vec![home::counts(project)];
+        said.extend(home::activity(project).into_iter().map(|(label, _)| label));
+        let said = SharedString::from(said.join(" · "));
+        let mut numbers = div()
+            .id(SharedString::from(format!("project-numbers-{id}")))
+            .h_flex()
+            .flex_1()
+            .min_w_0()
+            .items_center()
+            .gap_3()
+            .tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(said.clone()).build(window, cx)
+            })
+            .child(number("chat", project.session_count.to_string(), cx))
+            .child(number("layers", project.artifact_count.to_string(), cx))
+            .child(number("clock", home::age(now, project.updated_at), cx));
+        if project.running_count > 0 {
+            let running = surfaces::stamp_color(StampKind::Running, cx);
+            numbers = numbers.child(
+                div()
+                    .h_flex()
+                    .flex_none()
+                    .items_center()
+                    .gap_1()
+                    .child(crate::assets::icon(StampKind::Running.icon()).text_color(running))
+                    .child(surfaces::fact(project.running_count.to_string(), cx)),
+            );
+        }
+        // The actions show under the pointer, laid over the cell's top
+        // right corner on the cell's hover colour, so they take no height
+        // of their own. While hidden they take no click, so the cell opens
+        // the project.
+        let actions = actions
+            .absolute()
+            .top_2()
+            .right_2()
+            .rounded(cx.theme().radius)
+            .bg(hover)
+            .invisible()
+            .group_hover(group, |style| style.visible());
+        cell.relative()
+            .child(numbers)
+            .child(actions)
+            .cursor_pointer()
+            .hover(move |style| style.bg(hover))
+            .on_click(
+                cx.listener(move |this, _, window, cx| this.enter_project(id.clone(), window, cx)),
+            )
     }
 
     /// Opens the dialog that names a new project.
@@ -376,8 +433,8 @@ impl Workspace {
             .child(div().text_xs().text_color(muted).child(tr(
                 "A folder with this name is made where you choose next, and the project opens in it.",
             )))
-            .child(Input::new(&self.new_project_name).small())
-            .child(Input::new(&self.new_project_description).h(px(72.)))
+            .child(super::surfaces::input(&self.new_project_name, cx).small())
+            .child(super::surfaces::input(&self.new_project_description, cx).h(px(72.)))
             .child(
                 div()
                     .h_flex()
@@ -415,6 +472,192 @@ impl Workspace {
         )
     }
 
+    /// The rarer ways to start, under the home page's More button: each an
+    /// icon and a word, its longer name as its tooltip. Escape closes it
+    /// (`Layer::StartMenu`); choosing one closes it first.
+    fn start_menu(&self, cx: &mut Context<Self>) -> Div {
+        let hover = cx.theme().list_hover;
+        let pending = self.pending;
+        type Start = fn(&mut Workspace, &mut Window, &mut Context<Workspace>);
+        let ways: [(
+            &'static str,
+            &'static str,
+            &'static str,
+            &'static str,
+            bool,
+            Start,
+        ); 4] = [
+            (
+                "home-examples",
+                "lightbulb",
+                tr("Example conversations"),
+                tr("Read the example conversations that ship with Wisp"),
+                false,
+                |this, window, cx| this.open_examples(window, cx),
+            ),
+            (
+                "home-webview",
+                "conversation-import",
+                tr("Bring over from WebView"),
+                tr("Bring over projects from the WebView desktop"),
+                true,
+                |this, window, cx| this.open_webview_import(window, cx),
+            ),
+            (
+                "home-join",
+                "sync",
+                tr("Join from another device"),
+                tr("Join a project from another device"),
+                true,
+                |this, window, cx| this.open_join_synced(window, cx),
+            ),
+            (
+                "home-sample",
+                "folder-plus",
+                tr("Sample project"),
+                tr("Make a sample project to try Wisp on"),
+                true,
+                |this, window, cx| this.create_sample_project(window, cx),
+            ),
+        ];
+        let mut menu = div()
+            .absolute()
+            .top(px(surfaces::ICON_BUTTON + 4.))
+            .right_0()
+            .w(px(260.))
+            .v_flex()
+            .p_1()
+            .occlude()
+            .rounded(cx.theme().radius_lg)
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().popover)
+            .shadow_md();
+        for (id, icon, word, about, waits, start) in ways {
+            // Those that change projects wait while another change is under way.
+            let live = !(waits && pending);
+            menu = menu.child(
+                div()
+                    .id(id)
+                    .group(surfaces::ICON_HOVER)
+                    .h_flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .h(px(30.))
+                    .rounded(cx.theme().radius)
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(about).build(window, cx)
+                    })
+                    .child(surfaces::sized_icon(
+                        icon,
+                        IconSize::Inline,
+                        IconTone::Faded,
+                        cx,
+                    ))
+                    .child(div().flex_1().min_w_0().truncate().child(word))
+                    .when(!live, |row| row.opacity(0.5))
+                    .when(live, |row| {
+                        row.cursor_pointer()
+                            .hover(move |style| style.bg(hover))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.layers.close(Layer::StartMenu);
+                                start(this, window, cx);
+                                cx.notify();
+                            }))
+                    }),
+            );
+        }
+        menu
+    }
+
+    /// What the window's bar holds on the home page: the wordmark, and
+    /// opposite it the places to go as icon and word, then the
+    /// documentation and the settings as icon buttons.
+    pub(super) fn render_home_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        let place = |id: &'static str, icon: &str, word: &'static str, name: &'static str| {
+            surfaces::labelled_action(id, icon, word, IconSize::Navigation, IconTone::Faded, cx)
+                .tooltip(name)
+        };
+        div()
+            .h_flex()
+            .flex_1()
+            .min_w_0()
+            .items_center()
+            .gap_1()
+            // The wordmark keeps the serif's Medium.
+            .child(
+                surfaces::title("Wisp")
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(cx.theme().primary),
+            )
+            .child(
+                div()
+                    .pl_2()
+                    .child(chip(tr("GPUI preview"), Tone::Neutral, cx)),
+            )
+            .child(div().flex_1())
+            .child(
+                place(
+                    "home-assistant",
+                    "bot",
+                    tr("Research assistant"),
+                    tr("Research assistant"),
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.open_assistant(window, cx))),
+            )
+            .child(
+                place(
+                    "home-mandates",
+                    "clipboard",
+                    tr("Mandates"),
+                    tr("Research mandates"),
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.open_mandates(window, cx))),
+            )
+            .child(
+                place(
+                    "home-calendar",
+                    "calendar",
+                    tr("Calendar"),
+                    tr("Research calendar"),
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.open_calendar(window, cx))),
+            )
+            .child(
+                place(
+                    "home-schedules",
+                    "clock",
+                    tr("Scheduled"),
+                    tr("Scheduled tasks"),
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.open_schedules(window, cx))),
+            )
+            .child(
+                place("home-favorites", "star", tr("Favorites"), tr("Favorites"))
+                    .on_click(cx.listener(|this, _, window, cx| this.open_favorites(window, cx))),
+            )
+            // What waits for the user, across projects, beside the docs.
+            .children(self.render_waiting(window, cx))
+            .child(
+                surfaces::icon_action(
+                    "home-docs",
+                    "book",
+                    tr("Documentation, in your browser"),
+                    IconTone::Faded,
+                    cx,
+                )
+                .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::links::DOCS))),
+            )
+            .child(
+                surfaces::icon_action("home-settings", "gear", tr("Settings"), IconTone::Faded, cx)
+                    .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx))),
+            )
+    }
+
+    /// The home page under the window's bar (`render_home_bar`): one
+    /// centred column with the greeting, the search, the ways to start,
+    /// the projects and the recent conversations.
     pub(super) fn render_home(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let ring = cx.theme().ring;
@@ -426,87 +669,74 @@ impl Workspace {
             .unwrap_or(0);
         let home_dir = dirs::home_dir().map(|path| path.to_string_lossy().into_owned());
 
-        // The wordmark, and opposite it the places to go, as words.
-        let link =
-            |id: &'static str, label: &'static str| Button::new(id).label(label).ghost().small();
-        let bar = div()
+        // Looks like a field, opens the palette: there is one search. A
+        // white field with a line, as every field is.
+        let search = div()
+            .id("home-search")
             .h_flex()
-            .flex_wrap()
-            .gap_1()
-            .px_6()
-            .py_3()
-            .child(surfaces::title("Wisp").text_color(cx.theme().primary))
-            .child(
-                div()
-                    .pl_2()
-                    .child(chip(tr("GPUI preview"), Tone::Neutral, cx)),
-            )
-            .child(div().flex_1())
-            .child(
-                link("home-assistant", tr("Research assistant"))
-                    .on_click(cx.listener(|this, _, window, cx| this.open_assistant(window, cx))),
-            )
-            .child(
-                link("home-mandates", tr("Research mandates"))
-                    .on_click(cx.listener(|this, _, window, cx| this.open_mandates(window, cx))),
-            )
-            .child(
-                link("home-calendar", tr("Research calendar"))
-                    .on_click(cx.listener(|this, _, window, cx| this.open_calendar(window, cx))),
-            )
-            .child(
-                link("home-schedules", tr("Scheduled tasks"))
-                    .on_click(cx.listener(|this, _, window, cx| this.open_schedules(window, cx))),
-            )
-            .child(
-                link("home-favorites", tr("Favorites"))
-                    .on_click(cx.listener(|this, _, window, cx| this.open_favorites(window, cx))),
-            )
-            .child(
-                link("home-examples", tr("Example conversations"))
-                    .on_click(cx.listener(|this, _, window, cx| this.open_examples(window, cx))),
-            )
-            .child(
-                icon_button("home-docs", "book", tr("Documentation, in your browser"))
-                    .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::links::DOCS))),
-            )
-            .child(
-                icon_button("home-settings", "gear", tr("Settings"))
-                    .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx))),
-            );
-
-        // Looks like a field, opens the palette: there is one search.
-        let search = surfaces::card("home-search", cx)
-            .h_flex()
-            .gap_3()
-            .px_4()
-            .py_3()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_2()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().input)
+            .bg(cx.theme().popover)
             .cursor_pointer()
             .hover(|style| style.border_color(ring.opacity(0.6)))
-            .child(icon("search").text_color(muted))
+            .child(surfaces::sized_icon(
+                "search",
+                IconSize::Inline,
+                IconTone::Faded,
+                cx,
+            ))
             .child(
                 div()
                     .flex_1()
                     .text_color(muted)
                     .child(tr("Search everything")),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(if cfg!(target_os = "macos") {
-                        "⌘K"
-                    } else {
-                        "Ctrl+K"
-                    }),
-            )
+            .child(surfaces::fact(
+                if cfg!(target_os = "macos") {
+                    "⌘K"
+                } else {
+                    "Ctrl+K"
+                },
+                cx,
+            ))
             .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)));
 
-        // The ways to start: one filled, the usual two outlined, the rarer
-        // ones as words.
+        // The ways to start, on one line: one filled, the usual two
+        // outlined, and the rarer ones in a menu under More at the right.
+        // The line does not wrap: a wrapping row was measured at its
+        // narrowest and left a band of empty height under it.
+        let starting = self.layers.contains(Layer::StartMenu);
+        let mut more = div().relative().flex_shrink_0().child(
+            surfaces::labelled_action(
+                "home-more-start",
+                "more",
+                tr("More ways to start"),
+                IconSize::Inline,
+                if starting {
+                    IconTone::Ink
+                } else {
+                    IconTone::Faded
+                },
+                cx,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                if !this.layers.close(Layer::StartMenu) {
+                    this.layers.open(Layer::StartMenu);
+                }
+                cx.notify();
+            })),
+        );
+        if starting {
+            more = more.child(deferred(self.start_menu(cx)));
+        }
         let start = div()
             .h_flex()
-            .flex_wrap()
+            .items_center()
             .gap_2()
             .child(
                 Button::new("new-project")
@@ -518,7 +748,7 @@ impl Workspace {
             )
             .child(
                 Button::new("open-project")
-                    .icon(glyph("folder-plus"))
+                    .icon(glyph("folder"))
                     .label(tr("Open folder"))
                     .outline()
                     .disabled(self.pending)
@@ -534,119 +764,87 @@ impl Workspace {
                     .on_click(cx.listener(|this, _, window, cx| this.import_project(window, cx))),
             )
             .child(div().flex_1())
-            .child(
-                link("home-webview", tr("Bring over from WebView"))
-                    .tooltip(tr("Bring over projects from the WebView desktop"))
-                    .disabled(self.pending)
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.open_webview_import(window, cx)),
-                    ),
-            )
-            .child(
-                link("home-join", tr("Join from another device"))
-                    .tooltip(tr("Join a project from another device"))
-                    .disabled(self.pending)
-                    .on_click(cx.listener(|this, _, window, cx| this.open_join_synced(window, cx))),
-            )
-            .child(
-                link("home-sample", tr("Sample project"))
-                    .tooltip(tr("Make a sample project to try Wisp on"))
-                    .disabled(self.pending)
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.create_sample_project(window, cx)),
-                    ),
-            );
+            .child(more);
 
-        // Projects are cards in two columns. Privacy mode hides the chosen
+        // Projects are cells side by side, two to a line, with hairlines
+        // between them and round the grid. Privacy mode hides the chosen
         // projects while recording.
-        let mut cards = Vec::new();
+        let mut cells = Vec::new();
         for project in self
             .projects
             .iter()
             .filter(|project| !home::concealed(&self.privacy, &project.id))
         {
-            cards.push(self.project_card(project, now, home_dir.as_deref(), cx));
+            cells.push(self.project_cell(project, now, home_dir.as_deref(), cx));
         }
-        let mut projects = div()
-            .v_flex()
-            .gap_3()
-            .child(surfaces::title(tr("Projects")));
-        for row in surfaces::rows_of(cards, 2) {
-            let short = row.len() < 2;
-            let mut pair = div().h_flex().items_start().gap_4();
-            for card in row {
-                pair = pair.child(card.flex_1().min_w_0());
+        let projects = (!cells.is_empty()).then(|| {
+            let mut grid = div()
+                .v_flex()
+                .overflow_hidden()
+                .rounded(cx.theme().radius_lg)
+                .border_1()
+                .border_color(line);
+            for (index, row) in surfaces::rows_of(cells, 2).into_iter().enumerate() {
+                let short = row.len() < 2;
+                // A plain flex row stretches its cells to one height.
+                let mut pair = div()
+                    .flex()
+                    .when(index > 0, |pair| pair.border_t_1().border_color(line));
+                for (at, cell) in row.into_iter().enumerate() {
+                    pair = pair.child(
+                        cell.flex_1()
+                            .min_w_0()
+                            .when(at > 0, |cell| cell.border_l_1().border_color(line)),
+                    );
+                }
+                if short {
+                    // Keeps a lone cell the width of a column.
+                    pair = pair.child(div().flex_1().border_l_1().border_color(line));
+                }
+                grid = grid.child(pair);
             }
-            if short {
-                // Keeps a lone card the width of a column.
-                pair = pair.child(div().flex_1());
-            }
-            projects = projects.child(pair);
-        }
+            grid
+        });
 
-        // Recent conversations are lines with a hairline between.
-        let mut recent = div().v_flex().child(
-            div()
-                .pb_2()
-                .child(surfaces::title(tr("Recent conversations"))),
-        );
-        if self.recent.is_empty() {
-            recent = recent.child(
-                div()
-                    .py_2()
-                    .text_color(muted)
-                    .child(tr("Conversations you start will appear here.")),
-            );
-        }
-        for row in self
+        // Recent conversations are record rows: when, a conversation's
+        // icon, its project and title, its status as a stamp.
+        let rows = self
             .recent
             .iter()
             .filter(|row| !home::concealed(&self.privacy, &row.project_id))
-        {
-            let project = row.project_id.clone();
-            let session = row.id.clone();
-            let age = home::age(now, row.activity_at);
-            let place = if row.project_name.is_empty() {
-                age
-            } else {
-                format!("{} · {age}", row.project_name)
-            };
-            let mut entry = div()
-                .id(SharedString::from(format!("recent-{session}")))
-                .h_flex()
-                .gap_3()
-                .px_2()
-                .py_2()
-                .border_t_1()
-                .border_color(line)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .child(crate::present::one_line(&row.title)),
+            .map(|row| {
+                let project = row.project_id.clone();
+                let session = row.id.clone();
+                let mut record = surfaces::record_row(
+                    SharedString::from(format!("recent-{session}")),
+                    crate::present::one_line(&row.title),
                 )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .max_w(px(280.))
-                        .truncate()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(place),
-                );
-            if let Some((label, tone)) = present::session_status(&row.status) {
-                entry = entry.child(chip(label, tone, cx));
-            }
-            recent = recent.child(
-                entry
+                .time(home::clock(now, row.activity_at))
+                .icon("chat");
+                if !row.project_name.is_empty() {
+                    record = record.lead(row.project_name.clone());
+                }
+                if let Some((label, tone)) = present::session_status(&row.status)
+                    && let Some(kind) = StampKind::from_tone(tone)
+                {
+                    record = record.stamp(kind, label);
+                }
+                record
                     .cursor_pointer()
                     .hover(move |style| style.bg(hover))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_session(project.clone(), session.clone(), window, cx)
-                    })),
-            );
-        }
+                    }))
+            })
+            .collect::<Vec<_>>();
+        let recent = if rows.is_empty() {
+            div()
+                .py_2()
+                .text_color(muted)
+                .child(tr("Conversations you start will appear here."))
+        } else {
+            surfaces::record_group(rows, cx)
+        };
 
         let mut page = div()
             .v_flex()
@@ -656,7 +854,7 @@ impl Workspace {
             .px_8()
             .pt_8()
             .pb_10()
-            .gap_8()
+            .gap_6()
             .child(
                 div()
                     .v_flex()
@@ -703,7 +901,6 @@ impl Workspace {
             .id("home")
             .size_full()
             .overflow_y_scroll()
-            .child(bar)
-            .child(page.child(projects).child(recent))
+            .child(page.children(projects).child(recent))
     }
 }

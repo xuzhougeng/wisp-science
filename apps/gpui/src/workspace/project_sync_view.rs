@@ -7,7 +7,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::{ProjectSyncResult, SyncSettings};
 
@@ -150,7 +149,7 @@ impl Workspace {
             div()
                 .v_flex()
                 .gap_1()
-                .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(tr("Sync")))
+                .child(div().text_sm().child(tr("Sync")))
                 .child(div().text_xs().text_color(muted).child(tr(
                     "Keeps this project's files and records the same on your devices, encrypted with a key only they have.",
                 ))),
@@ -358,7 +357,7 @@ impl Workspace {
         .child(div().text_xs().text_color(muted).child(tr(
                 "Paste the device code copied in the project's settings on the other device, then choose the folder to put the project in.",
             )))
-            .child(Input::new(&self.join_code).small());
+            .child(super::surfaces::input(&self.join_code, cx).small());
         if let Some(error) = &self.join_note {
             card = card.child(chip(crate::i18n::host(error), Tone::Danger, cx));
         }
@@ -443,7 +442,7 @@ impl Workspace {
             .v_flex()
             .gap_2()
             .pt_6()
-            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(tr("Project sync")))
+            .child(div().text_sm().child(tr("Project sync")))
             .child(div().w(px(640.)).text_xs().text_color(muted).child(tr(
                 "Where Sync now in a project's settings publishes it: a wisp-relay of your own, or a shared folder such as a network drive. Files and records are encrypted with a key per project before they leave.",
             )));
@@ -485,7 +484,7 @@ impl Workspace {
                 tr("An https address; http is taken only on a private network."),
                 div()
                     .w(px(320.))
-                    .child(Input::new(&self.sync_fields[0]).small()),
+                    .child(super::surfaces::input(&self.sync_fields[0], cx).small()),
                 cx,
             ))
             .child(setting(
@@ -497,7 +496,7 @@ impl Workspace {
                 },
                 div()
                     .w(px(220.))
-                    .child(Input::new(&self.sync_fields[1]).small()),
+                    .child(super::surfaces::input(&self.sync_fields[1], cx).small()),
                 cx,
             ))
         } else {
@@ -506,7 +505,7 @@ impl Workspace {
                 tr("An absolute path every device can reach; it must not be inside a project."),
                 div()
                     .w(px(320.))
-                    .child(Input::new(&self.sync_fields[2]).small()),
+                    .child(super::surfaces::input(&self.sync_fields[2], cx).small()),
                 cx,
             ))
         };

@@ -343,13 +343,7 @@ impl Workspace {
             }
         }
         if !imports.models.is_empty() {
-            card = card.child(
-                div()
-                    .pt_3()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Saved models")),
-            );
+            card = card.child(div().pt_3().text_sm().child(tr("Saved models")));
             for (index, model) in imports.models.iter().enumerate() {
                 let picked = !model.here && imports.model_picks.contains(&model.id);
                 let id = model.id.clone();
@@ -401,13 +395,7 @@ impl Workspace {
         }
         if !imports.groups.is_empty() {
             card = card
-                .child(
-                    div()
-                        .pt_3()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(tr("More from the WebView")),
-                )
+                .child(div().pt_3().text_sm().child(tr("More from the WebView")))
                 .child(div().text_xs().text_color(muted).child(tr(
                     "Each comes only while this desktop has none of its own, and each item only \
                      as the WebView has it; what cannot come is left behind, with why.",
@@ -479,13 +467,7 @@ impl Workspace {
             }
         }
         if !imports.settings.is_empty() {
-            card = card.child(
-                div()
-                    .pt_3()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Settings")),
-            );
+            card = card.child(div().pt_3().text_sm().child(tr("Settings")));
             for (index, group) in imports.settings.iter().enumerate() {
                 let picked = imports.setting_picks.contains(group);
                 let group = group.clone();

@@ -171,6 +171,43 @@ fn age_in(locale: Locale, now: i64, then: i64) -> String {
     }
 }
 
+/// When `then` happened, as the time column of a record row: the clock
+/// time today (`17:03`), "Yesterday", the month and day this year
+/// (`11-03`), the full date before. Both are Unix seconds, read in the
+/// local time zone; a millisecond value from an older row is accepted too.
+pub fn clock(now: i64, then: i64) -> String {
+    use chrono::{Local, TimeZone};
+    let then = if then > 100_000_000_000 {
+        then / 1000
+    } else {
+        then
+    };
+    if then <= 0 {
+        return String::new();
+    }
+    match (
+        Local.timestamp_opt(now, 0).single(),
+        Local.timestamp_opt(then, 0).single(),
+    ) {
+        (Some(now), Some(then)) => clock_at(now.naive_local(), then.naive_local()),
+        _ => String::new(),
+    }
+}
+
+fn clock_at(now: chrono::NaiveDateTime, then: chrono::NaiveDateTime) -> String {
+    use chrono::Datelike;
+    let (today, day) = (now.date(), then.date());
+    if day >= today {
+        then.format("%H:%M").to_string()
+    } else if today.pred_opt() == Some(day) {
+        tr("Yesterday").to_owned()
+    } else if day.year() == today.year() {
+        then.format("%m-%d").to_string()
+    } else {
+        then.format("%Y-%m-%d").to_string()
+    }
+}
+
 /// The folder name shown for a project path, without losing which disk or
 /// home it is under when the full path is too long to read at a glance.
 pub fn short_path(path: &str, home: Option<&str>) -> String {
@@ -392,6 +429,34 @@ mod tests {
         // Millisecond timestamps and unset ones do not produce nonsense.
         assert_eq!(age(now, (now - 120) * 1000), "2 min ago");
         assert_eq!(age(now, 0), "");
+    }
+
+    #[test]
+    fn a_records_time_is_the_clock_today_then_a_day_then_a_date() {
+        let at = |date: (i32, u32, u32), hour: u32, minute: u32| {
+            chrono::NaiveDate::from_ymd_opt(date.0, date.1, date.2)
+                .unwrap()
+                .and_hms_opt(hour, minute, 0)
+                .unwrap()
+        };
+        let now = at((2026, 11, 16), 18, 30);
+        assert_eq!(clock_at(now, at((2026, 11, 16), 17, 3)), "17:03");
+        assert_eq!(clock_at(now, at((2026, 11, 16), 0, 0)), "00:00");
+        assert_eq!(clock_at(now, at((2026, 11, 15), 23, 59)), "Yesterday");
+        assert_eq!(clock_at(now, at((2026, 11, 3), 9, 0)), "11-03");
+        assert_eq!(clock_at(now, at((2025, 12, 31), 9, 0)), "2025-12-31");
+        // A clock a little behind the record's own still says the time.
+        assert_eq!(clock_at(now, at((2026, 11, 17), 0, 5)), "00:05");
+        // Yesterday across a new year.
+        let new_year = at((2027, 1, 1), 8, 0);
+        assert_eq!(clock_at(new_year, at((2026, 12, 31), 22, 0)), "Yesterday");
+        // No time saved: nothing to say.
+        assert_eq!(clock(1_800_000_000, 0), "");
+        // Milliseconds are read as seconds.
+        assert_eq!(
+            clock(1_800_000_000, 1_800_000_000_000),
+            clock(1_800_000_000, 1_800_000_000)
+        );
     }
 
     #[test]

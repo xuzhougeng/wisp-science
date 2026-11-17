@@ -2,14 +2,15 @@
 //! user's own browser, and the hosts to refuse or prefer.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
-use gpui_component::{
-    ActiveTheme, Sizable, StyledExt,
-    button::{Button, ButtonVariants},
-    input::Input,
-};
+use gpui_component::{ActiveTheme, Sizable, StyledExt};
 use wisp_server::desktop::{BrowserHostRule, BrowserSettings};
 
-use super::{Workspace, settings_sections::setting, surfaces::switch, tone_color};
+use super::{
+    Workspace,
+    settings_sections::explained_setting,
+    surfaces::{self, switch},
+    tone_color,
+};
 use crate::{
     backend::{Reply, receive},
     browser::{self, List},
@@ -66,129 +67,135 @@ impl Workspace {
         self.receive_browser(reply, Some(list), window, cx);
     }
 
+    /// The hosts of one list as record rows, each removed by an icon
+    /// button in the danger colour; the fields to add one under them.
     fn host_list(&self, list: List, rules: &[BrowserHostRule], cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
-        let (name, at) = match list {
-            List::Block => ("block", 0),
-            List::Prefer => ("prefer", 2),
+        let (name, at, icon) = match list {
+            List::Block => ("block", 0, "ban"),
+            List::Prefer => ("prefer", 2, "star"),
         };
-        let mut rows = div().v_flex().gap_1().w(px(640.));
+        let mut section = div().v_flex().gap_2();
         if rules.is_empty() {
-            rows = rows.child(div().text_xs().text_color(muted).child(match list {
-                List::Block => tr("No blocked hosts."),
-                List::Prefer => tr("No preferred hosts."),
-            }));
+            section = section.child(surfaces::settings_note(
+                match list {
+                    List::Block => tr("No blocked hosts."),
+                    List::Prefer => tr("No preferred hosts."),
+                },
+                cx,
+            ));
         }
-        for (index, rule) in rules.iter().enumerate() {
-            rows = rows.child(
-                div()
-                    .h_flex()
-                    .gap_3()
-                    .child(
-                        div()
-                            .w(px(220.))
-                            .truncate()
-                            .text_sm()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .child(rule.host.clone()),
+        let rows: Vec<_> = rules
+            .iter()
+            .enumerate()
+            .map(|(index, rule)| {
+                let mut row = surfaces::record_row(
+                    SharedString::from(format!("browser-{name}-{index}")),
+                    rule.host.clone(),
+                )
+                .icon(icon)
+                .mono();
+                if !rule.reason.is_empty() {
+                    row = row.suffix(rule.reason.clone());
+                }
+                row.action(
+                    surfaces::danger_action(
+                        SharedString::from(format!("browser-{name}-remove-{index}")),
+                        "trash",
+                        tr("Remove"),
+                        cx,
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(rule.reason.clone()),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("browser-{name}-remove-{index}")))
-                            .label(tr("Remove"))
-                            .xsmall()
-                            .ghost()
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                let Some(settings) = &this.browser else {
-                                    return;
-                                };
-                                let filters = browser::without_rule(&settings.filters, list, index);
-                                let reply = this.backend.save_browser_filters(filters);
-                                this.receive_browser(reply, None, window, cx);
-                            })),
-                    ),
-            );
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        let Some(settings) = &this.browser else {
+                            return;
+                        };
+                        let filters = browser::without_rule(&settings.filters, list, index);
+                        let reply = this.backend.save_browser_filters(filters);
+                        this.receive_browser(reply, None, window, cx);
+                    })),
+                )
+            })
+            .collect();
+        if !rows.is_empty() {
+            section = section.child(surfaces::record_group(rows, cx));
         }
-        rows.child(
+        section.child(
             div()
                 .h_flex()
                 .gap_2()
                 .pt_1()
                 .child(
                     div()
-                        .w(px(220.))
-                        .child(Input::new(&self.browser_fields[at]).small()),
+                        .w(px(200.))
+                        .child(surfaces::input(&self.browser_fields[at], cx).small()),
                 )
                 .child(
                     div()
                         .flex_1()
-                        .child(Input::new(&self.browser_fields[at + 1]).small()),
+                        .min_w_0()
+                        .child(surfaces::input(&self.browser_fields[at + 1], cx).small()),
                 )
                 .child(
-                    Button::new(SharedString::from(format!("browser-{name}-add")))
-                        .label(tr("Add"))
-                        .small()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.add_browser_host(list, window, cx)
-                        })),
+                    surfaces::outlined_action(
+                        SharedString::from(format!("browser-{name}-add")),
+                        "plus",
+                        tr("Add"),
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.add_browser_host(list, window, cx)
+                    })),
                 ),
         )
     }
 
     pub(super) fn render_browser_settings(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
         let page = self.settings_page(cx);
         let Some(settings) = &self.browser else {
-            return page.child(div().text_sm().text_color(muted).child(tr("Loading…")));
+            return page.child(surfaces::settings_note(tr("Loading…"), cx));
         };
         let enabled = settings.enabled;
         let (line, tone) = browser::status(settings);
-        let heading = |title: &'static str, note: &'static str| {
-            div()
-                .v_flex()
-                .gap_1()
-                .pt_4()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(title),
-                )
-                .child(div().w(px(640.)).text_xs().text_color(muted).child(note))
+        // A heading's explanation is its help icon's tooltip.
+        let heading = |title: &'static str, note: &'static str, cx: &App| {
+            surfaces::settings_heading_help(
+                title,
+                SharedString::from(format!("browser-help-{title}")),
+                note,
+                cx,
+            )
         };
         let mut page = page
-            .child(div().w(px(640.)).text_xs().text_color(muted).child(tr(
-                "Lets the model open pages in your own Chrome or Chromium, with its logins, \
-                 through the Wisp extension. A conversation reads and drives only the tabs it \
-                 opened itself; your other tabs are off limits, and every use asks first \
-                 unless you allowed the tool.",
-            )))
+            .child(surfaces::settings_note_help(
+                tr("Lets the model use your own Chrome through the Wisp extension."),
+                tr(
+                    "Lets the model open pages in your own Chrome or Chromium, with its logins, \
+                     through the Wisp extension. A conversation reads and drives only the tabs it \
+                     opened itself; your other tabs are off limits, and every use asks first \
+                     unless you allowed the tool.",
+                ),
+                cx,
+            ))
             .child(
                 div()
                     .h_flex()
-                    .gap_3()
+                    .items_center()
+                    .gap_2()
                     .py_2()
                     .child(div().text_sm().text_color(tone_color(tone, cx)).child(line))
                     .child(
-                        Button::new("browser-refresh")
-                            .label(tr("Refresh"))
-                            .xsmall()
-                            .ghost()
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.load_browser(window, cx)),
-                            ),
+                        surfaces::icon_action(
+                            "browser-refresh",
+                            "refresh",
+                            tr("Refresh"),
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| this.load_browser(window, cx))),
                     ),
             )
-            .child(setting(
+            .child(explained_setting(
                 tr("Browser tools"),
+                "",
                 tr(
                     "On, the app listens on this computer only (127.0.0.1:18765) for the \
                      extension, and conversations get the browser tools from their next turn. \
@@ -203,8 +210,9 @@ impl Workspace {
                 cx,
             ))
             // The WebView's two behaviours, under its settings keys.
-            .child(setting(
+            .child(explained_setting(
                 tr("Open browser automatically"),
+                "",
                 tr(
                     "When a browser tool needs Chrome/Chromium and it isn't running, start it so \
                      the Wisp extension can reconnect. Uses your existing profile, not a \
@@ -221,8 +229,9 @@ impl Workspace {
                 })),
                 cx,
             ))
-            .child(setting(
+            .child(explained_setting(
                 tr("Automatically close browser tabs"),
+                "",
                 tr(
                     "When a conversation turn ends, close tabs Wisp opened during that turn. \
                      Tabs you already had open are left alone.",
@@ -239,32 +248,30 @@ impl Workspace {
                 cx,
             ));
         let folder = settings.extension_path.clone();
-        page = page.child(setting(
+        page = page.child(explained_setting(
             tr("Extension"),
+            "",
             tr(
                 "In Chrome or Chromium open chrome://extensions, turn on Developer mode, \
                  press Load unpacked and choose this folder.",
             ),
             match folder {
                 Some(folder) => div()
-                    .v_flex()
-                    .items_end()
+                    .h_flex()
+                    .items_center()
                     .gap_1()
+                    .child(surfaces::read_only(folder.clone(), cx).max_w(px(320.)))
                     .child(
-                        div()
-                            .max_w(px(360.))
-                            .truncate()
-                            .text_xs()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .child(folder.clone()),
-                    )
-                    .child(
-                        Button::new("browser-copy-folder")
-                            .label(tr("Copy path"))
-                            .small()
-                            .on_click(cx.listener(move |_, _, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(folder.clone()));
-                            })),
+                        surfaces::icon_action(
+                            "browser-copy-folder",
+                            "copy",
+                            tr("Copy path"),
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(folder.clone()));
+                        })),
                     ),
                 None => div()
                     .text_xs()
@@ -279,11 +286,13 @@ impl Workspace {
                 "Refused before a tab is opened or a script navigates there. A host covers \
                  itself and all its subdomains.",
             ),
+            cx,
         ))
         .child(self.host_list(List::Block, &settings.filters.block, cx))
         .child(heading(
             tr("Preferred hosts"),
             tr("A hint to the model for literature search and the like; other sites still open."),
+            cx,
         ))
         .child(self.host_list(List::Prefer, &settings.filters.prefer, cx))
     }

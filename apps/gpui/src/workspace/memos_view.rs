@@ -7,7 +7,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::{ProjectMemo, ProjectMemoPatch};
 
@@ -209,12 +208,12 @@ impl Workspace {
             .min_h_0()
             .gap_2()
             .p_3()
-            .child(Input::new(&self.memo_title).small())
+            .child(super::surfaces::input(&self.memo_title, cx).small())
             .child(
                 div()
                     .flex_1()
                     .min_h(px(160.))
-                    .child(Input::new(&self.memo_body).h_full()),
+                    .child(super::surfaces::input(&self.memo_body, cx).h_full()),
             )
             .child(
                 div()
@@ -425,7 +424,7 @@ impl Workspace {
                 // something to search.
                 list = list.child(
                     div().px_3().child(
-                        Input::new(&self.memo_search)
+                        super::surfaces::input(&self.memo_search, cx)
                             .small()
                             .cleanable(true)
                             .prefix(icon("search").text_color(muted)),

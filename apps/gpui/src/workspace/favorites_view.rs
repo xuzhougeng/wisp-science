@@ -12,7 +12,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
     text::TextView,
 };
 use wisp_server::desktop::{Favorite, LibraryItem};
@@ -538,7 +537,7 @@ impl Workspace {
                                 this.save_favorite_code(window, cx)
                             },
                         ))
-                        .child(Input::new(&self.favorite_code).h_full()),
+                        .child(super::surfaces::input(&self.favorite_code, cx).h_full()),
                 )
                 .child(
                     div()
@@ -582,7 +581,6 @@ impl Workspace {
                         div()
                             .flex_1()
                             .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
                             .child(format!("v{}", version.version_number)),
                     )
                     .child(
@@ -755,12 +753,7 @@ impl Workspace {
             });
             if versioned {
                 detail = detail
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(tr("Generating code")),
-                    )
+                    .child(div().text_sm().child(tr("Generating code")))
                     .child(self.favorite_code_panel(window, cx));
             }
             return detail;
@@ -885,13 +878,28 @@ impl Workspace {
                 nav_row("favorites-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_favorites(window, cx))),
             )
-            .child(surfaces::title(tr("Favorites")).px_2().pt_3().pb_1())
-            .child(div().px_2().pb_1().text_xs().text_color(muted).child(tr(
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .pt_3()
+                    .pb_1()
+                    .child(surfaces::title(tr("Favorites")))
+                    // What the page is for, a tooltip away, not a paragraph in
+                    // the rail.
+                    .child(surfaces::help(
+                        "favorites-help",
+                        tr(
                 "Passages, code and figures you saved, as they were when you saved them.",
-            )))
+                        ),
+                        cx,
+                    )),
+            )
             .child(
                 div().py_1().child(
-                    Input::new(&self.favorites_search)
+                    super::surfaces::input(&self.favorites_search, cx)
                         .small()
                         .prefix(icon("search").text_color(muted)),
                 ),

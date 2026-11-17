@@ -1705,6 +1705,9 @@ pub fn items(messages: &[Message]) -> Vec<Item> {
                 let text = message.content.as_text();
                 let mut row = item("user", &text);
                 row.attachments = wisp_dto::native_conversations::saved_attachment_names(&text);
+                // When the researcher said it, so a client can date the
+                // turn; a message saved before times were kept has none.
+                row.timestamp = (message.ts > 0).then_some(message.ts);
                 items.push(row);
             }
             Role::Assistant => {
@@ -2065,6 +2068,18 @@ mod tests {
                 None,
             ]
         );
+    }
+
+    #[test]
+    fn a_users_message_carries_when_it_was_said() {
+        let mut said = Message::user("Align the reads");
+        said.ts = 1_800_000_000;
+        let mut old = Message::user("From before times were kept");
+        old.ts = 0;
+        let rows = items(&[said, Message::assistant("Aligned."), old]);
+        assert_eq!(rows[0].timestamp, Some(1_800_000_000));
+        assert_eq!(rows[1].timestamp, None);
+        assert_eq!(rows[2].timestamp, None);
     }
 
     #[test]

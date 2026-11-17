@@ -117,11 +117,7 @@ impl Workspace {
         let mut card = surfaces::panel_card("memory-tidy", cx)
             .mx_3()
             .gap_2()
-            .child(
-                div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Tidy habits")),
-            )
+            .child(div().child(tr("Tidy habits")))
             .child(div().text_xs().text_color(muted).child(tr(
                 "Once a week the model looks over the habits and proposes merging ones that say \
                  the same thing or retiring one a newer one replaces. Nothing changes until you \
@@ -173,12 +169,7 @@ impl Workspace {
                 .pl_2()
                 .border_l_2()
                 .border_color(cx.theme().border)
-                .child(
-                    div()
-                        .text_xs()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(memory::tidy_action(&proposal.action)),
-                );
+                .child(div().text_xs().child(memory::tidy_action(&proposal.action)));
             for habit in &proposal.memories {
                 entry = entry.child(
                     div()

@@ -58,12 +58,7 @@ impl Workspace {
         };
         if whole.nodes.is_empty() {
             return body
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(tr("Nothing recorded yet")),
-                )
+                .child(div().text_sm().child(tr("Nothing recorded yet")))
                 .child(div().text_xs().text_color(muted).child(tr(
                     "Decisions, papers and data assets the agent records for this project \
                      show up here.",
@@ -164,7 +159,6 @@ impl Workspace {
                     .h_flex()
                     .gap_2()
                     .text_xs()
-                    .font_weight(FontWeight::SEMIBOLD)
                     .text_color(muted)
                     .child(journey::graph_kind_label(kind))
                     .child(rows.len().to_string()),
@@ -285,7 +279,6 @@ impl Workspace {
                     .w(px(NODE_WIDTH as f32))
                     .text_center()
                     .text_xs()
-                    .font_weight(FontWeight::SEMIBOLD)
                     .text_color(muted)
                     .child(journey::graph_kind_label(column.kind)),
             );
@@ -384,13 +377,7 @@ impl Workspace {
                 div()
                     .h_flex()
                     .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_xs()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(tr("Relationship details")),
-                    )
+                    .child(div().flex_1().text_xs().child(tr("Relationship details")))
                     .child(
                         icon_button(
                             "journey-edge-close",

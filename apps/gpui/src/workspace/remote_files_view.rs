@@ -6,10 +6,7 @@
 //! and nothing there is replaced. Looking keeps nothing.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
-use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt, button::Button, input::Input,
-    text::TextView,
-};
+use gpui_component::{ActiveTheme, Disableable, Sizable, StyledExt, input::Input, text::TextView};
 
 use super::{
     Workspace,
@@ -274,30 +271,48 @@ impl Workspace {
             return None;
         }
         let on_host = self.remote.as_ref().map(|browse| browse.alias.as_str());
-        let mut row = div().h_flex().flex_wrap().gap_1().px_3().pt_2().child(
-            Button::new("location-project")
-                .label(tr("This project"))
-                .xsmall()
-                .selected(on_host.is_none())
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.leave_host();
-                    cx.notify();
-                })),
-        );
+        // One choice among the places: a segmented control, this project
+        // (`computer`) and each host (`server`).
+        let mut places = vec![
+            surfaces::segment(
+                "location-project",
+                "computer",
+                tr("This project"),
+                on_host.is_none(),
+                cx,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.leave_host();
+                cx.notify();
+            }))
+            .into_any_element(),
+        ];
         for host in hosts {
             let alias = host.alias.clone();
-            row = row.child(
-                Button::new(SharedString::from(format!("location-{alias}")))
-                    .icon(glyph("server"))
-                    .label(alias.clone())
-                    .xsmall()
-                    .selected(on_host == Some(alias.as_str()))
-                    .tooltip(tr("Look at this host's folders"))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.browse_host(alias.clone(), String::new(), window, cx)
-                    })),
+            places.push(
+                surfaces::segment(
+                    SharedString::from(format!("location-{alias}")),
+                    "server",
+                    alias.clone(),
+                    on_host == Some(alias.as_str()),
+                    cx,
+                )
+                .tooltip(|window, cx| {
+                    gpui_component::tooltip::Tooltip::new(tr("Look at this host's folders"))
+                        .build(window, cx)
+                })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.browse_host(alias.clone(), String::new(), window, cx)
+                }))
+                .into_any_element(),
             );
         }
+        let row = div()
+            .h_flex()
+            .px_3()
+            .pt_2()
+            .overflow_x_hidden()
+            .child(surfaces::segmented(places, cx));
         Some(row)
     }
 

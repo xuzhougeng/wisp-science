@@ -5,9 +5,9 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::{Input, InputState},
+    input::InputState,
 };
 use wisp_server::{
     config::default_api_url,
@@ -15,14 +15,14 @@ use wisp_server::{
 };
 
 use super::{
-    Workspace, chip,
-    shell::{error_banner, glyph, nav_row},
+    Workspace,
+    settings_sections::setting,
+    shell::{error_banner, nav_row},
     surfaces,
 };
 use crate::{
     backend::{Reply, receive},
     layers::Layer,
-    present::Tone,
     settings::{self, Section},
 };
 
@@ -435,61 +435,88 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The saved models as record rows, the chosen one on white with a
+    /// hairline; the way to add one and the providers to start from under
+    /// them. When the model comes from `WISP_*` variables, one bar says so
+    /// at the top.
     fn render_model_list(&self, cx: &mut Context<Self>) -> Div {
         let form = &self.settings;
         let muted = cx.theme().muted_foreground;
-        let accent = cx.theme().list_active;
         let hover = cx.theme().list_hover;
-        let mut list = div().v_flex().w(px(280.)).flex_shrink_0().gap_1().child(
-            div()
-                .pb_2()
-                .text_sm()
-                .text_color(muted)
-                .child(match &form.current {
-                    Some(current) => settings::summary(current),
-                    None => tr("Loading settings…").into(),
-                }),
-        );
+        let mut list = div().v_flex().w_full();
+        match &form.current {
+            Some(current) if !form.editable() => {
+                list = list.child(
+                    surfaces::bar("models-environment", cx)
+                        .h_flex()
+                        .items_center()
+                        .gap_2()
+                        .mb_3()
+                        .child(
+                            crate::assets::icon("circle-help")
+                                .size(rems(1.))
+                                .flex_none()
+                                .text_color(cx.theme().info),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_sm()
+                                .truncate()
+                                .child(settings::summary(current)),
+                        ),
+                );
+            }
+            Some(current) => {
+                list = list.child(
+                    div()
+                        .pb_2()
+                        .text_sm()
+                        .text_color(muted)
+                        .child(settings::summary(current)),
+                );
+            }
+            None => {
+                list = list.child(
+                    div()
+                        .pb_2()
+                        .text_sm()
+                        .text_color(muted)
+                        .child(tr("Loading settings…")),
+                );
+            }
+        }
+        let mut rows = Vec::new();
         for profile in form.current.iter().flat_map(|current| &current.profiles) {
             let id = profile.id.clone();
-            let mut heading = div().h_flex().gap_2().child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(profile.name.clone()),
-            );
+            let chosen = form.editing.as_ref() == Some(&id);
+            let mut row = surfaces::record_row(
+                SharedString::from(format!("model-{id}")),
+                profile.name.clone(),
+            )
+            .icon("bot")
+            .suffix(match &profile.problem {
+                Some(problem) => crate::i18n::host(problem),
+                None => profile.fields.model.clone(),
+            });
             if profile.is_default {
-                heading = heading.child(chip(tr("Default"), Tone::Success, cx));
+                row = row.stamp(surfaces::StampKind::Success, tr("Default"));
             }
-            let detail = match &profile.problem {
-                Some(problem) => div()
-                    .text_xs()
-                    .text_color(cx.theme().danger)
-                    .child(crate::i18n::host(problem)),
-                None => div()
-                    .truncate()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(profile.fields.model.clone()),
-            };
-            list = list.child(
-                div()
-                    .id(SharedString::from(format!("model-{id}")))
-                    .v_flex()
-                    .px_3()
-                    .py_2()
-                    .rounded(cx.theme().radius)
-                    .cursor_pointer()
-                    .hover(|style| style.bg(hover))
-                    .when(form.editing.as_ref() == Some(&id), |row| row.bg(accent))
-                    .child(heading)
-                    .child(detail)
+            if profile.problem.is_some() {
+                row = row.stamp(surfaces::StampKind::Failed, tr("Failed"));
+            }
+            rows.push(
+                row.cursor_pointer()
+                    .when(chosen, |row| row.bg(cx.theme().popover))
+                    .when(!chosen, |row| row.hover(move |style| style.bg(hover)))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.select_profile(Some(id.clone()), window, cx)
                     })),
             );
+        }
+        if !rows.is_empty() {
+            list = list.child(surfaces::record_group(rows, cx));
         }
         if !form.editable() {
             return list;
@@ -497,133 +524,152 @@ impl Workspace {
         let mut presets = div().h_flex().flex_wrap().gap_1();
         for (index, (label, _, _)) in settings::PRESETS.iter().enumerate() {
             presets = presets.child(
-                Button::new(("preset", index))
-                    .label(*label)
-                    .xsmall()
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.use_preset(index, window, cx)),
-                    ),
+                surfaces::outlined_action(("preset", index), "bot", *label, cx).on_click(
+                    cx.listener(move |this, _, window, cx| this.use_preset(index, window, cx)),
+                ),
             );
         }
         list.child(
-            div().pt_2().child(
-                Button::new("model-add")
-                    .icon(glyph("plus"))
-                    .label(tr("Add a model"))
-                    .small()
-                    .selected(form.editing.is_none())
-                    .on_click(
+            div()
+                .h_flex()
+                .items_center()
+                .gap_3()
+                .pt_3()
+                .child(
+                    surfaces::outlined_action("model-add", "plus", tr("Add a model"), cx).on_click(
                         cx.listener(|this, _, window, cx| this.select_profile(None, window, cx)),
                     ),
-            ),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(tr("Or start from a provider:")),
+                ),
         )
-        .child(
-            div()
-                .pt_3()
-                .text_xs()
-                .text_color(muted)
-                .child(tr("Or start from a provider:")),
-        )
-        .child(presets)
+        .child(div().pt_2().child(presets))
     }
 
+    /// The chosen model's form, under the list in the same column: one
+    /// setting row for each field. A model from `WISP_*` variables shows
+    /// its values as facts on the paper, not as grey fields.
     fn render_model_form(&self, cx: &mut Context<Self>) -> Div {
         let form = &self.settings;
         let editable = form.editable();
-        let muted = cx.theme().muted_foreground;
         let saved = form.profile();
-        let field = |label: &'static str, hint: &'static str, input: &Entity<InputState>| {
-            div()
-                .v_flex()
-                .gap_1()
-                .child(div().text_sm().child(label))
-                .child(Input::new(input).disabled(!editable))
-                .child(div().text_xs().text_color(muted).child(hint))
+        // While the model can be changed, a field and the one line that
+        // says how to fill it; read only (`WISP_*` variables), the name and
+        // the value alone, and for an empty value what it means, faded.
+        let field = |label: &'static str,
+                     hint: &'static str,
+                     empty: &'static str,
+                     input: &Entity<InputState>| {
+            if editable {
+                let control = div().w(px(300.)).child(super::surfaces::input(input, cx));
+                return setting(label, hint, control, cx);
+            }
+            let value = input.read(cx).value().trim().to_string();
+            let control = if value.is_empty() {
+                surfaces::fact(empty, cx).into_any_element()
+            } else {
+                surfaces::read_only(value, cx).into_any_element()
+            };
+            setting(label, "", control, cx)
         };
-        let mut providers = div().h_flex().gap_2();
-        for (id, label) in settings::PROVIDERS {
-            providers = providers.child(
-                Button::new(SharedString::from(format!("provider-{id}")))
-                    .label(label)
-                    .small()
-                    .selected(form.provider == id)
-                    .disabled(!editable)
+        let provider_name = settings::PROVIDERS
+            .iter()
+            .find(|(id, _)| *id == form.provider)
+            .map_or(form.provider.clone(), |(_, label)| (*label).to_owned());
+        let providers = if !editable {
+            surfaces::read_only(provider_name, cx)
+        } else {
+            surfaces::segmented(
+                settings::PROVIDERS.map(|(id, label)| {
+                    surfaces::plain_segment(
+                        SharedString::from(format!("provider-{id}")),
+                        label,
+                        form.provider == id,
+                        cx,
+                    )
                     .on_click(
                         cx.listener(move |this, _, window, cx| this.set_provider(id, window, cx)),
-                    ),
-            );
-        }
+                    )
+                    .into_any_element()
+                }),
+                cx,
+            )
+        };
         let mut body = div()
             .v_flex()
-            .flex_1()
-            .min_w_0()
-            .max_w(px(620.))
-            .gap_4()
+            .w_full()
             .child(
-                surfaces::title(match saved {
+                surfaces::settings_heading(
+                    match saved {
                         Some(profile) => profile.name.clone(),
                         None => tr("New model").into(),
-                    }),
+                    },
+                    cx,
+                )
+                .pt_0(),
             )
             .child(field(
                 tr("Name"),
                 tr("What this model is called in lists and in the composer."),
+                "—",
                 &form.name,
             ))
-            .child(
-                div()
-                    .v_flex()
-                    .gap_1()
-                    .child(div().text_sm().child(tr("Provider")))
-                    .child(providers),
-            )
+            .child(setting(tr("Provider"), "", providers, cx))
             .child(field(
                 tr("API URL"),
                 tr("Leave blank for the provider's own endpoint."),
+                tr("The provider's own endpoint"),
                 &form.url,
             ))
             .child(field(
                 tr("Model"),
                 tr("The exact model ID the endpoint expects."),
+                "—",
                 &form.model,
             ))
+            .child(if editable {
+                field(
+                    tr("API key"),
+                    tr("Kept in the system keychain, not in the project."),
+                    "",
+                    &form.key,
+                )
+            } else {
+                // The key is never read back: say whether there is one.
+                let kept = saved.is_some_and(|profile| profile.has_api_key);
+                setting(
+                    tr("API key"),
+                    "",
+                    surfaces::fact(if kept { tr("Saved") } else { tr("Not set") }, cx),
+                    cx,
+                )
+            })
             .child(field(
-                tr("API key"),
-                tr("Stored in the system keychain, never in the project database."),
-                &form.key,
+                tr("Context window (tokens)"),
+                tr("Required for models outside the catalog."),
+                tr("From the model catalog"),
+                &form.context,
             ))
-            .child(
-                div()
-                    .h_flex()
-                    .gap_4()
-                    .items_start()
-                    .child(
-                        field(
-                            tr("Context window (tokens)"),
-                            tr("Required for models outside the catalog."),
-                            &form.context,
-                        )
-                        .flex_1(),
-                    )
-                    .child(
-                        field(
-                            tr("Output limit (tokens)"),
-                            tr("Required for models outside the catalog."),
-                            &form.output,
-                        )
-                        .flex_1(),
-                    ),
-            )
+            .child(field(
+                tr("Output limit (tokens)"),
+                tr("Required for models outside the catalog."),
+                tr("From the model catalog"),
+                &form.output,
+            ))
             .child(field(
                 tr("Reasoning effort"),
                 tr("The default for conversations that do not choose one."),
+                tr("Provider default"),
                 &form.effort,
             ))
             .child(field(
                 tr("Route"),
-                tr(
-                    "A proxy for this model alone, such as http://127.0.0.1:7890, or none to connect directly. Empty follows Settings, Network.",
-                ),
+                tr("A proxy for this model alone; empty follows Network."),
+                tr("Follows the Network page"),
                 &form.route,
             ));
         if let Some(error) = &form.error {
@@ -635,6 +681,11 @@ impl Workspace {
                     .text_color(cx.theme().success)
                     .child(notice.clone()),
             );
+        }
+        // A model from `WISP_*` variables is changed where they are set:
+        // nothing here saves, tests, chooses or removes it.
+        if !editable {
+            return body;
         }
         if self.layers.contains(Layer::ConfirmDeleteModel) {
             return body.child(
@@ -670,9 +721,14 @@ impl Workspace {
             );
         }
         let locked = !editable || form.busy;
+        // Save is the page's one filled button; testing is the one most
+        // used besides, outlined; the rest are icon buttons, Remove last in
+        // the danger colour.
         let mut actions = div()
             .h_flex()
+            .items_center()
             .gap_2()
+            .pt_3()
             .child(
                 Button::new("settings-save")
                     .label(if saved.is_some() {
@@ -685,30 +741,39 @@ impl Workspace {
                     .on_click(cx.listener(|this, _, window, cx| this.save_settings(window, cx))),
             )
             .child(
-                Button::new("settings-test")
-                    .icon(glyph("bolt"))
-                    .label(if form.busy {
+                surfaces::outlined_action(
+                    "settings-test",
+                    "bolt",
+                    if form.busy {
                         tr("Working…")
                     } else {
                         tr("Test connection")
-                    })
-                    .disabled(form.busy)
-                    .on_click(cx.listener(|this, _, window, cx| this.test_connection(window, cx))),
+                    },
+                    cx,
+                )
+                .disabled(form.busy)
+                .on_click(cx.listener(|this, _, window, cx| this.test_connection(window, cx))),
             );
         if let Some(profile) = saved {
             actions = actions
                 .child(
-                    Button::new("settings-default")
-                        .label(tr("Use for new conversations"))
-                        .disabled(locked || profile.is_default)
-                        .on_click(cx.listener(|this, _, window, cx| this.make_default(window, cx))),
+                    surfaces::icon_action(
+                        "settings-default",
+                        "star",
+                        tr("Use for new conversations"),
+                        if profile.is_default {
+                            surfaces::IconTone::On
+                        } else {
+                            surfaces::IconTone::Faded
+                        },
+                        cx,
+                    )
+                    .disabled(locked || profile.is_default)
+                    .on_click(cx.listener(|this, _, window, cx| this.make_default(window, cx))),
                 )
                 .child(div().flex_1())
                 .child(
-                    Button::new("settings-delete")
-                        .icon(glyph("trash"))
-                        .label(tr("Remove"))
-                        .ghost()
+                    surfaces::danger_action("settings-delete", "trash", tr("Remove"), cx)
                         .disabled(locked)
                         .on_click(cx.listener(|this, _, _, cx| this.ask_delete_model(cx))),
                 );
@@ -739,7 +804,7 @@ impl Workspace {
         let found = settings::search_sections(&query);
         let mut nav = nav.child(
             div().px_1().pb_1().child(
-                Input::new(&self.settings_search)
+                surfaces::input(&self.settings_search, cx)
                     .small()
                     .prefix(crate::assets::icon("search").text_color(muted)),
             ),
@@ -819,20 +884,14 @@ impl Workspace {
                 .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::links::ISSUES))),
             );
         let body = match self.settings_section {
+            // The list on top, the chosen model's form under it, in the
+            // one column.
             Section::Models => div()
-                .h_flex()
-                .items_start()
-                .gap_8()
-                .p_6()
-                .child(
-                    div()
-                        .v_flex()
-                        .w(px(280.))
-                        .flex_shrink_0()
-                        .child(self.render_model_list(cx))
-                        .child(self.render_subscriptions(cx)),
-                )
-                .child(self.render_model_form(cx)),
+                .v_flex()
+                .gap_6()
+                .child(self.render_model_list(cx))
+                .child(self.render_model_form(cx))
+                .child(self.render_subscriptions(cx)),
             Section::General => self.render_general_settings(cx),
             Section::Conversation => self.render_conversation_settings(cx),
             Section::Skills => self.render_skill_settings(cx),
@@ -855,31 +914,19 @@ impl Workspace {
             Section::Permissions => self.render_permission_settings(cx),
             Section::Hooks => self.render_hook_settings(cx),
         };
+        // Every page in one centred column on the paper, its name a Title
+        // at the top.
         div().h_flex().size_full().child(nav).child(
             div()
-                .v_flex()
+                .id("settings-body")
                 .flex_1()
                 .min_w_0()
                 .h_full()
-                .child(
-                    div()
-                        .px_6()
-                        .h(px(52.))
-                        .h_flex()
-                        .flex_shrink_0()
-                        .border_b_1()
-                        .border_color(cx.theme().border)
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(self.settings_section.label()),
-                )
-                .child(
-                    div()
-                        .id("settings-body")
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .child(body),
-                ),
+                .overflow_y_scroll()
+                .child(surfaces::settings_column(
+                    self.settings_section.label(),
+                    body,
+                )),
         )
     }
 }

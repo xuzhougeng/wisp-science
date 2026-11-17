@@ -506,7 +506,7 @@ impl Workspace {
                                     .h_flex()
                                     .gap_2()
                                     .child(surfaces::panel_label(run.title.clone()).text_sm())
-                                    .child(chip(status, tone, cx))
+                                    .child(surfaces::status(status, tone, cx))
                                     .child(line(crate::home::age(now, run.created_at))),
                             );
                         }
@@ -1002,9 +1002,9 @@ impl Workspace {
                     heading = heading.child(chip(tr("New work runs here"), Tone::Active, cx));
                 }
                 heading = heading.child(if attached {
-                    chip(tr("Attached"), Tone::Success, cx)
+                    surfaces::status(tr("Attached"), Tone::Success, cx)
                 } else {
-                    chip(tr("Not attached"), Tone::Neutral, cx)
+                    surfaces::status(tr("Not attached"), Tone::Neutral, cx)
                 });
                 let host = environments
                     .and_then(|view| view.hosts.iter().find(|host| host.alias == alias));

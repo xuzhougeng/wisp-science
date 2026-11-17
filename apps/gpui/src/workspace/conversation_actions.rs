@@ -9,7 +9,7 @@ use gpui_component::{
 };
 use wisp_dto::SessionSearchInfo;
 
-use super::Workspace;
+use super::{Workspace, surfaces};
 use crate::{
     backend::{Reply, receive},
     controls,
@@ -545,19 +545,24 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The open conversation's actions, as a menu under the header's More
-    /// button. Choosing one closes the menu first; Group and Move open
-    /// beside it. An action that cannot be taken now is dimmed and inert.
-    pub(super) fn conversation_menu(&self, cx: &mut Context<Self>) -> Option<Div> {
+    /// What can be done with the open conversation, as a menu under the
+    /// More button at the right end of the window's bar: first finding
+    /// one's way in it (the outline, a refresh), then its name and place,
+    /// copies of it, looking back over it, and putting it away, in groups
+    /// with a hairline between. Each is an icon and a word. Choosing one
+    /// closes the menu first; Group and Move open beside it. An action that
+    /// cannot be taken now is dimmed and inert.
+    pub(super) fn conversation_menu(&self, cx: &mut Context<Self>) -> Div {
         /// One action of the menu.
         fn action(
             id: &'static str,
+            icon: &'static str,
             label: &'static str,
             enabled: bool,
             run: fn(&mut Workspace, &mut Window, &mut Context<Workspace>),
             cx: &mut Context<Workspace>,
         ) -> Stateful<Div> {
-            let row = Workspace::menu_row(id.into(), label, "", false, cx);
+            let row = Workspace::menu_item(id, icon, label, cx);
             if !enabled {
                 return row.opacity(0.5).cursor_default();
             }
@@ -568,7 +573,50 @@ impl Workspace {
             }))
         }
 
-        let row = self.current_row()?;
+        let line = cx.theme().border;
+        let danger = cx.theme().danger;
+        let rule = move || div().h(px(1.)).mx_2().my_1().flex_shrink_0().bg(line);
+        let menu = div()
+            .absolute()
+            .top(px(surfaces::ICON_BUTTON + 4.))
+            .right_0()
+            .w(px(240.))
+            .v_flex()
+            .p_1()
+            .occlude()
+            .rounded(cx.theme().radius_lg)
+            .border_1()
+            .border_color(line)
+            .bg(cx.theme().popover)
+            .shadow_md()
+            // Finding one's way in it.
+            .child(action(
+                "conversation-outline",
+                "list",
+                tr("Outline: what you asked, in order"),
+                self.state.session.is_some(),
+                |this, _, cx| {
+                    this.layers.open(Layer::Outline);
+                    cx.notify();
+                },
+                cx,
+            ))
+            .child(action(
+                "refresh",
+                "refresh",
+                tr("Refresh"),
+                !self.pending,
+                |this, window, cx| {
+                    this.error = None;
+                    this.refresh_lists(window, cx);
+                    this.start_poll(window, cx);
+                    this.reload_files(window, cx);
+                },
+                cx,
+            ));
+        let Some(row) = self.current_row() else {
+            return menu;
+        };
         let running = self.state.snapshot.as_ref().is_some_and(|s| s.running);
         let busy = self.pending;
         let pinned = self.pinned.contains(&row.id);
@@ -576,48 +624,29 @@ impl Workspace {
         let title = crate::present::one_line(&row.title);
         let branch = self.open_is_branch();
         let offered = self.offered();
-        let line = cx.theme().border;
-        let danger = cx.theme().danger;
-        let rule = move || div().h(px(1.)).mx_2().my_1().flex_shrink_0().bg(line);
-
-        let menu = div()
-            .absolute()
-            .top(px(36.))
-            .right_0()
-            .w(px(232.))
-            .v_flex()
-            .p_1()
-            .occlude()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(line)
-            .bg(cx.theme().popover)
-            .shadow_md()
+        menu.child(rule())
             // Its name and its place.
             .child(action(
                 "conversation-rename",
+                "edit",
                 tr("Rename"),
                 !busy,
                 |this, window, cx| this.begin_rename(window, cx),
                 cx,
             ))
             .child(
-                Self::menu_row(
-                    "conversation-copy-title".into(),
-                    tr("Copy title"),
-                    "",
-                    false,
-                    cx,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.layers.close(Layer::ConversationMenu);
-                    cx.write_to_clipboard(ClipboardItem::new_string(title.clone()));
-                    this.notice = Some(tr("Title copied.").into());
-                    cx.notify();
-                })),
+                Self::menu_item("conversation-copy-title", "copy", tr("Copy title"), cx).on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        this.layers.close(Layer::ConversationMenu);
+                        cx.write_to_clipboard(ClipboardItem::new_string(title.clone()));
+                        this.notice = Some(tr("Title copied.").into());
+                        cx.notify();
+                    }),
+                ),
             )
             .child(action(
                 "conversation-pin",
+                "pin",
                 if pinned { tr("Unpin") } else { tr("Pin") },
                 !(busy || archived),
                 |this, window, cx| this.toggle_pin(window, cx),
@@ -629,6 +658,7 @@ impl Workspace {
             // Copies of it to keep or hand on.
             .child(action(
                 "conversation-export",
+                "archive-export",
                 tr("Export"),
                 !busy,
                 |this, window, cx| this.export_conversation(window, cx),
@@ -636,6 +666,7 @@ impl Workspace {
             ))
             .child(action(
                 "conversation-share-page",
+                "share",
                 tr("Share as HTML"),
                 !busy,
                 |this, window, cx| this.share_conversation_page(window, cx),
@@ -643,6 +674,7 @@ impl Workspace {
             ))
             .child(action(
                 "conversation-debug-request",
+                "code",
                 tr("Debug request"),
                 !busy,
                 |this, window, cx| this.export_debug_request(window, cx),
@@ -652,6 +684,7 @@ impl Workspace {
             // Looking back over it.
             .child(action(
                 "conversation-trajectory",
+                "activity-orbit",
                 tr("Trajectory"),
                 true,
                 |this, window, cx| this.open_trajectory(window, cx),
@@ -660,6 +693,7 @@ impl Workspace {
             // A frozen branch is not reviewed: the host refuses it.
             .child(action(
                 "conversation-review",
+                "review",
                 tr("Review"),
                 !running && offered.review,
                 |this, window, cx| this.open_review(window, cx),
@@ -668,6 +702,7 @@ impl Workspace {
             .when(branch, |menu| {
                 menu.child(action(
                     "conversation-merge-branch",
+                    "branch",
                     tr("Bring back"),
                     !running,
                     |this, window, cx| this.open_branch_merge(window, cx),
@@ -676,6 +711,7 @@ impl Workspace {
             })
             .child(action(
                 "conversation-research-archive",
+                "archive",
                 tr("Research archive"),
                 !running,
                 |this, window, cx| this.open_research_archive(window, cx),
@@ -683,6 +719,7 @@ impl Workspace {
             ))
             .child(action(
                 "conversation-skill",
+                "skill",
                 tr("Save as skill"),
                 !archived,
                 |this, window, cx| this.ask_for_skill(window, cx),
@@ -693,6 +730,7 @@ impl Workspace {
             // running turn.
             .child(action(
                 "conversation-archive",
+                "inbox",
                 if archived {
                     tr("Unarchive")
                 } else {
@@ -705,13 +743,13 @@ impl Workspace {
             .child(
                 action(
                     "conversation-delete",
+                    "trash",
                     tr("Delete"),
                     !(busy || running),
                     |this, _, cx| this.confirm_delete(cx),
                     cx,
                 )
                 .text_color(danger),
-            );
-        Some(menu)
+            )
     }
 }

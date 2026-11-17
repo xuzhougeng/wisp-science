@@ -9,13 +9,13 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::{Input, InputState},
+    input::InputState,
 };
 use wisp_dto::{ResearchJournalInput, ResearchRecap};
 
 use super::{
-    Workspace, chip,
-    shell::{error_banner, glyph, icon_button, nav_row},
+    Workspace,
+    shell::{error_banner, glyph, nav_row},
     surfaces::{self, DialogWidth},
 };
 use crate::{
@@ -355,13 +355,17 @@ impl Workspace {
     fn recap_form(&self, recap: &ResearchRecap, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let label = |text: &'static str| div().text_xs().text_color(muted).child(text);
-        let list = |field: &Entity<InputState>| div().h(px(72.)).child(Input::new(field).h_full());
+        let list = |field: &Entity<InputState>| {
+            div()
+                .h(px(72.))
+                .child(super::surfaces::input(field, cx).h_full())
+        };
         let saved = recap.clone();
         div()
             .v_flex()
             .gap_1()
             .child(label(tr("Headline")))
-            .child(Input::new(&self.recap_fields[0]).small())
+            .child(super::surfaces::input(&self.recap_fields[0], cx).small())
             .child(label(tr("Done, one a line")))
             .child(list(&self.recap_fields[1]))
             .child(label(tr("Found, one a line")))
@@ -409,15 +413,18 @@ impl Workspace {
     fn recap_card(&self, index: usize, recap: &ResearchRecap, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let (status, tone) = journey::recap_status(&recap.status);
-        let mut head = div().h_flex().gap_2().child(chip(status, tone, cx)).child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .child(recap.headline.clone()),
-        );
+        let mut head = div()
+            .h_flex()
+            .gap_2()
+            .child(super::surfaces::status(status, tone, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_sm()
+                    .child(recap.headline.clone()),
+            );
         if recap.status != "confirmed" {
             let confirmed = recap.clone();
             head = head.child(
@@ -548,12 +555,7 @@ impl Workspace {
             .rounded(cx.theme().radius)
             .border_1()
             .border_color(cx.theme().border)
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Add a record")),
-            )
+            .child(div().text_sm().child(tr("Add a record")))
             .child(div().text_xs().text_color(muted).child(tr(
                 "Something you want the project to remember as of now. The model does not \
                  write these; you do.",
@@ -565,7 +567,7 @@ impl Workspace {
                     .text_color(muted)
                     .child(tr("What happened, in a line")),
             )
-            .child(Input::new(&self.journal_fields[0]).small())
+            .child(super::surfaces::input(&self.journal_fields[0], cx).small())
             .child(
                 div()
                     .text_xs()
@@ -575,7 +577,7 @@ impl Workspace {
             .child(
                 div()
                     .h(px(120.))
-                    .child(Input::new(&self.journal_fields[1]).h_full()),
+                    .child(super::surfaces::input(&self.journal_fields[1], cx).h_full()),
             )
             .child(
                 div()
@@ -604,7 +606,6 @@ impl Workspace {
 
     pub(super) fn render_journey(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
-        let border = cx.theme().border;
         let hover = cx.theme().list_hover;
         let month = self
             .journey_month
@@ -632,7 +633,25 @@ impl Workspace {
                 nav_row("journey-back", "arrow-left", tr("Back"), false, true, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.close_journey(window, cx))),
             )
-            .child(surfaces::title(tr("Research journey")).px_2().pt_3())
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .pt_3()
+                    .child(surfaces::title(tr("Research journey")))
+                    // What the page is for, a tooltip away, not a paragraph
+                    // in the rail.
+                    .child(surfaces::help(
+                        "journey-help",
+                        tr(
+                            "What happened in this project, day by day: what you asked, runs, files, \
+                     decisions, and what you wrote down yourself.",
+                        ),
+                        cx,
+                    )),
+            )
             .child(
                 div()
                     .px_2()
@@ -642,89 +661,104 @@ impl Workspace {
                     .text_color(muted)
                     .child(project_name),
             )
-            .child(div().px_2().pb_2().text_xs().text_color(muted).child(tr(
-                "What happened in this project, day by day: what you asked, runs, files, \
-                     decisions, and what you wrote down yourself.",
-            )))
+            // By day or as a graph of relations: one segmented choice.
             .child(
-                div()
-                    .h_flex()
-                    .gap_1()
-                    .px_1()
-                    .pb_2()
-                    .child(
-                        Button::new("journey-by-day")
-                            .label(tr("By day"))
-                            .xsmall()
-                            .ghost()
-                            .selected(!self.journey_graph_shown)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.show_journey_graph(false, window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("journey-relationships")
-                            .label(tr("Relationships"))
-                            .xsmall()
-                            .ghost()
-                            .selected(self.journey_graph_shown)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.show_journey_graph(true, window, cx)
-                            })),
-                    ),
+                div().px_1().pt_2().pb_2().child(surfaces::segmented(
+                    [
+                        surfaces::segment(
+                            "journey-by-day",
+                            "calendar",
+                            tr("By day"),
+                            !self.journey_graph_shown,
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.show_journey_graph(false, window, cx)
+                        }))
+                        .into_any_element(),
+                        surfaces::segment(
+                            "journey-relationships",
+                            "share",
+                            tr("Relationships"),
+                            self.journey_graph_shown,
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.show_journey_graph(true, window, cx)
+                        }))
+                        .into_any_element(),
+                    ],
+                    cx,
+                )),
             )
+            // The month, as a fact between its arrows; this month a click
+            // away.
             .child(
                 div()
                     .h_flex()
-                    .gap_1()
+                    .items_center()
+                    .gap_0p5()
                     .px_1()
                     .child(
-                        icon_button("journey-previous", "chevron-left", tr("Earlier month"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.show_month(month.previous(), window, cx)
-                            })),
+                        surfaces::icon_action(
+                            "journey-previous",
+                            "chevron-left",
+                            tr("Earlier month"),
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.show_month(month.previous(), window, cx)
+                        })),
                     )
                     .child(
                         div()
                             .flex_1()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(month.label()),
+                            .h_flex()
+                            .justify_center()
+                            .child(surfaces::fact(month.label(), cx).text_color(cx.theme().foreground)),
                     )
                     .child(
-                        icon_button("journey-next", "chevron-right", tr("Later month"))
-                            // There is nothing after the present.
-                            .disabled(month == this_month)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.show_month(month.next(), window, cx)
-                            })),
-                    ),
-            )
-            .child(
-                div().px_1().pt_1().child(
-                    Button::new("journey-today")
-                        .label(tr("This month"))
-                        .xsmall()
-                        .ghost()
+                        surfaces::icon_action(
+                            "journey-next",
+                            "chevron-right",
+                            tr("Later month"),
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
+                        // There is nothing after the present.
+                        .disabled(month == this_month)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.show_month(month.next(), window, cx)
+                        })),
+                    )
+                    .child(
+                        surfaces::icon_action(
+                            "journey-today",
+                            "calendar",
+                            tr("This month"),
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
                         .disabled(month == this_month)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.show_month(this_month, window, cx)
                         })),
-                ),
+                    ),
             )
             .child(
                 div().pt_2().child(
-                    Input::new(&self.journey_search)
-                        .small()
-                        .prefix(icon("search").text_color(muted)),
+                    surfaces::field(cx).child(
+                        surfaces::input(&self.journey_search, cx)
+                            .small()
+                            .appearance(false)
+                            .prefix(icon("search").text_color(muted)),
+                    ),
                 ),
             )
             .child(
                 div().px_1().pt_2().child(
-                    Button::new("journey-add")
-                        .icon(glyph("plus"))
-                        .label(tr("Add a record"))
-                        .small()
+                    surfaces::outlined_action("journey-add", "plus", tr("Add a record"), cx)
                         .on_click(
                             cx.listener(|this, _, window, cx| this.open_journal_form(window, cx)),
                         ),
@@ -739,23 +773,31 @@ impl Workspace {
                 .child(self.render_journey_graph(cx));
         }
 
+        // The records in a reading column centred in the page.
         let mut body = div()
-            .id("journey-body")
             .v_flex()
-            .flex_1()
-            .min_w_0()
-            .h_full()
+            .w_full()
+            .max_w(px(surfaces::READING_WIDTH))
+            .mx_auto()
             .p_6()
-            .gap_3()
-            .overflow_y_scroll();
+            .gap_3();
         if let Some(error) = &self.error {
             body = body.child(error_banner(error, cx));
         }
         if self.layers.contains(Layer::JournalForm) {
             body = body.child(div().w(px(560.)).child(self.journal_form(cx)));
         }
+        let scroller = |body: Div| {
+            div()
+                .id("journey-body")
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .overflow_y_scroll()
+                .child(body)
+        };
         let Some(history) = &self.journey else {
-            return div().h_flex().size_full().child(side).child(
+            return div().h_flex().size_full().child(side).child(scroller(
                 body.child(
                     div()
                         .text_sm()
@@ -766,7 +808,7 @@ impl Workspace {
                             tr("Loading…")
                         }),
                 ),
-            );
+            ));
         };
         let filter = self.journey_search.read(cx).value().to_string();
         let days = journey::days(history, &filter, &Local);
@@ -781,88 +823,57 @@ impl Workspace {
             let recap = journey::recap_for(history, day.date, &Local);
             let (from, until) = journey::day_range(day.date, &Local);
             let drafting = self.recap_drafting == Some(from);
+            // The day: a faded heading, its date as a fact; drafting its
+            // recap is an icon and a word at its right.
             let header = div()
                 .h_flex()
+                .items_center()
                 .gap_2()
-                .pt_2()
+                .pt_3()
                 .pb_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(day.label.clone()),
-                )
+                .child(surfaces::fact(day.label.clone(), cx))
                 .child(div().flex_1())
                 .child(
-                    Button::new(("recap-draft", day_index))
-                        .label(match (drafting, recap.is_some()) {
+                    surfaces::labelled_action(
+                        ("recap-draft", day_index),
+                        "square-pen",
+                        match (drafting, recap.is_some()) {
                             (true, _) => tr("Drafting…"),
                             (false, true) => tr("Draft again"),
                             (false, false) => tr("Draft a recap"),
-                        })
-                        .xsmall()
-                        .ghost()
-                        .disabled(self.recap_drafting.is_some())
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.draft_recap(from, until, window, cx)
-                        })),
+                        },
+                        surfaces::IconSize::Inline,
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .disabled(self.recap_drafting.is_some())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.draft_recap(from, until, window, cx)
+                    })),
                 );
             let mut group = div().v_flex().gap_1().child(header);
             if let Some(recap) = recap {
                 group = group.child(self.recap_card(day_index, recap, cx));
             }
+            // Its records: when, the kind's icon (no word), what happened
+            // and the first line of what it says, its state as a stamp.
+            let mut rows = Vec::new();
             for (entry_index, (time, entry)) in day.entries.iter().enumerate() {
-                let tone = match (entry.kind.as_str(), entry.status.as_str()) {
-                    ("run", "failed") => Tone::Danger,
-                    ("run", _) => Tone::Active,
-                    _ => Tone::Neutral,
-                };
-                let mut words = div()
-                    .v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .child(div().truncate().text_sm().child(entry.title.clone()));
+                let mut row = surfaces::record_row(
+                    ("journey-entry", day_index * 10_000 + entry_index),
+                    entry.title.clone(),
+                )
+                .time(time.clone())
+                .icon(journey::kind_icon(&entry.kind));
                 let detail = entry.summary.lines().next().unwrap_or_default().trim();
                 if !detail.is_empty() {
-                    words = words.child(
-                        div()
-                            .truncate()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(detail.to_owned()),
-                    );
+                    row = row.suffix(detail.to_owned());
                 }
-                let mut row = div()
-                    .id(("journey-entry", day_index * 10_000 + entry_index))
-                    .h_flex()
-                    .items_start()
-                    .gap_3()
-                    .px_2()
-                    .py_1()
-                    .rounded(cx.theme().radius)
-                    .child(
-                        div()
-                            .w(px(44.))
-                            .flex_shrink_0()
-                            .text_xs()
-                            .text_color(muted)
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .child(time.clone()),
-                    )
-                    .child(div().w(px(84.)).flex_shrink_0().child(chip(
-                        journey::kind_label(&entry.kind),
-                        tone,
-                        cx,
-                    )))
-                    .child(words);
                 if let Some(status) = journey::status_label(entry) {
-                    row = row.child(
-                        div()
-                            .flex_shrink_0()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(status),
-                    );
+                    row = match surfaces::StampKind::from_tone(journey::status_tone(entry)) {
+                        Some(kind) => row.stamp(kind, status),
+                        None => row.suffix(status),
+                    };
                 }
                 // An output is traced beside the days, as in the WebView;
                 // another record that came from a conversation opens it.
@@ -891,15 +902,18 @@ impl Workspace {
                             this.open_session(project.clone(), frame.clone(), window, cx);
                         }));
                 }
-                group = group.child(row);
+                rows.push(row);
             }
-            body = body.child(group.border_b_1().border_color(border).pb_2());
+            if !rows.is_empty() {
+                group = group.child(surfaces::record_group(rows, cx));
+            }
+            body = body.child(group);
         }
         div()
             .h_flex()
             .size_full()
             .child(side)
-            .child(body)
+            .child(scroller(body))
             .child(self.journey_source_panel(cx))
     }
 
@@ -908,40 +922,31 @@ impl Workspace {
     /// the way to the output, the run's record and the conversation.
     fn journey_source_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
+        // The page's right margin, drawn as the side panel is: its frame,
+        // a header, sections in faded caption, the panel's inset.
+        let frame = surfaces::side_panel(cx).w(px(300.)).flex_shrink_0();
         let mut panel = div()
             .id("journey-source")
             .v_flex()
-            .w(px(300.))
-            .flex_shrink_0()
-            .h_full()
-            .p_4()
+            .flex_1()
+            .min_h_0()
+            .px_3()
+            .pb_3()
             .gap_2()
-            .border_l_1()
-            .border_color(cx.theme().border)
-            .overflow_y_scroll()
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(tr("Source details")),
-            );
+            .overflow_y_scroll();
+        let header = surfaces::panel_header(tr("Source details"), None, cx);
         let Some(output) = &self.journey_output else {
-            return panel.child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(tr("Choose an output to trace where it came from.")),
-            );
+            return frame.child(header).child(surfaces::panel_empty(
+                tr("Choose an output to trace where it came from."),
+                cx,
+            ));
         };
         let heading = |text: &'static str, glyph_name: &str| {
-            div()
+            surfaces::panel_section(text, cx)
                 .h_flex()
+                .items_center()
                 .gap_1()
-                .pt_2()
-                .text_xs()
-                .font_weight(FontWeight::MEDIUM)
                 .child(icon(glyph_name).text_color(muted))
-                .child(text)
         };
         panel = panel
             .child(div().text_sm().child(output.title.clone()))
@@ -1012,7 +1017,7 @@ impl Workspace {
                 if let Some(run) = found.source.run_id.clone() {
                     panel = panel.child(
                         Button::new("journey-run-record")
-                            .icon(glyph("terminal"))
+                            .icon(glyph("flask"))
                             .label(tr("View run record"))
                             .xsmall()
                             .ghost()
@@ -1053,7 +1058,7 @@ impl Workspace {
                     })),
             );
         }
-        panel
+        frame.child(header).child(panel)
     }
 
     /// A run's record over the page: how it ended, where it ran, when, its
@@ -1129,15 +1134,12 @@ impl Workspace {
                 div()
                     .h_flex()
                     .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(run.title.clone()),
-                    )
-                    .child(chip(journey::run_status(&run.status), tone, cx)),
+                    .child(div().flex_1().min_w_0().text_sm().child(run.title.clone()))
+                    .child(super::surfaces::status(
+                        journey::run_status(&run.status),
+                        tone,
+                        cx,
+                    )),
             )
             .child(fact(tr("Execution context"), run.context.clone()))
             .child(fact(

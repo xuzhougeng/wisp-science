@@ -4,16 +4,20 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::{Input, InputState},
+    input::InputState,
 };
 use wisp_server::desktop::{
     ModelTier, WORKFLOW_CAPABILITIES, WORKFLOW_TASK_LIMIT, Workflow, WorkflowAgentSettings,
     WorkflowApproval, WorkflowTask,
 };
 
-use super::Workspace;
+use super::{
+    Workspace,
+    settings_sections::{setting, stacked_setting},
+    surfaces,
+};
 use crate::{
     backend::{Reply, receive},
     layers::Layer,
@@ -303,157 +307,172 @@ impl Workspace {
         .detach();
     }
 
+    /// The form of a new or changed workflow, under the list in the same
+    /// column: its fields as setting rows, the map, then each task under a
+    /// heading of its own; Add task, Save and Cancel at the end.
     fn workflow_form(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
-        let label = |text: &'static str| div().text_xs().text_color(muted).child(text);
+        let adding = self.workflow_editing.as_deref() == Some("");
         let mut form = div()
             .v_flex()
-            .gap_2()
-            .p_3()
-            .w(px(660.))
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
-            .child(label(tr("Name")))
-            .child(Input::new(&self.workflow_fields[0]).small())
-            .child(label(tr(
-                "Goal: what the whole workflow is to achieve. What it is about is typed \
-                 into the conversation after it starts.",
-            )))
-            .child(
+            .w_full()
+            .child(surfaces::settings_heading(
+                if adding {
+                    tr("New workflow")
+                } else {
+                    tr("Change")
+                },
+                cx,
+            ))
+            .child(setting(
+                tr("Name"),
+                "",
+                div()
+                    .w(px(300.))
+                    .child(surfaces::input(&self.workflow_fields[0], cx)),
+                cx,
+            ))
+            .child(stacked_setting(
+                tr("Goal"),
+                tr("What the whole workflow is to achieve."),
                 div()
                     .h(px(90.))
-                    .child(Input::new(&self.workflow_fields[1]).h_full()),
-            )
-            .child(label(tr(
-                "Context (optional): scope, conventions and how results are reported, \
-                 told to every task.",
-            )))
-            .child(
+                    .child(surfaces::input(&self.workflow_fields[1], cx).h_full()),
+                cx,
+            ))
+            .child(stacked_setting(
+                tr("Context"),
+                tr("Optional: scope and conventions, told to every task."),
                 div()
                     .h(px(60.))
-                    .child(Input::new(&self.workflow_fields[2]).h_full()),
-            );
+                    .child(surfaces::input(&self.workflow_fields[2], cx).h_full()),
+                cx,
+            ));
         // How a run as agents is approved.
-        let mut approval = div()
-            .h_flex()
-            .flex_wrap()
-            .items_center()
-            .gap_1()
-            .child(label(tr("Run as agents:")));
-        for (number, choice) in [WorkflowApproval::ReviewAll, WorkflowApproval::AutoSafe]
-            .into_iter()
-            .enumerate()
-        {
-            approval = approval.child(
-                Button::new(("workflow-approval", number))
-                    .label(workflows::approval_label(choice))
-                    .xsmall()
-                    .selected(self.workflow_approval == choice)
+        let approval = surfaces::segmented(
+            [WorkflowApproval::ReviewAll, WorkflowApproval::AutoSafe]
+                .into_iter()
+                .enumerate()
+                .map(|(number, choice)| {
+                    surfaces::plain_segment(
+                        ("workflow-approval", number),
+                        workflows::approval_label(choice),
+                        self.workflow_approval == choice,
+                        cx,
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.workflow_approval = choice;
                         cx.notify();
-                    })),
-            );
-        }
-        form = form.child(approval).child(self.workflow_map(cx));
+                    }))
+                    .into_any_element()
+                }),
+            cx,
+        );
+        form = form
+            .child(setting(tr("Run as agents"), "", approval, cx))
+            .child(stacked_setting(
+                tr("Map"),
+                tr("Drag a task onto another, or click two, to link them."),
+                self.workflow_map(cx),
+                cx,
+            ));
         for (index, draft) in self.workflow_tasks.iter().enumerate() {
             // What its agent may do; none is reading the project.
-            let mut allowed = div()
-                .h_flex()
-                .flex_wrap()
-                .items_center()
-                .gap_1()
-                .child(label(tr("As an agent it may")));
+            let mut allowed = div().h_flex().flex_wrap().gap_1();
             for (number, capability) in WORKFLOW_CAPABILITIES.into_iter().enumerate() {
                 allowed = allowed.child(
-                    Button::new(("workflow-capability", index * 100 + number))
-                        .label(workflows::capability_label(capability))
-                        .xsmall()
-                        .selected(draft.capabilities.iter().any(|kept| kept == capability))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(draft) = this.workflow_tasks.get_mut(index) {
-                                draft.capabilities =
-                                    workflows::toggled_capability(&draft.capabilities, capability);
-                                cx.notify();
-                            }
-                        })),
+                    surfaces::choice_chip(
+                        ("workflow-capability", index * 100 + number),
+                        draft.capabilities.iter().any(|kept| kept == capability),
+                        cx,
+                    )
+                    .child(workflows::capability_label(capability))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(draft) = this.workflow_tasks.get_mut(index) {
+                            draft.capabilities =
+                                workflows::toggled_capability(&draft.capabilities, capability);
+                            cx.notify();
+                        }
+                    })),
                 );
             }
-            let mut needs = div().h_flex().flex_wrap().items_center().gap_1();
-            if index > 0 {
-                needs = needs.child(label(tr("After task")));
-            }
+            let mut needs = div().h_flex().flex_wrap().gap_1();
             for earlier in 0..index {
                 needs = needs.child(
-                    Button::new(("workflow-after", index * 100 + earlier))
-                        .label(SharedString::from((earlier + 1).to_string()))
-                        .xsmall()
-                        .selected(draft.after.contains(&earlier))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(draft) = this.workflow_tasks.get_mut(index) {
-                                draft.after = workflows::toggled(&draft.after, earlier);
-                                cx.notify();
-                            }
-                        })),
+                    surfaces::choice_chip(
+                        ("workflow-after", index * 100 + earlier),
+                        draft.after.contains(&earlier),
+                        cx,
+                    )
+                    .min_w(px(28.))
+                    .justify_center()
+                    .child(surfaces::fact((earlier + 1).to_string(), cx).text_color(
+                        if draft.after.contains(&earlier) {
+                            cx.theme().primary
+                        } else {
+                            cx.theme().foreground
+                        },
+                    ))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(draft) = this.workflow_tasks.get_mut(index) {
+                            draft.after = workflows::toggled(&draft.after, earlier);
+                            cx.notify();
+                        }
+                    })),
                 );
             }
-            form = form.child(
-                div()
-                    .v_flex()
-                    .gap_1()
-                    .pt_2()
-                    .border_t_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(crate::i18n::fill(tr("Task {}"), &[&(index + 1)])),
+            form = form
+                .child(
+                    div()
+                        .h_flex()
+                        .items_end()
+                        .gap_2()
+                        .child(
+                            surfaces::settings_heading(
+                                crate::i18n::fill(tr("Task {}"), &[&(index + 1)]),
+                                cx,
                             )
-                            .child(div().flex_1().child(Input::new(&draft.title).small()))
-                            .child(
-                                Button::new(("workflow-task-remove", index))
-                                    .label(tr("Remove"))
-                                    .xsmall()
-                                    .ghost()
-                                    .disabled(self.workflow_tasks.len() == 1)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.remove_workflow_task(index, cx)
-                                    })),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .h(px(84.))
-                            .child(Input::new(&draft.instructions).h_full()),
-                    )
-                    .child(needs)
-                    .child(allowed)
-                    .child(self.agent_settings(index, draft, cx)),
-            );
+                            .flex_1(),
+                        )
+                        .child(
+                            surfaces::danger_action(
+                                ("workflow-task-remove", index),
+                                "trash",
+                                tr("Remove"),
+                                cx,
+                            )
+                            .disabled(self.workflow_tasks.len() == 1)
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| this.remove_workflow_task(index, cx),
+                            )),
+                        ),
+                )
+                .child(
+                    div()
+                        .v_flex()
+                        .gap_2()
+                        .py_3()
+                        .border_t_1()
+                        .border_b_1()
+                        .border_color(cx.theme().border)
+                        .child(surfaces::input(&draft.title, cx))
+                        .child(
+                            div()
+                                .h(px(84.))
+                                .child(surfaces::input(&draft.instructions, cx).h_full()),
+                        ),
+                );
+            if index > 0 {
+                form = form.child(stacked_setting(tr("After task"), "", needs, cx));
+            }
+            form = form
+                .child(stacked_setting(tr("As an agent it may"), "", allowed, cx))
+                .child(self.agent_settings(index, draft, cx));
         }
         form.child(
             div()
                 .h_flex()
                 .gap_2()
-                .pt_2()
-                .child(
-                    Button::new("workflow-task-add")
-                        .label(tr("Add task"))
-                        .small()
-                        .disabled(self.workflow_tasks.len() >= WORKFLOW_TASK_LIMIT)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            let draft = this.task_draft(&WorkflowTask::default(), window, cx);
-                            draft.title.update(cx, |input, cx| input.focus(window, cx));
-                            this.workflow_tasks.push(draft);
-                            cx.notify();
-                        })),
-                )
+                .pt_3()
                 .child(
                     Button::new("workflow-save")
                         .label(tr("Save"))
@@ -464,9 +483,20 @@ impl Workspace {
                         ),
                 )
                 .child(
+                    surfaces::outlined_action("workflow-task-add", "plus", tr("Add task"), cx)
+                        .disabled(self.workflow_tasks.len() >= WORKFLOW_TASK_LIMIT)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            let draft = this.task_draft(&WorkflowTask::default(), window, cx);
+                            draft.title.update(cx, |input, cx| input.focus(window, cx));
+                            this.workflow_tasks.push(draft);
+                            cx.notify();
+                        })),
+                )
+                .child(
                     Button::new("workflow-cancel")
                         .label(tr("Cancel"))
                         .small()
+                        .ghost()
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.layers.close(Layer::WorkflowForm);
                             this.workflow_editing = None;
@@ -482,7 +512,7 @@ impl Workspace {
     /// makes that one need it, as on the WebView's graph editor; clicking a
     /// task and then another makes the one listed later need the other, or
     /// no longer need it.
-    fn workflow_map(&self, cx: &mut Context<Self>) -> Div {
+    fn workflow_map(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         const WIDTH: f32 = 150.;
         const HEIGHT: f32 = 36.;
         const ACROSS: f32 = 56.;
@@ -636,18 +666,10 @@ impl Workspace {
             );
         }
         div()
-            .v_flex()
-            .gap_1()
-            .child(div().text_xs().text_color(muted).child(tr(
-                "Map: drag a task onto another to make that one need it. Or click a task, then another, to make the later one need the earlier one, or no longer need it.",
-            )))
-            .child(
-                div()
-                    .id("workflow-map")
-                    .max_w_full()
-                    .overflow_x_scroll()
-                    .child(board),
-            )
+            .id("workflow-map")
+            .max_w_full()
+            .overflow_x_scroll()
+            .child(board)
     }
 
     /// A task dragged on the map was dropped on task `task`, which comes to
@@ -708,35 +730,36 @@ impl Workspace {
     /// How one task's agent works, as the WebView's Workflow Studio sets
     /// it: the expert it works as, its model, a worktree of its own, a
     /// token budget, a time limit and the shape of its result. Folded
-    /// away until asked for or set.
+    /// away until asked for or set; open, each is a setting row.
     fn agent_settings(&self, index: usize, draft: &TaskDraft, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
-        let label = |text: &'static str| div().text_xs().text_color(muted).child(text);
-        let toggle = Button::new(("workflow-agent-open", index))
-            .label(if draft.open {
+        let toggle = surfaces::labelled_action(
+            ("workflow-agent-open", index),
+            if draft.open {
+                "chevron-up"
+            } else {
+                "chevron-down"
+            },
+            if draft.open {
                 tr("Fewer agent settings")
             } else {
                 tr("Agent settings")
-            })
-            .xsmall()
-            .ghost()
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if let Some(draft) = this.workflow_tasks.get_mut(index) {
-                    draft.open = !draft.open;
-                    cx.notify();
-                }
-            }));
-        let mut section = div().v_flex().gap_1().child(div().h_flex().child(toggle));
+            },
+            surfaces::IconSize::Inline,
+            surfaces::IconTone::Faded,
+            cx,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if let Some(draft) = this.workflow_tasks.get_mut(index) {
+                draft.open = !draft.open;
+                cx.notify();
+            }
+        }));
+        let mut section = div().v_flex().child(div().h_flex().py_1().child(toggle));
         if !draft.open {
             return section;
         }
         // Which expert, if any.
-        let mut experts = div()
-            .h_flex()
-            .flex_wrap()
-            .items_center()
-            .gap_1()
-            .child(label(tr("Done as")));
+        let mut experts = div().h_flex().flex_wrap().gap_1();
         let choices = std::iter::once((None, tr("No expert").to_owned())).chain(
             self.experts
                 .iter()
@@ -745,10 +768,8 @@ impl Workspace {
         for (number, (id, name)) in choices.enumerate() {
             let selected = draft.agent.expert == id;
             experts = experts.child(
-                Button::new(("workflow-expert", index * 1000 + number))
-                    .label(name)
-                    .xsmall()
-                    .selected(selected)
+                surfaces::choice_chip(("workflow-expert", index * 1000 + number), selected, cx)
+                    .child(name)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(draft) = this.workflow_tasks.get_mut(index) {
                             draft.agent.expert = id.clone();
@@ -764,190 +785,193 @@ impl Workspace {
             .as_ref()
             .filter(|id| !self.experts.iter().any(|expert| &expert.id == *id))
         {
-            experts = experts.child(label(tr("(an expert that is gone)")).child(gone.clone()));
+            experts = experts.child(
+                surfaces::choice_chip(("workflow-expert-gone", index), true, cx)
+                    .child(tr("(an expert that is gone)"))
+                    .child(gone.clone()),
+            );
         }
-        let mut models = div()
-            .h_flex()
-            .flex_wrap()
-            .items_center()
-            .gap_1()
-            .child(label(tr("Model")));
-        for (number, model) in [None, Some(ModelTier::Fast), Some(ModelTier::Inherit)]
-            .into_iter()
-            .enumerate()
-        {
-            models = models.child(
-                Button::new(("workflow-model", index * 10 + number))
-                    .label(workflows::model_label(model))
-                    .xsmall()
-                    .selected(draft.agent.model == model)
+        let models = surfaces::segmented(
+            [None, Some(ModelTier::Fast), Some(ModelTier::Inherit)]
+                .into_iter()
+                .enumerate()
+                .map(|(number, model)| {
+                    surfaces::plain_segment(
+                        ("workflow-model", index * 10 + number),
+                        workflows::model_label(model),
+                        draft.agent.model == model,
+                        cx,
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(draft) = this.workflow_tasks.get_mut(index) {
                             draft.agent.model = model;
                             cx.notify();
                         }
-                    })),
-            );
-        }
-        models = models.child(
-            Button::new(("workflow-isolated", index))
-                .label(tr("Own worktree"))
-                .xsmall()
-                .selected(draft.agent.isolated)
-                .tooltip(tr(
-                    "Works in a Git worktree of its own; its changes are merged back when it succeeds",
-                ))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(draft) = this.workflow_tasks.get_mut(index) {
-                        draft.agent.isolated = !draft.agent.isolated;
-                        cx.notify();
-                    }
-                })),
+                    }))
+                    .into_any_element()
+                }),
+            cx,
         );
-        let limits = div()
-            .h_flex()
-            .items_center()
-            .gap_2()
-            .child(label(tr("Token budget")))
-            .child(div().w(px(110.)).child(Input::new(&draft.tokens).xsmall()))
-            .child(label(tr("Time limit (seconds, 0 for none)")))
-            .child(div().w(px(90.)).child(Input::new(&draft.seconds).xsmall()));
+        let isolated = surfaces::switch(
+            ("workflow-isolated", index),
+            draft.agent.isolated,
+            tr("Works in a Git worktree of its own; its changes are merged back when it succeeds"),
+        )
+        .on_change(cx.listener(move |this, _, _, cx| {
+            if let Some(draft) = this.workflow_tasks.get_mut(index) {
+                draft.agent.isolated = !draft.agent.isolated;
+                cx.notify();
+            }
+        }));
         section = section
-            .child(experts)
-            .child(models)
-            .child(limits)
-            .child(label(tr(
-                "Result shape: a JSON object (a JSON Schema) its result must match; empty for none",
-            )))
-            .child(div().h(px(70.)).child(Input::new(&draft.shape).h_full()));
+            .child(stacked_setting(tr("Done as"), "", experts, cx))
+            .child(setting(tr("Model"), "", models, cx))
+            .child(setting(tr("Own worktree"), "", isolated, cx))
+            .child(setting(
+                tr("Token budget"),
+                "",
+                div()
+                    .w(px(140.))
+                    .child(surfaces::input(&draft.tokens, cx).small()),
+                cx,
+            ))
+            .child(setting(
+                tr("Time limit (seconds, 0 for none)"),
+                "",
+                div()
+                    .w(px(140.))
+                    .child(surfaces::input(&draft.seconds, cx).small()),
+                cx,
+            ))
+            .child(stacked_setting(
+                tr("Result shape"),
+                tr("A JSON Schema its result must match; empty for none"),
+                div()
+                    .h(px(70.))
+                    .child(surfaces::input(&draft.shape, cx).h_full()),
+                cx,
+            ));
         section
     }
 
-    fn workflow_row(&self, workflow: &Workflow, cx: &mut Context<Self>) -> Div {
+    /// One workflow as a record row: its name and its shape (tasks and
+    /// stages); its goal's first line under it. Run is the action used
+    /// most, outlined; Run as agents and Change are icon buttons, Remove
+    /// last in the danger colour. The remove question opens under it.
+    fn workflow_row(&self, workflow: &Workflow, cx: &mut Context<Self>) -> surfaces::RecordRow {
         let muted = cx.theme().muted_foreground;
         let id = workflow.id.clone();
         let asking = self.layers.contains(Layer::ConfirmRemoveWorkflow)
             && self.workflow_editing.as_deref() == Some(id.as_str());
-        let about = div()
-            .v_flex()
-            .flex_1()
-            .min_w_0()
-            .gap_1()
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(workflow.name.clone()),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(workflows::shape_line(workflow)),
-            )
-            .child(
-                div()
-                    .truncate()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(workflow.goal.lines().next().unwrap_or_default().to_owned()),
-            );
-        let mut actions = div().h_flex().gap_1().flex_shrink_0();
-        if asking {
-            actions = actions
-                .child(
-                    Button::new(SharedString::from(format!("workflow-remove-yes-{id}")))
-                        .label(tr("Remove"))
-                        .small()
-                        .danger()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            let reply = this.backend.delete_workflow(id.clone());
-                            this.change_workflows(reply, window, cx)
-                        })),
-                )
-                .child(
-                    Button::new("workflow-remove-no")
-                        .label(tr("Keep"))
-                        .small()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.layers.close(Layer::ConfirmRemoveWorkflow);
-                            this.workflow_editing = None;
-                            cx.notify();
-                        })),
-                );
-        } else {
-            let editing = workflow.clone();
-            let (run, agents, removing) = (id.clone(), id.clone(), id.clone());
-            actions = actions
-                .child(
-                    Button::new(SharedString::from(format!("workflow-run-{id}")))
-                        .label(tr("Run"))
-                        .small()
-                        .disabled(self.state.project.is_none())
-                        .tooltip(tr("Run it as one conversation"))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.run_workflow(run.clone(), window, cx)
-                        })),
-                )
-                .child(
-                    Button::new(SharedString::from(format!("workflow-agents-{id}")))
-                        .label(tr("Run as agents"))
-                        .small()
-                        .disabled(
-                            self.state.project.is_none()
-                                || workflow.tasks.len()
-                                    > wisp_server::desktop::WORKFLOW_AGENT_LIMIT,
-                        )
-                        .tooltip(tr(
-                            "Each task as its own agent, with what it may do; approved in the Agents tab",
-                        ))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.run_workflow_as_agents(agents.clone(), window, cx)
-                        })),
-                )
-                .child(
-                    Button::new(SharedString::from(format!("workflow-edit-{id}")))
-                        .label(tr("Change"))
-                        .small()
-                        .ghost()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.edit_workflow(Some(&editing), window, cx)
-                        })),
-                )
-                .child(
-                    Button::new(SharedString::from(format!("workflow-remove-{id}")))
-                        .label(tr("Remove"))
-                        .small()
-                        .ghost()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.layers.close(Layer::WorkflowForm);
-                            this.workflow_tasks.clear();
-                            this.workflow_editing = Some(removing.clone());
-                            this.layers.open(Layer::ConfirmRemoveWorkflow);
-                            cx.notify();
-                        })),
-                );
+        let goal = workflow.goal.lines().next().unwrap_or_default().to_owned();
+        let mut under = div().v_flex().gap_1();
+        let opened = asking || !goal.is_empty();
+        if !goal.is_empty() {
+            under = under.child(div().truncate().text_xs().text_color(muted).child(goal));
         }
-        div()
-            .h_flex()
-            .items_start()
-            .gap_4()
-            .py_3()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(about)
-            .child(actions)
+        if asking {
+            let removed = id.clone();
+            under = under.child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_1())
+                    .child(
+                        Button::new(SharedString::from(format!("workflow-remove-yes-{id}")))
+                            .label(tr("Remove"))
+                            .small()
+                            .danger()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                let reply = this.backend.delete_workflow(removed.clone());
+                                this.change_workflows(reply, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("workflow-remove-no")
+                            .label(tr("Keep"))
+                            .small()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.layers.close(Layer::ConfirmRemoveWorkflow);
+                                this.workflow_editing = None;
+                                cx.notify();
+                            })),
+                    ),
+            );
+        }
+        let editing = workflow.clone();
+        let (run, agents, removing) = (id.clone(), id.clone(), id.clone());
+        surfaces::record_row(
+            SharedString::from(format!("workflow-{id}")),
+            workflow.name.clone(),
+        )
+        .icon("split")
+        .suffix(workflows::shape_line(workflow))
+        .action(
+            surfaces::outlined_action(
+                SharedString::from(format!("workflow-run-{id}")),
+                "play",
+                tr("Run"),
+                cx,
+            )
+            .disabled(self.state.project.is_none())
+            .tooltip(tr("Run it as one conversation"))
+            .on_click(
+                cx.listener(move |this, _, window, cx| this.run_workflow(run.clone(), window, cx)),
+            ),
+        )
+        .action(
+            surfaces::icon_action(
+                SharedString::from(format!("workflow-agents-{id}")),
+                "swarm",
+                tr("Each task as its own agent, with what it may do; approved in the Agents tab"),
+                surfaces::IconTone::Faded,
+                cx,
+            )
+            .disabled(
+                self.state.project.is_none()
+                    || workflow.tasks.len() > wisp_server::desktop::WORKFLOW_AGENT_LIMIT,
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.run_workflow_as_agents(agents.clone(), window, cx)
+            })),
+        )
+        .action(
+            surfaces::icon_action(
+                SharedString::from(format!("workflow-edit-{id}")),
+                "edit",
+                tr("Change"),
+                surfaces::IconTone::Faded,
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.edit_workflow(Some(&editing), window, cx)
+            })),
+        )
+        .action(
+            surfaces::danger_action(
+                SharedString::from(format!("workflow-remove-{id}")),
+                "trash",
+                tr("Remove"),
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.layers.close(Layer::WorkflowForm);
+                this.workflow_tasks.clear();
+                this.workflow_editing = Some(removing.clone());
+                this.layers.open(Layer::ConfirmRemoveWorkflow);
+                cx.notify();
+            })),
+        )
+        .below(opened.then(|| under.into_any_element()))
     }
 
     pub(super) fn render_workflow_settings(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
         let mut page = self.settings_page(cx).child(
-            div()
-                .w(px(640.))
-                .pb_2()
-                .text_xs()
-                .text_color(muted)
-                .child(tr(
+            surfaces::settings_note_help(
+                tr("A goal broken into tasks, run as one conversation or as agents."),
+                tr(
                     "A workflow is a goal broken into tasks that say which earlier tasks they \
                      need. Run starts a conversation in the open project and gives the model \
                      the tasks stage by stage; it carries them out in that order itself, as \
@@ -955,38 +979,39 @@ impl Workspace {
                      an agent of its own that may do only what the task allows; the plan waits \
                      in the new conversation's Agents tab to be approved, and the result comes \
                      back to that conversation.",
-                )),
+                ),
+                cx,
+            )
+            .pb_3(),
         );
         if self.state.project.is_none() {
             page = page.child(
-                div()
-                    .pb_2()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(tr("Open a project to run a workflow in it.")),
+                surfaces::settings_note(tr("Open a project to run a workflow in it."), cx).pb_2(),
             );
         }
         let form_open = self.layers.contains(Layer::WorkflowForm);
         let editing = self.workflow_editing.as_deref();
         if self.workflows.is_empty() {
-            page = page.child(
-                div()
-                    .py_3()
-                    .text_sm()
-                    .text_color(muted)
-                    .child(tr("None yet.")),
-            );
+            page = page.child(surfaces::settings_note(tr("None yet."), cx).pb_2());
+        } else {
+            let hover = cx.theme().list_hover;
+            let paper = cx.theme().popover;
+            let rows: Vec<_> = self
+                .workflows
+                .iter()
+                .map(|workflow| {
+                    let chosen = form_open && editing == Some(workflow.id.as_str());
+                    self.workflow_row(workflow, cx)
+                        .when(chosen, |row| row.bg(paper))
+                        .when(!chosen, |row| row.hover(move |style| style.bg(hover)))
+                })
+                .collect();
+            page = page.child(surfaces::record_group(rows, cx));
         }
-        for workflow in &self.workflows {
-            page = page.child(self.workflow_row(workflow, cx));
-            if form_open && editing == Some(workflow.id.as_str()) {
-                page = page.child(div().py_2().child(self.workflow_form(cx)));
-            }
-        }
-        if form_open && editing == Some("") {
-            page.child(div().py_2().child(self.workflow_form(cx)))
+        if form_open {
+            page.child(self.workflow_form(cx))
         } else if self.layers.contains(Layer::WorkflowFromSkills) {
-            page.child(div().py_2().child(self.from_skills_form(cx)))
+            page.child(self.from_skills_form(cx))
         } else {
             page.child(
                 div()
@@ -994,24 +1019,27 @@ impl Workspace {
                     .h_flex()
                     .gap_2()
                     .child(
-                        Button::new("workflow-add")
-                            .label(tr("New workflow"))
-                            .small()
+                        surfaces::outlined_action("workflow-add", "plus", tr("New workflow"), cx)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.edit_workflow(None, window, cx)
                             })),
                     )
                     .child(
-                        Button::new("workflow-from-skills")
-                            .label(tr("From skills"))
-                            .small()
-                            .disabled(self.state.project.is_none())
-                            .tooltip(tr(
-                                "Have the sub-agent model write a workflow of agents from skills' method documents",
-                            ))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_from_skills(window, cx)
-                            })),
+                        surfaces::labelled_action(
+                            "workflow-from-skills",
+                            "skill",
+                            tr("From skills"),
+                            surfaces::IconSize::Inline,
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
+                        .disabled(self.state.project.is_none())
+                        .tooltip(tr(
+                            "Have the sub-agent model write a workflow of agents from skills' method documents",
+                        ))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_from_skills(window, cx)
+                        })),
                     ),
             )
         }
@@ -1088,19 +1116,20 @@ impl Workspace {
     }
 
     /// What the workflow is for, and the skills whose method documents it
-    /// is written from; none picked lets the model pick at most three.
+    /// is written from; none picked lets the model pick at most three. In
+    /// the page's column under the list, as setting rows.
     fn from_skills_form(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
         let mut skills = div().h_flex().flex_wrap().gap_1();
         for (index, skill) in self.workflow_skills.iter().enumerate() {
             let name = skill.name.clone();
             let picked = self.workflow_skill_picks.contains(&name);
+            let about = SharedString::from(skill.description.clone());
             skills = skills.child(
-                Button::new(("workflow-skill", index))
-                    .label(skill.name.clone())
-                    .xsmall()
-                    .selected(picked)
-                    .tooltip(SharedString::from(skill.description.clone()))
+                surfaces::choice_chip(("workflow-skill", index), picked, cx)
+                    .child(skill.name.clone())
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(about.clone()).build(window, cx)
+                    })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let picks = &mut this.workflow_skill_picks;
                         match picks.iter().position(|kept| *kept == name) {
@@ -1114,64 +1143,67 @@ impl Workspace {
             );
         }
         if self.workflow_skills.is_empty() {
-            skills = skills.child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(tr("This project has no skills turned on.")),
-            );
+            skills = skills.child(surfaces::settings_note(
+                tr("This project has no skills turned on."),
+                cx,
+            ));
         }
         div()
             .v_flex()
-            .gap_2()
-            .p_3()
-            .w(px(660.))
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
+            .w_full()
+            .child(surfaces::settings_heading(tr("A workflow from skills"), cx))
             .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("A workflow from skills")),
-            )
-            .child(div().text_xs().text_color(muted).child(tr(
-                "The sub-agent model reads the skills' method documents and writes a workflow of \
+                surfaces::settings_note_help(tr("The sub-agent model writes a workflow from skills."),
+                    tr(
+                        "The sub-agent model reads the skills' method documents and writes a workflow of \
                  agents from them, each task with its own instructions and result shape. It opens \
                  here to review before it is saved. Skills that bring scripts of their own cannot \
                  be turned into a workflow yet.",
-            )))
-            .child(
+                    ),
+                    cx,
+                )
+                .pb_1(),
+            )
+            .child(stacked_setting(
+                tr("What it is for"),
+                "",
                 div()
                     .h(px(70.))
-                    .child(Input::new(&self.workflow_request).h_full()),
-            )
-            .child(div().text_xs().text_color(muted).child(tr(
-                "Skills to write it from; pick none and the model picks at most three.",
-            )))
-            .child(skills)
+                    .child(surfaces::input(&self.workflow_request, cx).h_full()),
+                cx,
+            ))
+            .child(stacked_setting(
+                tr("Skills"),
+                tr("Skills to write it from; none lets the model pick three."),
+                skills,
+                cx,
+            ))
             .child(
                 div()
                     .h_flex()
                     .gap_2()
+                    .pt_3()
                     .child(
-                        Button::new("workflow-skills-write")
-                            .label(if self.workflow_converting {
+                        surfaces::outlined_action(
+                            "workflow-skills-write",
+                            "sparkles",
+                            if self.workflow_converting {
                                 tr("Writing the workflow…")
                             } else {
                                 tr("Write the workflow")
-                            })
-                            .small()
-                            .primary()
-                            .disabled(self.workflow_converting)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.write_from_skills(window, cx)
-                            })),
+                            },
+                            cx,
+                        )
+                        .disabled(self.workflow_converting)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.write_from_skills(window, cx)
+                        })),
                     )
                     .child(
                         Button::new("workflow-skills-cancel")
                             .label(tr("Cancel"))
                             .small()
+                            .ghost()
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.layers.close(Layer::WorkflowFromSkills);
                                 this.workflow_skill_picks.clear();

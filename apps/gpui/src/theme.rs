@@ -316,7 +316,7 @@ pub fn restyle(look: &Look, appearance: Appearance, window: &mut Window, cx: &mu
 
 const THEMES: &str = include_str!("../assets/wisp-theme.json");
 
-fn bundled() -> ThemeSet {
+pub(crate) fn bundled() -> ThemeSet {
     serde_json::from_str(THEMES).expect("the bundled theme is valid JSON")
 }
 
@@ -331,6 +331,26 @@ pub fn install(cx: &mut App) {
         }
     }
     Theme::sync_system_appearance(None, cx);
+}
+
+/// How far apart two `#rrggbb` colours are for reading, as WCAG measures
+/// it: 1 for the same colour, 21 for black on white.
+#[cfg(test)]
+pub(crate) fn contrast(one: &str, other: &str) -> f32 {
+    fn luminance(hex: &str) -> f32 {
+        let hex = hex.trim_start_matches('#');
+        let channel = |at: usize| {
+            let value = u8::from_str_radix(&hex[at..at + 2], 16).unwrap() as f32 / 255.;
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4)
+    }
+    let (one, other) = (luminance(one), luminance(other));
+    (one.max(other) + 0.05) / (one.min(other) + 0.05)
 }
 
 #[cfg(test)]
@@ -472,23 +492,61 @@ mod tests {
 
     #[test]
     fn the_main_actions_label_can_be_read_on_its_teal() {
-        fn luminance(hex: &str) -> f32 {
-            let hex = hex.trim_start_matches('#');
-            let channel = |at: usize| {
-                let value = u8::from_str_radix(&hex[at..at + 2], 16).unwrap() as f32 / 255.;
-                if value <= 0.04045 {
-                    value / 12.92
-                } else {
-                    ((value + 0.055) / 1.055).powf(2.4)
-                }
-            };
-            0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4)
-        }
+        assert!((contrast("#000000", "#ffffff") - 21.).abs() < 0.01);
         for theme in bundled().themes {
-            let fill = luminance(theme.colors.primary.as_ref().unwrap());
-            let label = luminance(theme.colors.primary_foreground.as_ref().unwrap());
-            let contrast = (fill.max(label) + 0.05) / (fill.min(label) + 0.05);
+            let contrast = contrast(
+                theme.colors.primary.as_ref().unwrap(),
+                theme.colors.primary_foreground.as_ref().unwrap(),
+            );
             assert!(contrast >= 4.5, "{}: {contrast:.2}", theme.name);
+        }
+    }
+
+    #[test]
+    fn faded_ink_reads_on_the_page_and_the_margin_and_hairlines_are_light() {
+        // Secondary text, times and icons at rest are faded ink; they must
+        // still reach 4.5:1 on the paper and on the margin, in both themes.
+        for theme in bundled().themes {
+            let colors = &theme.colors;
+            let faded = colors.muted_foreground.as_ref().unwrap().to_string();
+            assert_eq!(
+                colors.tab_foreground, colors.muted_foreground,
+                "{}",
+                theme.name
+            );
+            for ground in [&colors.background, &colors.sidebar] {
+                let ground = ground.as_ref().unwrap().to_string();
+                let ratio = contrast(&faded, &ground);
+                assert!(
+                    ratio >= 4.5,
+                    "{}: {faded} on {ground} is {ratio:.2}",
+                    theme.name
+                );
+            }
+            // The hairlines are one light line: 9% ink on paper, 8% white
+            // on the dark page.
+            let line = if theme.mode.is_dark() {
+                "#f5f0e614"
+            } else {
+                "#3c372d17"
+            };
+            for hairline in [
+                &colors.border,
+                &colors.sidebar_border,
+                &colors.title_bar_border,
+            ] {
+                assert_eq!(hairline.as_ref().map(|value| value.as_ref()), Some(line));
+            }
+        }
+    }
+
+    #[test]
+    fn controls_and_rows_are_four_pixels_round_and_cards_six() {
+        // The lab record's shapes: 4 for controls and rows, 6 for cards,
+        // fields, dialogs and menus; the stamp's 2 is its own.
+        for theme in bundled().themes {
+            assert_eq!(theme.radius, Some(4), "{}", theme.name);
+            assert_eq!(theme.radius_lg, Some(6), "{}", theme.name);
         }
     }
 }

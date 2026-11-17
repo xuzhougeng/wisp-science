@@ -7,7 +7,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::ModelSource;
 
@@ -157,7 +156,7 @@ impl Workspace {
                             ),
                     ),
                 )
-                .child(Input::new(&self.onboarding_key).small())
+                .child(super::surfaces::input(&self.onboarding_key, cx).small())
                 .child(
                     div().h_flex().child(
                         Button::new("onboarding-other-models")

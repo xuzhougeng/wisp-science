@@ -6,15 +6,20 @@ use std::time::Duration;
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::{
     FeishuBindPoll, FeishuStatus, QrMatrix, WeixinDestination, WeixinScan, WeixinStatus,
 };
 
-use super::{Workspace, chip, settings_sections::setting, surfaces::switch, tone_color};
+use super::{
+    Workspace,
+    settings_sections::{explained_setting, setting},
+    shell::glyph,
+    surfaces::{self, IconTone, switch},
+    tone_color,
+};
 use crate::{
     backend::{Reply, receive},
     channels,
@@ -40,6 +45,38 @@ pub(super) fn qr_code(matrix: &QrMatrix) -> Div {
         rows = rows.child(line);
     }
     rows
+}
+
+/// What the last action on a chat app said: a sentence in the colour of
+/// how it went, not a pill.
+fn said(note: &Result<String, String>, cx: &App) -> Div {
+    match note {
+        Ok(said) => div()
+            .text_xs()
+            .text_color(tone_color(Tone::Success, cx))
+            .child(said.clone()),
+        Err(error) => div()
+            .text_xs()
+            .text_color(tone_color(Tone::Danger, cx))
+            .child(crate::i18n::host(error)),
+    }
+}
+
+/// The heading of one chat app: its name as a faded caption heading and
+/// its state after it in the state's colour.
+fn app_heading(name: impl Into<SharedString>, line: String, tone: Tone, cx: &App) -> Div {
+    div()
+        .h_flex()
+        .items_end()
+        .gap_2()
+        .child(surfaces::settings_heading(name, cx))
+        .child(
+            div()
+                .pb_1()
+                .text_xs()
+                .text_color(tone_color(tone, cx))
+                .child(line),
+        )
 }
 
 impl Workspace {
@@ -282,22 +319,14 @@ impl Workspace {
         let changed = channels::feishu_changed(status, &app_id, &secret, lark);
         let mut card = div()
             .v_flex()
-            .gap_2()
-            .child(
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(tr("Feishu")),
-                    )
-                    .child(div().text_sm().text_color(tone_color(tone, cx)).child(line)),
-            )
-            .child(div().w(px(640.)).text_xs().text_color(muted).child(tr(
-                "A bot of your own Feishu (or Lark) app over Feishu's long connection, so no public address is needed. Scanning makes the app, or enter one you made. Only its owner is answered. The App Secret is kept in the system keychain and shared with the WebView desktop.",
-            )))
+            .gap_1()
+            .child(app_heading(tr("Feishu"), line, tone, cx))
+            .child(surfaces::settings_note_help(tr("A bot of your own Feishu or Lark app."),
+                tr(
+                    "A bot of your own Feishu (or Lark) app over Feishu's long connection, so no public address is needed. Scanning makes the app, or enter one you made. Only its owner is answered. The App Secret is kept in the system keychain and shared with the WebView desktop.",
+                ),
+                cx,
+            ))
             .child(setting(
                 tr("Answer messages"),
                 tr("On, the bot runs while the app is open."),
@@ -309,37 +338,31 @@ impl Workspace {
             .child(setting(
                 tr("Service"),
                 tr("Feishu in China, or Lark elsewhere."),
-                div()
-                    .h_flex()
-                    .gap_1()
-                    .child(
-                        Button::new("feishu-service-feishu")
-                            .label(tr("Feishu"))
-                            .small()
-                            .selected(!lark)
+                surfaces::segmented(
+                    [
+                        surfaces::plain_segment("feishu-service-feishu", tr("Feishu"), !lark, cx)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.feishu_lark = false;
                                 cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("feishu-service-lark")
-                            .label("Lark")
-                            .small()
-                            .selected(lark)
+                            }))
+                            .into_any_element(),
+                        surfaces::plain_segment("feishu-service-lark", "Lark", lark, cx)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.feishu_lark = true;
                                 cx.notify();
-                            })),
-                    ),
+                            }))
+                            .into_any_element(),
+                    ],
+                    cx,
+                ),
                 cx,
             ))
             .child(setting(
                 "App ID",
                 tr("The app's ID from the Feishu developer console."),
                 div()
-                    .w(px(320.))
-                    .child(Input::new(&self.feishu_fields[0]).small()),
+                    .w(px(300.))
+                    .child(surfaces::input(&self.feishu_fields[0], cx).small()),
                 cx,
             ))
             .child(setting(
@@ -351,17 +374,15 @@ impl Workspace {
                 },
                 div()
                     .h_flex()
+                    .items_center()
                     .gap_2()
                     .child(
                         div()
                             .w(px(220.))
-                            .child(Input::new(&self.feishu_fields[1]).small()),
+                            .child(surfaces::input(&self.feishu_fields[1], cx).small()),
                     )
                     .child(
-                        Button::new("feishu-save")
-                            .label(tr("Save"))
-                            .small()
-                            .primary()
+                        surfaces::outlined_action("feishu-save", "save", tr("Save"), cx)
                             .disabled(!changed)
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.save_feishu(enabled, window, cx)
@@ -369,21 +390,21 @@ impl Workspace {
                     ),
                 cx,
             ))
-            .child(setting(
+            .child(explained_setting(
                 tr("Owner"),
+"",
                 tr("The open_id of the one person the bot answers; empty answers nobody."),
                 div()
                     .h_flex()
+                    .items_center()
                     .gap_2()
                     .child(
                         div()
                             .w(px(220.))
-                            .child(Input::new(&self.feishu_fields[2]).small()),
+                            .child(surfaces::input(&self.feishu_fields[2], cx).small()),
                     )
                     .child(
-                        Button::new("feishu-owner-save")
-                            .label(tr("Save"))
-                            .small()
+                        surfaces::outlined_action("feishu-owner-save", "save", tr("Save"), cx)
                             .disabled(owner.trim() == status.owner)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.save_feishu_owner(window, cx)
@@ -395,51 +416,59 @@ impl Workspace {
             card = card.child(
                 div()
                     .h_flex()
+                    .items_center()
                     .gap_2()
-                    .child(div().text_xs().child(crate::i18n::fill(
+                    .py_2()
+                    .child(div().flex_1().min_w_0().text_sm().child(crate::i18n::fill(
                         tr("{} wrote to the bot and waits to be its owner."),
                         &[&status.pending_owner],
                     )))
                     .child(
-                        Button::new("feishu-pending-yes")
-                            .label(tr("Make owner"))
-                            .small()
-                            .primary()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.answer_feishu_pending(true, window, cx)
-                            })),
+                        surfaces::outlined_action(
+                            "feishu-pending-yes",
+                            "user",
+                            tr("Make owner"),
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.answer_feishu_pending(true, window, cx)
+                        })),
                     )
                     .child(
-                        Button::new("feishu-pending-no")
-                            .label(tr("Refuse"))
-                            .small()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.answer_feishu_pending(false, window, cx)
-                            })),
+                        surfaces::icon_action(
+                            "feishu-pending-no",
+                            "ban",
+                            tr("Refuse"),
+                            IconTone::Faded,
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.answer_feishu_pending(false, window, cx)
+                        })),
                     ),
             );
         }
         let asking = self.layers.contains(Layer::ConfirmUnbindFeishu);
-        let mut actions = div().h_flex().gap_2();
+        let mut actions = div().h_flex().items_center().gap_1().pt_2();
         if self.feishu_qr.is_none() {
             actions = actions.child(
-                Button::new("feishu-bind")
-                    .label(tr("Make the app by scanning"))
-                    .small()
-                    .when(!status.bound, |button| button.primary())
-                    .on_click(cx.listener(|this, _, window, cx| this.bind_feishu(window, cx))),
+                surfaces::outlined_action(
+                    "feishu-bind",
+                    "camera",
+                    tr("Make the app by scanning"),
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.bind_feishu(window, cx))),
             );
         }
         if status.bound && !asking {
             actions = actions.child(
-                Button::new("feishu-unbind")
-                    .label(tr("Unbind"))
-                    .small()
-                    .ghost()
-                    .on_click(cx.listener(|this, _, _, cx| {
+                surfaces::danger_action("feishu-unbind", "ban", tr("Unbind"), cx).on_click(
+                    cx.listener(|this, _, _, cx| {
                         this.layers.open(Layer::ConfirmUnbindFeishu);
                         cx.notify();
-                    })),
+                    }),
+                ),
             );
         }
         card = card.child(actions);
@@ -447,8 +476,9 @@ impl Workspace {
             card = card.child(
                 div()
                     .h_flex()
+                    .items_center()
                     .gap_2()
-                    .child(div().text_xs().child(tr(
+                    .child(div().flex_1().min_w_0().text_sm().text_color(cx.theme().danger).child(tr(
                         "Unbind Feishu? The bot stops, and its App Secret and owner are forgotten on this computer.",
                     )))
                     .child(
@@ -487,6 +517,7 @@ impl Workspace {
                             )))
                             .child(
                                 Button::new("feishu-bind-cancel")
+                                    .icon(glyph("close"))
                                     .label(tr("Cancel"))
                                     .small()
                                     .on_click(
@@ -497,10 +528,7 @@ impl Workspace {
             );
         }
         if let Some(note) = &self.feishu_note {
-            card = card.child(match note {
-                Ok(said) => chip(said.clone(), Tone::Success, cx),
-                Err(error) => chip(crate::i18n::host(error), Tone::Danger, cx),
-            });
+            card = card.child(said(note, cx));
         }
         card
     }
@@ -718,26 +746,17 @@ impl Workspace {
         let enabled = status.enabled;
         let mut card = div()
             .v_flex()
-            .gap_2()
-            .child(
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(channels::weixin_title(destination)),
-                    )
-                    .child(div().text_sm().text_color(tone_color(tone, cx)).child(line)),
-            )
-            .child(
-                div()
-                    .w(px(640.))
-                    .text_xs()
-                    .text_color(muted)
-                    .child(channels::weixin_about(destination)),
-            );
+            .gap_1()
+            .child(app_heading(
+                channels::weixin_title(destination),
+                line,
+                tone,
+                cx,
+            ))
+            .child(surfaces::settings_note(
+                channels::weixin_about(destination),
+                cx,
+            ));
         if status.bound {
             card = card.child(setting(
                 tr("Answer messages"),
@@ -752,32 +771,33 @@ impl Workspace {
         }
         let question = Self::unbind_question(destination);
         let asking = self.layers.contains(question);
-        let mut actions = div().h_flex().gap_2();
+        let mut actions = div().h_flex().items_center().gap_1().pt_2();
         if shown.qr.is_none() {
-            actions = actions.child(
-                Button::new(("weixin-bind", n))
-                    .label(if status.bound {
-                        tr("Bind again")
-                    } else {
-                        tr("Bind with a QR code")
-                    })
-                    .small()
-                    .when(!status.bound, |button| button.primary())
+            actions =
+                actions.child(
+                    surfaces::outlined_action(
+                        ("weixin-bind", n),
+                        "camera",
+                        if status.bound {
+                            tr("Bind again")
+                        } else {
+                            tr("Bind with a QR code")
+                        },
+                        cx,
+                    )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.bind_weixin(destination, window, cx)
                     })),
-            );
+                );
         }
         if status.bound && !asking {
             actions = actions.child(
-                Button::new(("weixin-unbind", n))
-                    .label(tr("Unbind"))
-                    .small()
-                    .ghost()
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                surfaces::danger_action(("weixin-unbind", n), "ban", tr("Unbind"), cx).on_click(
+                    cx.listener(move |this, _, _, cx| {
                         this.layers.open(question);
                         cx.notify();
-                    })),
+                    }),
+                ),
             );
         }
         card = card.child(actions);
@@ -785,10 +805,14 @@ impl Workspace {
             card = card.child(
                 div()
                     .h_flex()
+                    .items_center()
                     .gap_2()
                     .child(
                         div()
-                            .text_xs()
+                            .flex_1()
+                            .min_w_0()
+                            .text_sm()
+                            .text_color(cx.theme().danger)
                             .child(channels::weixin_unbind_question(destination)),
                     )
                     .child(
@@ -825,6 +849,7 @@ impl Workspace {
                             .child(div().text_sm().child(channels::scan_note(shown.scan)))
                             .child(
                                 Button::new(("weixin-bind-cancel", n))
+                                    .icon(glyph("close"))
                                     .label(tr("Cancel"))
                                     .small()
                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -834,78 +859,67 @@ impl Workspace {
                     ),
             );
         } else if shown.scan == Some(WeixinScan::Expired) {
-            card = card.child(chip(channels::scan_note(shown.scan), Tone::Attention, cx));
+            card = card.child(
+                div()
+                    .text_xs()
+                    .text_color(tone_color(Tone::Attention, cx))
+                    .child(channels::scan_note(shown.scan)),
+            );
         }
         if let Some(note) = &shown.note {
-            card = card.child(match note {
-                Ok(said) => chip(said.clone(), Tone::Success, cx),
-                Err(error) => chip(crate::i18n::host(error), Tone::Danger, cx),
-            });
+            card = card.child(said(note, cx));
         }
         card
     }
 
     pub(super) fn render_channel_settings(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
-        let mut commands = div().v_flex().gap_1();
-        for (command, what) in channels::COMMANDS {
-            commands = commands.child(
-                div()
-                    .h_flex()
-                    .gap_3()
-                    .text_xs()
-                    .child(
-                        div()
-                            .w(px(88.))
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .child(command),
-                    )
-                    .child(div().text_color(muted).child(tr(what))),
-            );
-        }
+        // What a chat can send: a record row each, the command as a fact
+        // and what it does after it.
+        let commands = channels::COMMANDS
+            .iter()
+            .enumerate()
+            .map(|(index, (command, what))| {
+                surfaces::record_row(("chat-command", index), *command)
+                    .icon("bubble")
+                    .mono()
+                    .suffix(tr(what))
+            });
         self.settings_page(cx)
-            .child(div().w(px(640.)).text_xs().text_color(muted).child(tr(
-                "Talk to Wisp from a chat app. A message runs in the project chats go to and \
-                 continues its latest conversation there, which the desktop shows as usual; \
-                 the answer comes back in the chat. A turn started from a chat always asks \
-                 before changing anything, and the approval is sent to the chat with a code.",
-            )))
+            .child(surfaces::settings_note_help(
+                tr("Talk to Wisp from a chat app."),
+                tr(
+                    "Talk to Wisp from a chat app. A message runs in the project chats go to and \
+                     continues its latest conversation there, which the desktop shows as usual; \
+                     the answer comes back in the chat. A turn started from a chat always asks \
+                     before changing anything, and the approval is sent to the chat with a code.",
+                ),
+                cx,
+            ))
+            .child(self.weixin_card(WeixinDestination::Projects, cx))
             .child(
                 div()
-                    .pt_4()
-                    .child(self.weixin_card(WeixinDestination::Projects, cx)),
-            )
-            .child(
-                div()
-                    .pt_6()
+                    .pt_3()
                     .child(self.weixin_card(WeixinDestination::Assistant, cx)),
             )
-            .child(div().pt_6().child(self.feishu_card(cx)))
+            .child(div().pt_3().child(self.feishu_card(cx)))
             .child(
                 div()
                     .v_flex()
-                    .gap_2()
-                    .pt_6()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child("Wisp Lab"),
-                    )
+                    .gap_1()
+                    .pt_3()
+                    .child(surfaces::settings_heading("Wisp Lab", cx))
                     .child(self.lab_card(cx)),
             )
             .child(
                 div()
                     .v_flex()
-                    .gap_2()
-                    .pt_6()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(tr("Commands a chat can send")),
-                    )
-                    .child(commands),
+                    .gap_1()
+                    .pt_3()
+                    .child(surfaces::settings_heading(
+                        tr("Commands a chat can send"),
+                        cx,
+                    ))
+                    .child(surfaces::record_group(commands, cx)),
             )
     }
 }

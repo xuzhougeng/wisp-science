@@ -3,7 +3,7 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
 };
 
@@ -429,30 +429,23 @@ impl Workspace {
         self.focus_composer(window, cx);
     }
 
-    /// The "/" button of the composer, with the list of commands above it
-    /// while that is open.
-    pub(super) fn slash_button(&self, cx: &mut Context<Self>) -> Div {
-        let open = self.layers.contains(Layer::SlashMenu);
-        let button = div().relative().child(
-            Button::new("slash-commands")
-                .label("/")
-                .small()
-                .ghost()
-                .selected(open)
-                .tooltip(tr(
-                    "Commands, workflows and skills: type / or pick one here",
-                ))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.slash_typed = None;
-                    this.toggle_composer_menu(Layer::SlashMenu, window, cx);
-                    if this.layers.contains(Layer::SlashMenu) {
-                        this.load_slash_skills(String::new(), window, cx);
-                        this.load_slash_workflows(window, cx);
-                    }
-                })),
-        );
-        if !open {
-            return button;
+    /// Opens or closes the `/` menu from the composer's `+` menu, as
+    /// typing `/` does.
+    pub(super) fn open_slash_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.slash_typed = None;
+        self.toggle_composer_menu(Layer::SlashMenu, window, cx);
+        if self.layers.contains(Layer::SlashMenu) {
+            self.load_slash_skills(String::new(), window, cx);
+            self.load_slash_workflows(window, cx);
+        }
+    }
+
+    /// The list of commands, workflows and skills above the composer's `+`
+    /// button while the `/` menu is open, whether opened from there or by a
+    /// `/` typed in the box.
+    pub(super) fn slash_menu(&self, cx: &mut Context<Self>) -> Option<Div> {
+        if !self.layers.contains(Layer::SlashMenu) {
+            return None;
         }
         let mut menu = Self::composer_menu(380., cx);
         // An ACP agent's conversation lists the agent's own commands; one
@@ -503,7 +496,7 @@ impl Workspace {
                     })),
                 );
             }
-            return button.child(deferred(menu));
+            return Some(menu);
         }
         let word = self.slash_typed.clone().unwrap_or_default();
         let muted = cx.theme().muted_foreground;
@@ -608,6 +601,6 @@ impl Workspace {
                 crate::i18n::fill(tr("No command, workflow or skill matches /{}"), &[&word]),
             ));
         }
-        button.child(deferred(menu.child(rows)))
+        Some(menu.child(rows))
     }
 }

@@ -4,13 +4,18 @@
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
 use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::{Input, InputState},
+    input::InputState,
 };
 use wisp_server::desktop::SshHostRow;
 
-use super::{Workspace, shell::glyph};
+use super::{
+    Workspace,
+    settings_sections::{explained_setting, setting},
+    shell::glyph,
+    surfaces,
+};
 use crate::{
     backend::{Reply, receive},
     layers::Layer,
@@ -104,55 +109,44 @@ impl Workspace {
     /// The local environment's executables: a path for each, or empty to
     /// look on the search path, as the WebView's Environments page keeps
     /// them.
+    /// One setting row for each tool: its name, and the path to use in a
+    /// white field whose hint is where the search path finds it.
     fn tool_paths_card(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
         let mut card = div()
             .v_flex()
-            .gap_2()
-            .pt_5()
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Where the tools are")),
-            )
-            .child(div().w(px(540.)).text_xs().text_color(muted).child(tr(
-                "The full path of each program on this computer. Empty looks for it on the \
-                 search path, shown as the hint. A path is checked to be a file; nothing is run.",
-            )));
+            .child(surfaces::settings_heading(tr("Where the tools are"), cx))
+            .child(surfaces::settings_note_help(tr("Leave a path empty to use the one on the search path."),
+                tr(
+                    "The full path of each program on this computer. Empty looks for it on the \
+                     search path, shown as the hint. A path is checked to be a file; nothing is run.",
+                ),
+                cx,
+            ));
         for (path, field) in &self.tool_paths {
-            card = card.child(
-                div()
-                    .h_flex()
-                    .gap_3()
-                    .child(
-                        div()
-                            .w(px(160.))
-                            .flex_shrink_0()
-                            .text_sm()
-                            .child(path.label),
-                    )
-                    .child(div().w(px(420.)).child(Input::new(field).small())),
-            );
+            // What the search path finds is the field's hint, said once.
+            card = card.child(setting(
+                path.label,
+                "",
+                div().w(px(300.)).child(surfaces::input(field, cx).small()),
+                cx,
+            ));
         }
         card.child(
             div()
                 .h_flex()
+                .items_center()
                 .gap_2()
+                .pt_3()
                 .child(
-                    Button::new("tool-paths-save")
-                        .label(tr("Save paths"))
-                        .small()
+                    surfaces::outlined_action("tool-paths-save", "save", tr("Save paths"), cx)
                         .on_click(
                             cx.listener(|this, _, window, cx| this.save_tool_paths(window, cx)),
                         ),
                 )
-                .children(self.tool_paths_saved.then(|| {
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().success)
-                        .child(tr("Saved"))
-                })),
+                .children(
+                    self.tool_paths_saved
+                        .then(|| surfaces::stamp(surfaces::StampKind::Success, tr("Saved"), cx)),
+                ),
         )
     }
 
@@ -236,72 +230,86 @@ impl Workspace {
     }
 
     /// The card that installs Python, R and Node into Wisp's own folder.
+    /// Python, R and Node.js installed into Wisp's own folder: checkable
+    /// chips and one Install button, the page's one filled button. The
+    /// longer account of what installing does is the button's tooltip.
     fn toolchain_card(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
-        let mut card = div()
+        let card = div()
             .v_flex()
             .gap_2()
-            .pb_4()
-            .w(px(540.))
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("Tools on this computer")),
-            )
-            .child(div().text_xs().text_color(muted).child(tr(
-                "Wisp can install Python, R and Node.js into its own data folder: no \
-                 administrator rights, and your shell and PATH are left alone. Downloads \
-                 follow the Code requests route and mirrors in Network.",
-            )));
+            .child(surfaces::settings_heading(tr("Tools on this computer"), cx));
         let Some(status) = &self.toolchain else {
-            return card.child(div().text_xs().text_color(muted).child(tr("Loading…")));
+            return card.child(surfaces::settings_note(tr("Loading…"), cx));
         };
-        card = card.child(div().text_xs().child(toolchain::installed_line(status)));
+        let mut card = card.child(surfaces::settings_note(
+            toolchain::installed_line(status),
+            cx,
+        ));
         if toolchain::running(status) {
             card =
                 card.child(
                     div()
                         .h_flex()
+                        .items_center()
                         .gap_2()
-                        .child(div().text_sm().child(toolchain::progress_line(status)))
                         .child(
-                            Button::new("toolchain-cancel")
-                                .label(tr("Stop"))
-                                .small()
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_sm()
+                                .child(toolchain::progress_line(status)),
+                        )
+                        .child(
+                            surfaces::outlined_action("toolchain-cancel", "stop", tr("Stop"), cx)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.cancel_toolchain(window, cx)
                                 })),
                         ),
                 );
         } else {
-            let mut choices = div().h_flex().gap_1();
+            let mut choices = div().h_flex().flex_wrap().gap_1().flex_1().min_w_0();
             for id in toolchain::CHOICES {
                 let on = self.toolchain_choice.contains(&id);
                 choices = choices.child(
-                    Button::new(SharedString::from(format!("toolchain-choice-{id}")))
-                        .icon(glyph(if on { "check-square" } else { "square" }))
-                        .label(toolchain::tool_name(id))
-                        .small()
-                        .ghost()
-                        .selected(on)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(at) = this.toolchain_choice.iter().position(|c| *c == id) {
-                                this.toolchain_choice.remove(at);
-                            } else {
-                                this.toolchain_choice.push(id);
-                            }
-                            cx.notify();
-                        })),
+                    surfaces::choice_chip(
+                        SharedString::from(format!("toolchain-choice-{id}")),
+                        on,
+                        cx,
+                    )
+                    .child(surfaces::sized_icon(
+                        if on { "check-square" } else { "square" },
+                        surfaces::IconSize::Inline,
+                        if on {
+                            surfaces::IconTone::On
+                        } else {
+                            surfaces::IconTone::Faded
+                        },
+                        cx,
+                    ))
+                    .child(toolchain::tool_name(id))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(at) = this.toolchain_choice.iter().position(|c| *c == id) {
+                            this.toolchain_choice.remove(at);
+                        } else {
+                            this.toolchain_choice.push(id);
+                        }
+                        cx.notify();
+                    })),
                 );
             }
             card = card.child(
-                div().h_flex().gap_2().child(choices).child(
+                div().h_flex().items_center().gap_2().child(choices).child(
                     Button::new("toolchain-install")
                         .icon(glyph("download"))
                         .label(tr("Install"))
                         .small()
                         .primary()
+                        .tooltip(tr(
+                            "Wisp can install Python, R and Node.js into its own data folder: no \
+                             administrator rights, and your shell and PATH are left alone. Downloads \
+                             follow the Code requests route and mirrors in Network.",
+                        ))
                         .disabled(self.toolchain_choice.is_empty())
                         .on_click(
                             cx.listener(|this, _, window, cx| this.install_toolchain(window, cx)),
@@ -309,32 +317,32 @@ impl Workspace {
                 ),
             );
             if let Some((text, tone)) = toolchain::outcome(status) {
-                card = card.child(super::chip(text, tone, cx));
+                let ink = surfaces::StampKind::from_tone(tone)
+                    .map(|kind| surfaces::stamp_color(kind, cx))
+                    .unwrap_or(muted);
+                card = card.child(div().text_xs().text_color(ink).child(text));
             }
         }
         if !status.log.is_empty() {
+            // What the installer said last, as facts on the paper.
             let mut log = div()
                 .id("toolchain-log")
                 .v_flex()
                 .max_h(px(140.))
                 .overflow_y_scroll()
-                .p_2()
-                .rounded(cx.theme().radius)
-                .bg(cx.theme().muted)
-                .font_family("Menlo")
-                .text_xs()
-                .text_color(muted);
+                .py_1()
+                .border_l_1()
+                .border_color(cx.theme().border)
+                .pl_2();
             for line in status.log.iter().rev().take(8).rev() {
-                log = log.child(div().truncate().child(line.clone()));
+                log = log.child(surfaces::fact(line.clone(), cx).truncate());
             }
             card = card.child(log);
         }
-        card.child(
-            div()
-                .text_xs()
-                .text_color(muted)
-                .child(crate::i18n::fill(tr("Folder: {}"), &[&status.root])),
-        )
+        card.child(surfaces::fact(
+            crate::i18n::fill(tr("Folder: {}"), &[&status.root]),
+            cx,
+        ))
     }
 
     /// Runs one change to the environments, then reads them again.
@@ -491,37 +499,34 @@ impl Workspace {
         );
     }
 
+    /// The host being added or changed, under the list in the same column:
+    /// one setting row for each field.
     fn environment_form(&self, cx: &mut Context<Self>) -> Div {
-        let muted = cx.theme().muted_foreground;
         let changing = self.env_target.is_some();
-        const LABELS: [&str; 7] = [
-            "Name: what the host is called here, one word",
-            "Address: an IP or a domain. Leave empty to use the entry of that name in your SSH config",
-            "User",
-            "Port",
-            "Key file: where the private key is. Wisp keeps the path, never the key",
-            "Jump host, as OpenSSH's ProxyJump takes it",
-            "Notes for yourself and the model: what the machine is for",
+        const FIELDS: [(&str, &str); 7] = [
+            ("Name", "What the host is called here, one word."),
+            (
+                "Address",
+                "An IP or a domain; empty uses your SSH config's entry.",
+            ),
+            ("User", ""),
+            ("Port", ""),
+            (
+                "Key file",
+                "Where the private key is. Wisp keeps the path, never the key.",
+            ),
+            ("Jump host", "As OpenSSH's ProxyJump takes it."),
+            ("Notes", "What the machine is for, for you and the model."),
         ];
-        let mut form = div()
-            .v_flex()
-            .gap_2()
-            .p_3()
-            .w(px(540.))
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(if changing {
-                        tr("Change the host")
-                    } else {
-                        tr("Add an SSH host")
-                    }),
-            );
-        for (index, (label, field)) in LABELS.iter().zip(&self.env_fields).enumerate() {
+        let mut form = div().v_flex().child(surfaces::settings_heading(
+            if changing {
+                tr("Change the host")
+            } else {
+                tr("Add an SSH host")
+            },
+            cx,
+        ));
+        for (index, ((name, note), field)) in FIELDS.iter().zip(&self.env_fields).enumerate() {
             // The name is what runs and the default refer to; it stays.
             if index == 0 && changing {
                 continue;
@@ -530,59 +535,69 @@ impl Workspace {
             if index == 4 && self.env_password_sign_in {
                 continue;
             }
-            form = form
-                .child(div().text_xs().text_color(muted).child(tr(label)))
-                .child(Input::new(field).small());
+            let note = if note.is_empty() { "" } else { tr(*note) };
+            form = form.child(setting(
+                tr(*name),
+                note,
+                div().w(px(300.)).child(surfaces::input(field, cx).small()),
+                cx,
+            ));
         }
         // How it signs in: with a key, or with a password kept in the
         // system's keyring.
-        let mut sign_in = div()
-            .h_flex()
-            .gap_1()
-            .items_center()
-            .child(div().text_xs().text_color(muted).child(tr("Sign in with")));
-        for (number, (password, label)) in [(false, tr("A key")), (true, tr("A password"))]
-            .into_iter()
-            .enumerate()
-        {
-            sign_in = sign_in.child(
-                Button::new(("environment-sign-in", number))
-                    .label(label)
-                    .xsmall()
-                    .selected(self.env_password_sign_in == password)
+        let sign_in = surfaces::segmented(
+            [(false, tr("A key")), (true, tr("A password"))]
+                .into_iter()
+                .enumerate()
+                .map(|(number, (password, label))| {
+                    surfaces::plain_segment(
+                        SharedString::from(format!("environment-sign-in-{number}")),
+                        label,
+                        self.env_password_sign_in == password,
+                        cx,
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.env_password_sign_in = password;
                         cx.notify();
-                    })),
-            );
-        }
-        form = form.child(sign_in);
+                    }))
+                    .into_any_element()
+                }),
+            cx,
+        );
+        form = form.child(setting(tr("Sign in with"), "", sign_in, cx));
         if self.env_password_sign_in {
-            form = form
-                .child(div().text_xs().text_color(muted).child(tr(
-                    "Password: kept in the system's keyring, never in Wisp's files. It answers \
-                     the host's prompt for runs, checks and terminals.",
-                )))
-                .child(Input::new(&self.env_password).small());
+            form = form.child(setting(
+                tr("Password"),
+                tr("Kept in the system's keyring, never in Wisp's files."),
+                div()
+                    .id("environment-password")
+                    .w(px(300.))
+                    .tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new(tr(
+                            "Password: kept in the system's keyring, never in Wisp's files. It \
+                             answers the host's prompt for runs, checks and terminals.",
+                        ))
+                        .build(window, cx)
+                    })
+                    .child(surfaces::input(&self.env_password, cx).small()),
+                cx,
+            ));
         }
         form.child(
             div()
                 .h_flex()
                 .gap_2()
-                .pt_1()
+                .pt_3()
                 .child(
-                    Button::new("environment-save")
-                        .label(tr("Save"))
-                        .small()
-                        .primary()
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.save_environment(window, cx)),
-                        ),
+                    surfaces::outlined_action("environment-save", "save", tr("Save"), cx).on_click(
+                        cx.listener(|this, _, window, cx| this.save_environment(window, cx)),
+                    ),
                 )
                 .child(
                     Button::new("environment-cancel")
                         .label(tr("Cancel"))
                         .small()
+                        .ghost()
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.layers.close(Layer::EnvironmentForm);
                             this.env_target = None;
@@ -592,169 +607,96 @@ impl Workspace {
         )
     }
 
-    pub(super) fn render_environment_settings(&self, cx: &mut Context<Self>) -> Div {
+    /// One host as a record row: its name, its address as a fact, the last
+    /// check as a stamp; Check outlined, a terminal and Change as icon
+    /// buttons, Remove last in the danger colour. What the check found is
+    /// under the row.
+    fn environment_row(
+        &self,
+        host: &SshHostRow,
+        view: &wisp_server::desktop::EnvironmentsView,
+        now: i64,
+        cx: &mut Context<Self>,
+    ) -> surfaces::RecordRow {
         let muted = cx.theme().muted_foreground;
-        let page = self.settings_page(cx);
-        let Some(view) = &self.environments else {
-            return page.child(div().text_sm().text_color(muted).child(tr("Loading…")));
-        };
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs() as i64)
-            .unwrap_or(0);
-        let place = |id: SharedString, label: String, alias: Option<String>| {
-            let chosen = view.default == alias;
-            Button::new(id)
-                .label(label)
-                .small()
-                .selected(chosen)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    let reply = this.backend.set_default_environment(alias.clone());
-                    this.change_environments(reply, |_, _, _| {}, window, cx);
-                }))
-        };
-        let mut places = div().h_flex().flex_wrap().gap_1().child(place(
-            "environment-local".into(),
-            tr("This computer").into(),
-            None,
-        ));
-        for host in &view.hosts {
-            places = places.child(place(
-                SharedString::from(format!("environment-default-{}", host.alias)),
-                host.alias.clone(),
-                Some(host.alias.clone()),
-            ));
+        let asking = self.layers.contains(Layer::ConfirmRemoveEnvironment)
+            && self.env_target.as_deref() == Some(host.alias.as_str());
+        let (editing, removing) = (host.clone(), host.alias.clone());
+        let check = view.checks.iter().find(|check| check.alias == host.alias);
+        let checking = self.env_checking.contains(&host.alias);
+        let failed = !checking && check.is_some_and(|check| check.error.is_some());
+        let mut row = surfaces::record_row(
+            SharedString::from(format!("environment-host-{}", host.alias)),
+            host.alias.clone(),
+        )
+        .icon("server")
+        .suffix(settings::ssh_target(host));
+        if checking {
+            row = row.stamp(surfaces::StampKind::Running, tr("Checking…"));
+        } else if failed {
+            row = row.stamp(surfaces::StampKind::Failed, tr("Failed"));
+        } else if check.is_some() {
+            row = row.stamp(surfaces::StampKind::Success, tr("Ready"));
+        } else {
+            // Not checked yet: a stamp, the reason under the pointer.
+            row = row
+                .stamp(surfaces::StampKind::Waiting, tr("Not checked"))
+                .stamp_tooltip(settings::check_line(None, false, now));
         }
-        let mut page = page
-            .child(self.toolchain_card(cx))
-            .child(
-                div()
-                    .v_flex()
-                    .gap_2()
-                    .pb_4()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(tr("New work runs on")),
-                    )
-                    .child(div().w(px(540.)).text_xs().text_color(muted).child(tr(
-                        "Where the model starts runs unless you or it say otherwise. \
-                         Conversation tools such as shell stay on this computer.",
-                    )))
-                    .child(places),
-            )
-            .child(
-                div()
-                    .h_flex()
-                    .gap_3()
-                    .child(
-                        div()
-                            .v_flex()
-                            .w(px(540.))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(tr("SSH hosts")),
-                            )
-                            .child(div().text_xs().text_color(muted).child(tr(
-                                "Servers and clusters the model may start runs on. Wisp signs \
-                                 in with your SSH keys, agent and config. Check a host once \
-                                 it is added: work runs on it only after a check passes.",
-                            ))),
-                    )
-                    .child(
-                        Button::new("environment-add")
-                            .icon(glyph("plus"))
-                            .label(tr("Add"))
-                            .small()
-                            .flex_shrink_0()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.edit_environment(None, window, cx)
-                            })),
-                    ),
-            );
-        if self.layers.contains(Layer::EnvironmentForm) {
-            page = page.child(div().pt_3().child(self.environment_form(cx)));
+        // What the row opens to: the notes, the last check and its facts.
+        let mut about = div().v_flex().gap_1().pt_1();
+        let mut opened = false;
+        if !host.notes.is_empty() {
+            opened = true;
+            about = about.child(div().text_xs().text_color(muted).child(host.notes.clone()));
         }
-        if view.hosts.is_empty() && !self.layers.contains(Layer::EnvironmentForm) {
-            page = page.child(
-                div()
-                    .pt_2()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(tr("None yet.")),
-            );
-        }
-        for host in &view.hosts {
-            let asking = self.layers.contains(Layer::ConfirmRemoveEnvironment)
-                && self.env_target.as_deref() == Some(host.alias.as_str());
-            let (editing, removing) = (host.clone(), host.alias.clone());
-            let mut about = div()
-                .v_flex()
-                .w(px(540.))
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(host.alias.clone()),
-                )
-                .child(
-                    div()
-                        .truncate()
-                        .text_xs()
-                        .text_color(muted)
-                        .font_family(cx.theme().mono_font_family.clone())
-                        .child(settings::ssh_target(host)),
-                );
-            if !host.notes.is_empty() {
-                about = about.child(div().text_xs().text_color(muted).child(host.notes.clone()));
-            }
-            let check = view.checks.iter().find(|check| check.alias == host.alias);
-            let checking = self.env_checking.contains(&host.alias);
-            let failed = !checking && check.is_some_and(|check| check.error.is_some());
+        // While it checks, and before its first check, the stamp says so.
+        if let Some(check) = check.filter(|_| !checking) {
+            opened = true;
             about = about.child(
                 div()
                     .text_xs()
                     .text_color(if failed { cx.theme().danger } else { muted })
-                    .child(settings::check_line(check, checking, now)),
+                    .child(settings::check_line(Some(check), false, now)),
             );
-            if let Some(check) = check.filter(|_| !checking) {
-                if let Some(error) = &check.error {
-                    about = about.child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(crate::i18n::host(error)),
-                    );
-                }
-                for (label, value) in check.found.iter().flat_map(settings::check_facts) {
-                    about = about.child(
-                        div()
-                            .h_flex()
-                            .items_start()
-                            .gap_2()
-                            .text_xs()
-                            .child(
-                                div()
-                                    .w(px(84.))
-                                    .flex_shrink_0()
-                                    .text_color(muted)
-                                    .child(label),
-                            )
-                            .child(div().child(value)),
-                    );
-                }
+            if let Some(error) = &check.error {
+                about = about.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(crate::i18n::host(error)),
+                );
             }
-            let checked = host.alias.clone();
-            let actions = if asking {
+            for (label, value) in check.found.iter().flat_map(settings::check_facts) {
+                about = about.child(
+                    div()
+                        .h_flex()
+                        .items_start()
+                        .gap_2()
+                        .text_xs()
+                        .child(
+                            div()
+                                .w(px(84.))
+                                .flex_shrink_0()
+                                .text_color(muted)
+                                .child(label),
+                        )
+                        .child(surfaces::fact(value, cx).text_color(cx.theme().foreground)),
+                );
+            }
+        }
+        if asking {
+            opened = true;
+            about = about.child(
                 div()
                     .h_flex()
-                    .gap_1()
+                    .items_center()
+                    .gap_2()
+                    .pt_1()
+                    .child(div().flex_1())
                     .child(
                         Button::new("environment-remove-confirm")
+                            .icon(glyph("trash"))
                             .label(tr("Remove"))
                             .xsmall()
                             .danger()
@@ -766,88 +708,168 @@ impl Workspace {
                         Button::new("environment-remove-cancel")
                             .label(tr("Keep"))
                             .xsmall()
+                            .ghost()
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.layers.close(Layer::ConfirmRemoveEnvironment);
                                 this.env_target = None;
                                 cx.notify();
                             })),
-                    )
-            } else {
+                    ),
+            );
+        }
+        let checked = host.alias.clone();
+        let context = format!("ssh:{}", host.alias);
+        row.below(opened.then(|| about.into_any_element()))
+            .action(
+                surfaces::outlined_action(
+                    SharedString::from(format!("environment-check-{}", host.alias)),
+                    "refresh",
+                    if check.is_some() {
+                        tr("Check again")
+                    } else {
+                        tr("Check")
+                    },
+                    cx,
+                )
+                .tooltip(tr("Connect now and see what the host is"))
+                .disabled(checking)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.check_environment(checked.clone(), window, cx)
+                })),
+            )
+            .action(
+                surfaces::icon_action(
+                    SharedString::from(format!("environment-terminal-{}", host.alias)),
+                    "terminal",
+                    tr("Open a terminal on this host in the system's terminal"),
+                    surfaces::IconTone::Faded,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.open_host_terminal(context.clone(), None, window, cx)
+                })),
+            )
+            .action(
+                surfaces::icon_action(
+                    SharedString::from(format!("environment-edit-{}", host.alias)),
+                    "edit",
+                    tr("Change"),
+                    surfaces::IconTone::Faded,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.edit_environment(Some(&editing), window, cx)
+                })),
+            )
+            .action(
+                surfaces::danger_action(
+                    SharedString::from(format!("environment-remove-{}", host.alias)),
+                    "trash",
+                    tr("Remove"),
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.env_target = Some(removing.clone());
+                    this.layers.close(Layer::EnvironmentForm);
+                    this.layers.open(Layer::ConfirmRemoveEnvironment);
+                    cx.notify();
+                })),
+            )
+    }
+
+    pub(super) fn render_environment_settings(&self, cx: &mut Context<Self>) -> Div {
+        let page = self.settings_page(cx);
+        let Some(view) = &self.environments else {
+            return page.child(surfaces::settings_note(tr("Loading…"), cx));
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs() as i64)
+            .unwrap_or(0);
+        // Where new runs start: one of this computer and the hosts.
+        let place = |id: SharedString, label: String, alias: Option<String>| {
+            let chosen = view.default == alias;
+            let icon = settings::runs_on_icon(alias.as_deref().unwrap_or(""), None);
+            surfaces::segment(id, icon, label, chosen, cx)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    let reply = this.backend.set_default_environment(alias.clone());
+                    this.change_environments(reply, |_, _, _| {}, window, cx);
+                }))
+                .into_any_element()
+        };
+        let mut places = vec![place(
+            "environment-local".into(),
+            tr("This computer").into(),
+            None,
+        )];
+        for host in &view.hosts {
+            places.push(place(
+                SharedString::from(format!("environment-default-{}", host.alias)),
+                host.alias.clone(),
+                Some(host.alias.clone()),
+            ));
+        }
+        let mut page = page.child(self.toolchain_card(cx)).child(
+            div().pt_3().child(explained_setting(
+                tr("New work runs on"),
+                "",
+                tr(
+                    "Where the model starts runs unless you or it say otherwise. \
+                    Conversation tools such as shell stay on this computer.",
+                ),
                 div()
                     .h_flex()
-                    .gap_1()
+                    .flex_wrap()
+                    .justify_end()
+                    .child(surfaces::segmented(places, cx)),
+                cx,
+            )),
+        );
+        page = page
+            .child(
+                div()
+                    .h_flex()
+                    .items_end()
+                    .gap_3()
                     .child(
-                        Button::new(SharedString::from(format!(
-                            "environment-check-{}",
-                            host.alias
-                        )))
-                        .label(if check.is_some() {
-                            tr("Check again")
-                        } else {
-                            tr("Check")
-                        })
-                        .xsmall()
-                        .disabled(checking)
-                        .tooltip(tr("Connect now and see what the host is"))
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.check_environment(checked.clone(), window, cx)
-                            },
-                        )),
-                    )
-                    .child({
-                        let context = format!("ssh:{}", host.alias);
-                        Button::new(SharedString::from(format!(
-                            "environment-terminal-{}",
-                            host.alias
-                        )))
-                        .label(tr("Terminal"))
-                        .xsmall()
-                        .ghost()
-                        .tooltip(tr("Open a terminal on this host in the system's terminal"))
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.open_host_terminal(context.clone(), None, window, cx)
-                            },
-                        ))
-                    })
-                    .child(
-                        Button::new(SharedString::from(format!(
-                            "environment-edit-{}",
-                            host.alias
-                        )))
-                        .label(tr("Change"))
-                        .xsmall()
-                        .ghost()
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.edit_environment(Some(&editing), window, cx)
-                            },
-                        )),
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(surfaces::settings_heading(tr("SSH hosts"), cx)),
                     )
                     .child(
-                        Button::new(SharedString::from(format!(
-                            "environment-remove-{}",
-                            host.alias
-                        )))
-                        .label(tr("Remove"))
-                        .xsmall()
-                        .ghost()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.env_target = Some(removing.clone());
-                            this.layers.close(Layer::EnvironmentForm);
-                            this.layers.open(Layer::ConfirmRemoveEnvironment);
-                            cx.notify();
-                        })),
-                    )
-            };
-            page = page.child(
-                about
-                    .child(actions)
-                    .py_3()
-                    .border_b_1()
-                    .border_color(cx.theme().border),
+                        surfaces::outlined_action("environment-add", "plus", tr("Add"), cx)
+                            .tooltip(tr("Add an SSH host"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.edit_environment(None, window, cx)
+                            })),
+                    ),
+            )
+            .child(
+                surfaces::settings_note_help(
+                    tr("Servers and clusters the model may start runs on."),
+                    tr(
+                        "Servers and clusters the model may start runs on. Wisp signs \
+                        in with your SSH keys, agent and config. Check a host once \
+                        it is added: work runs on it only after a check passes.",
+                    ),
+                    cx,
+                )
+                .pb_2(),
             );
+        if view.hosts.is_empty() && !self.layers.contains(Layer::EnvironmentForm) {
+            page = page.child(surfaces::settings_note(tr("None yet."), cx));
+        }
+        let rows: Vec<_> = view
+            .hosts
+            .iter()
+            .map(|host| self.environment_row(host, view, now, cx))
+            .collect();
+        if !rows.is_empty() {
+            page = page.child(surfaces::record_group(rows, cx));
+        }
+        if self.layers.contains(Layer::EnvironmentForm) {
+            page = page.child(self.environment_form(cx));
         }
         if !view.config_aliases.is_empty() {
             let all = view.config_aliases.clone();
@@ -855,54 +877,62 @@ impl Workspace {
             for alias in &view.config_aliases {
                 let one = vec![alias.clone()];
                 found = found.child(
-                    Button::new(SharedString::from(format!("environment-import-{alias}")))
-                        .icon(glyph("plus"))
-                        .label(alias.clone())
-                        .xsmall()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            let reply = this.backend.import_ssh_hosts(one.clone());
-                            this.change_environments(reply, |_, _, _| {}, window, cx);
-                        })),
+                    surfaces::choice_chip(
+                        SharedString::from(format!("environment-import-{alias}")),
+                        false,
+                        cx,
+                    )
+                    .child(surfaces::sized_icon(
+                        "plus",
+                        surfaces::IconSize::Inline,
+                        surfaces::IconTone::Faded,
+                        cx,
+                    ))
+                    .child(alias.clone())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        let reply = this.backend.import_ssh_hosts(one.clone());
+                        this.change_environments(reply, |_, _, _| {}, window, cx);
+                    })),
                 );
             }
-            page = page.child(
-                div()
-                    .v_flex()
-                    .gap_2()
-                    .pt_5()
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .v_flex()
-                                    .w(px(540.))
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .child(tr("In your SSH config")),
-                                    )
-                                    .child(div().text_xs().text_color(muted).child(tr(
-                                        "Hosts named in ~/.ssh/config that are not added yet. \
-                                         Added this way, their address, user and key stay in \
-                                         that file.",
-                                    ))),
+            page = page
+                .child(
+                    div()
+                        .h_flex()
+                        .items_end()
+                        .gap_3()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(surfaces::settings_heading(tr("In your SSH config"), cx)),
+                        )
+                        .child(
+                            surfaces::outlined_action(
+                                "environment-import-all",
+                                "download",
+                                tr("Add all"),
+                                cx,
                             )
-                            .child(
-                                Button::new("environment-import-all")
-                                    .label(tr("Add all"))
-                                    .small()
-                                    .flex_shrink_0()
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        let reply = this.backend.import_ssh_hosts(all.clone());
-                                        this.change_environments(reply, |_, _, _| {}, window, cx);
-                                    })),
-                            ),
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    let reply = this.backend.import_ssh_hosts(all.clone());
+                                    this.change_environments(reply, |_, _, _| {}, window, cx);
+                                },
+                            )),
+                        ),
+                )
+                .child(
+                    surfaces::settings_note_help(
+                        tr("Hosts in ~/.ssh/config that are not added yet."),
+                        tr("Hosts named in ~/.ssh/config that are not added yet. \
+                            Added this way, their address, user and key stay in \
+                            that file."),
+                        cx,
                     )
-                    .child(found),
-            );
+                    .pb_2(),
+                )
+                .child(found);
         }
         page.child(self.tool_paths_card(cx))
     }

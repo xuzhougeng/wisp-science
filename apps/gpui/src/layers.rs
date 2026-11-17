@@ -21,8 +21,11 @@ pub enum Layer {
     FileChangedOnDisk,
     /// Question before the window closes over edits that are not saved.
     ConfirmCloseUnsaved,
-    /// The side panel's tabs that can be added back, under its tab row.
+    /// The side panel's strip's More menu: the tabs with no room on its
+    /// line, taking the open one away, adding one back.
     PanelTabMenu,
+    /// The rest of the Files tab's actions, under its header's More.
+    FilesMenu,
     /// Question under a run's card before its workspace is deleted.
     ConfirmCleanRun,
     /// Where the project keeps things on one SSH host, in the
@@ -51,6 +54,10 @@ pub enum Layer {
     ConfirmDelete,
     /// Confirmation on the home page before a project leaves Wisp.
     ConfirmRemoveProject,
+    /// The rarer ways to start on the home page (examples, bringing over
+    /// from the WebView, joining from another device, a sample project),
+    /// under its More button.
+    StartMenu,
     /// Command palette, drawn over everything else.
     Palette,
     /// Question before a conversation stops asking for approvals.
@@ -72,6 +79,9 @@ pub enum Layer {
     SlashMenu,
     /// The quick actions, above the composer.
     QuickMenu,
+    /// The composer's `+` menu: what can be put into the message, and the
+    /// modes that change what Wisp does.
+    PlusMenu,
     /// The dialog for a project's name, description and rules.
     ProjectSettings,
     /// Question before a sync conflict is ended, inside project settings.
@@ -95,9 +105,13 @@ pub enum Layer {
     Find,
     /// The outline of the open conversation, under its header.
     Outline,
-    /// The open conversation's actions, under the More button of its
-    /// header. Group and Move open beside it.
+    /// The open conversation's actions, under the More button at the right
+    /// end of the window's bar. Group and Move open beside it.
     ConversationMenu,
+    /// The rest of a message's actions, over the More button under it.
+    MessageMenu,
+    /// What waits for the user, under the bell in the window's bar.
+    Inbox,
     /// What can be closed from a document's tab in the centre (it, the tabs
     /// to its right, all of them), under the tab that was right-clicked.
     /// The documents themselves are not layers: Escape never closes one,
@@ -195,6 +209,9 @@ pub enum Layer {
     ConfirmDeleteModel,
     /// Sort and grouping choices under the conversation list's heading.
     SortMenu,
+    /// The rest of the conversation list's heading actions (import, the
+    /// archived conversations), under its More.
+    ListMenu,
     /// Select mode: sidebar rows are picked instead of opened.
     SelectMode,
     /// Groups the picked conversations can be moved to.
@@ -302,7 +319,8 @@ pub enum Layer {
 
 impl Layer {
     /// Menus that open above the composer; only one shows at a time.
-    pub const COMPOSER_MENUS: [Layer; 8] = [
+    pub const COMPOSER_MENUS: [Layer; 9] = [
+        Layer::PlusMenu,
         Layer::EffortMenu,
         Layer::ModelMenu,
         Layer::RunsOnMenu,
@@ -323,8 +341,9 @@ impl Layer {
     ];
     /// Small surfaces of the sidebar's conversation list, one at a time.
     /// Select mode is not one of them: it is a mode they can open inside.
-    pub const SIDEBAR: [Layer; 6] = [
+    pub const SIDEBAR: [Layer; 7] = [
         Layer::SortMenu,
+        Layer::ListMenu,
         Layer::BatchGroupMenu,
         Layer::ConfirmBatchDelete,
         Layer::FolderName,
@@ -339,6 +358,7 @@ impl Layer {
         match self {
             Layer::FilePreview
             | Layer::PanelTabMenu
+            | Layer::FilesMenu
             | Layer::ConfirmCleanRun
             | Layer::HostStorageForm
             | Layer::RemotePreview
@@ -1345,6 +1365,58 @@ mod tests {
         stack.open(Layer::HookForm);
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::HookForm));
+    }
+
+    #[test]
+    fn the_files_menu_closes_before_the_panel_and_with_it() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::FilesMenu);
+        assert_eq!(stack.dismiss_top(), Some(Layer::FilesMenu));
+        assert!(stack.contains(Layer::FilesPanel));
+        stack.open(Layer::FilesMenu);
+        assert!(stack.close(Layer::FilesPanel));
+        assert!(!stack.contains(Layer::FilesMenu));
+    }
+
+    #[test]
+    fn what_waits_closes_on_one_escape_and_leaves_what_is_under_it() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::Inbox);
+        assert_eq!(stack.dismiss_top(), Some(Layer::Inbox));
+        assert_eq!(stack.dismiss_top(), None);
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::Inbox);
+        assert_eq!(stack.dismiss_top(), Some(Layer::Inbox));
+        assert!(stack.contains(Layer::FilesPanel));
+    }
+
+    #[test]
+    fn a_messages_menu_closes_on_one_escape_and_only_itself() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::MessageMenu);
+        assert_eq!(stack.dismiss_top(), Some(Layer::MessageMenu));
+        assert_eq!(stack.dismiss_top(), None);
+        // Over the side panel, it closes first and leaves the panel open.
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::MessageMenu);
+        assert_eq!(stack.dismiss_top(), Some(Layer::MessageMenu));
+        assert!(stack.contains(Layer::FilesPanel));
+    }
+
+    #[test]
+    fn the_home_pages_start_menu_closes_on_one_escape_and_only_itself() {
+        // Escape right after it opens closes it.
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::StartMenu);
+        assert_eq!(stack.dismiss_top(), Some(Layer::StartMenu));
+        assert_eq!(stack.dismiss_top(), None);
+        // A layer opened over it closes first and leaves it open.
+        stack.open(Layer::StartMenu);
+        stack.open(Layer::Palette);
+        assert_eq!(stack.dismiss_top(), Some(Layer::Palette));
+        assert!(stack.contains(Layer::StartMenu));
+        assert_eq!(stack.dismiss_top(), Some(Layer::StartMenu));
     }
 
     #[test]

@@ -79,14 +79,7 @@ impl Workspace {
                         .py_1()
                         .border_b_1()
                         .border_color(border)
-                        .child(
-                            div()
-                                .w(px(130.))
-                                .flex_shrink_0()
-                                .text_sm()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(label),
-                        )
+                        .child(div().w(px(130.)).flex_shrink_0().text_sm().child(label))
                         .child(div().flex_1().min_w_0().text_sm().child(value));
                     if let Some(section) = section {
                         row = row.child(
@@ -104,13 +97,7 @@ impl Workspace {
                     }
                     card = card.child(row);
                 }
-                card = card.child(
-                    div()
-                        .pt_3()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(tr("Tools on this computer")),
-                );
+                card = card.child(div().pt_3().text_sm().child(tr("Tools on this computer")));
                 for tool in &found.tools {
                     card = card.child(
                         div()

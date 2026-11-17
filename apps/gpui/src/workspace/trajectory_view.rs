@@ -98,7 +98,6 @@ impl Workspace {
                             .border_b_1()
                             .border_color(border)
                             .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
                             .child(trajectory::turn_heading(turn, &zone)),
                     );
                     for (cell_at, cell) in turn.cells.iter().enumerate() {
@@ -132,7 +131,7 @@ impl Workspace {
                     .border_1()
                     .border_color(cx.theme().border)
                     .child(div().text_xs().text_color(muted).child(label))
-                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(value)),
+                    .child(div().text_sm().child(value)),
             );
         }
         row
@@ -188,7 +187,6 @@ impl Workspace {
                     .flex_shrink_0()
                     .text_xs()
                     .pt_0p5()
-                    .font_weight(FontWeight::MEDIUM)
                     .text_color(label_color)
                     .child(step.label),
             )
