@@ -229,6 +229,32 @@ mod tests {
         }
     }
 
+    /// "More actions" is three horizontal dots, filled, a little heavier
+    /// than a hairline so they weigh as much as the stroke icons beside
+    /// them; the close cross is inset so it is optically their size.
+    #[test]
+    fn more_lies_flat_and_close_is_inset() {
+        let file = |name: &str| {
+            let (_, bytes) = ICONS
+                .iter()
+                .find(|(path, _)| *path == format!("icons/{name}.svg"))
+                .expect(name);
+            std::str::from_utf8(bytes).unwrap().to_owned()
+        };
+        let more = file("more");
+        let circles: Vec<&str> = more.split("<circle").skip(1).collect();
+        assert_eq!(circles.len(), 3);
+        for (circle, cx) in circles.iter().zip(["5", "12", "19"]) {
+            assert!(circle.contains(&format!("cx=\"{cx}\"")), "{circle}");
+            assert!(circle.contains("cy=\"12\""), "the dots share one line");
+            assert!(circle.contains("r=\"1.25\""));
+            assert!(circle.contains("fill=\"currentColor\" stroke=\"none\""));
+        }
+        let close = file("close");
+        assert!(close.contains("M17 7 7 17") && close.contains("m7 7 10 10"));
+        assert!(!close.contains("M18 6"));
+    }
+
     /// While the WebView sources exist, both frontends draw the same icons.
     #[test]
     fn icons_match_the_shared_webview_set() {

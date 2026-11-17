@@ -195,7 +195,8 @@ names and never a colour of their own.
 - Below it one centred column, at most 880 px wide: the greeting (Display),
   the search field (white, a line, `radius`), then the ways to start (New
   project filled; Open folder and Import outlined, with icons), on one line
-  that does not wrap. At its right end "More ways to start" opens a menu
+  that does not wrap. At its right end "More ways to start" (a chevron:
+  the rest of these, not more actions) opens a menu
   (`Layer::StartMenu`, closed by Escape) of the rarer ways, each an icon
   and a word: Example conversations, Bring over from WebView, Join from
   another device, Sample project.
@@ -315,7 +316,15 @@ names and never a colour of their own.
   host, its output) is what the row opens to. Thoughts (`brain`), a review kept
   with the conversation (`review`, its outcome as a stamp; a click shows the
   report) and a branch brought back (`branch`) are record rows too.
-- Wisp's answers are body text on the paper. Questions the model asked,
+- Wisp's answers are body text on the paper, in the UI face at Regular
+  with its Chinese face named outright (`surfaces::body_face`; left to the
+  system the Chinese came out a step heavier). The answer a turn delivers
+  through `attempt_completion` is Wisp's answer like any other
+  (`present::is_answer`, `present::as_answer`): drawn as body text with the
+  entry's actions and what the turn cost, and taken as the answer by copy,
+  quote, favourites, find, the outline, share and export. A completion
+  that failed or still runs stays a record row; an answer with no text
+  draws nothing. Questions the model asked,
   plans to approve, the working plan and the cards of work handed to other
   agents stay cards in the column; the compaction line stays a line.
 - A conversation that cannot be written to has no message box: one bar
@@ -379,10 +388,14 @@ names and never a colour of their own.
     open tab is a white chip with a hairline, its icon and name in ink, Runs
     with the count still going; the others are faded icon buttons with
     their name as tooltip. They come in the panel's order as far as the
-    width allows (`panel::strip`, measured); the rest go into More at the
-    strip's right, which also holds Remove this tab and the tabs that can be
-    added back, each an icon and a word (`Layer::PanelTabMenu`). The close
-    button ends the strip.
+    width allows (`panel::strip`, measured); the rest go under a chevron
+    (`chevron-down`, "More tabs") at the strip's right, which also holds
+    Remove this tab and the tabs that can be added back, each an icon and a
+    word (`Layer::PanelTabMenu`). The strip has no close cross: the bar's
+    side-panel toggle and Escape close the panel. Its last button stands
+    `surfaces::RIGHT_INSET` (12 px) from the window's edge, as the bar's
+    last does, so the two sit on one vertical line (on macOS and Linux; on
+    Windows the bar ends at the system's buttons).
   - **Header** (`panel_header`): a tab with actions over its whole list,
     or a group in it with its own (Files and a host's folders, a file's
     preview, Artifacts, Highlights, Memos, Memory's habits and notes, the
@@ -627,11 +640,24 @@ names and never a colour of their own.
   under the pointer or when chosen, teal while a mode is on. Status colours
   are the stamp's, and the danger colour a delete's. `surfaces::sized_icon`
   draws one; an icon in a faded state turns to ink in an `ICON_HOVER` group.
+- **More and the rest** (spec §9.3): `more`, three horizontal dots, is
+  "more actions on this thing"; "the rest of these" (a strip's or a
+  toolbar's overflow, the start menu) is `chevron-down`. Two adjacent
+  controls never share an icon with different meanings, and a panel a
+  toggle closes has no cross of its own. `close` is inset (7 to 17) so it
+  is optically the size of its neighbours.
 - **Icon buttons** (`surfaces::icon_action`): a toolbar-size icon in a
   28 px square (more than the 26 a pointer needs), with a tooltip its
   signature requires. An icon and a word (`surfaces::labelled_action`) is
   for navigation and actions with consequences. The rest of the app moves
   onto these in later steps; the older `icon_button` stays until then.
+- **Scrolling**: a column, rail, list, menu or dialog body whose content
+  can be taller than its space scrolls under a stable id rather than being
+  cut. A menu or list under a button is never taller than the window has
+  room for (`surfaces::menu_room`; a message's menu, opened anywhere in
+  the transcript, half the window). The conversation menu is the one
+  exception for now: its Group and Move choices open beside it, and a
+  scrolling menu would clip them.
 - **Escape**: every dismissible layer joins the window's stack in
   `apps/gpui/src/layers.rs`.
 

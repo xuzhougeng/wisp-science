@@ -494,7 +494,8 @@ impl Server {
         let model = match config.model.take() {
             Some(model) => desktop::ModelState::environment(model),
             None => desktop::ModelState::saved(&store, secrets.as_ref()).await,
-        };
+        }
+        .with_magpie(config.magpie.clone().map(config::ModelConfig::magpie));
         let (to_correct, corrections_asked) = tokio::sync::mpsc::unbounded_channel();
         let server = Self(Arc::new(Inner {
             config,
@@ -1936,7 +1937,7 @@ impl Server {
         // Only while the turn runs: one that ended has nothing to retry.
         let stream_recovery = live.recovery.clone().filter(|_| live.running);
         let snapshot = dto::Snapshot {
-            magpie: None,
+            magpie: self.0.model.read().unwrap().magpie_info(),
             schema: dto::SCHEMA.into(),
             epoch: self.0.epoch.clone(),
             sequence: self.0.sequence.fetch_add(1, Ordering::Relaxed),

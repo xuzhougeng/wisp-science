@@ -113,14 +113,17 @@ impl Workspace {
         overflow: &[PanelTab],
         missing: &[PanelTab],
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
         let line = cx.theme().border;
         let rule = move || div().h(px(1.)).mx_2().my_1().flex_shrink_0().bg(line);
         let mut menu = div()
+            .id("panel-tab-menu")
             .absolute()
             .top(px(surfaces::ICON_BUTTON + 4.))
             .right_0()
             .w(px(220.))
+            .max_h(surfaces::menu_room(None, false))
+            .overflow_y_scroll()
             .v_flex()
             .p_1()
             .occlude()
@@ -659,9 +662,10 @@ impl Workspace {
     /// The row of tabs at the top of the side panel.
     /// The side panel's tab strip, on one line: the open tab a chip of its
     /// icon and name, the others icon buttons named by their tooltip, in
-    /// the panel's order as far as the width allows; then More (the tabs
-    /// with no room, taking the open one away, adding one back) and the
-    /// close button.
+    /// the panel's order as far as the width allows; then the rest (the
+    /// tabs with no room, taking the open one away, adding one back), its
+    /// chevron the strip's last button. The bar's side-panel toggle and
+    /// Escape close the panel; the strip has no close cross of its own.
     pub(super) fn panel_tabs(&self, cx: &mut Context<Self>) -> Div {
         let active = self
             .state
@@ -699,7 +703,8 @@ impl Workspace {
         let mut more = div().relative().flex_none().child(
             surfaces::icon_action(
                 "panel-more",
-                "more",
+                // The rest of the tabs, not more actions (`more`).
+                "chevron-down",
                 tr("More tabs"),
                 if open {
                     surfaces::IconTone::Ink
@@ -744,7 +749,7 @@ impl Workspace {
             .items_center()
             .gap_1()
             .pl_1p5()
-            .pr_2()
+            .pr(px(surfaces::RIGHT_INSET))
             .h(px(surfaces::PANEL_HEADER_HEIGHT))
             .flex_shrink_0()
             .border_b_1()
@@ -752,16 +757,6 @@ impl Workspace {
             .child(measure)
             .child(tabs)
             .child(more)
-            .child(
-                surfaces::icon_action(
-                    "panel-close",
-                    "close",
-                    tr("Close the panel"),
-                    surfaces::IconTone::Faded,
-                    cx,
-                )
-                .on_click(cx.listener(|this, _, window, cx| this.toggle_files(window, cx))),
-            )
     }
 
     /// Runs this conversation started: status, and their output on demand.

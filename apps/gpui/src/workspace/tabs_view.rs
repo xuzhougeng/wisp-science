@@ -339,7 +339,7 @@ impl Workspace {
             .top(px(surfaces::ICON_BUTTON + 6.))
             .right_0()
             .w(px(360.))
-            .max_h(px(420.))
+            .max_h(surfaces::menu_room(Some(420.), false))
             .overflow_y_scroll()
             .v_flex()
             .p_2()

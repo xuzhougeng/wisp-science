@@ -48,6 +48,14 @@ pub(crate) fn markdown(title: &str, project: &str, rows: &[Item]) -> String {
     };
     let mut out = format!("# {title}\n\nProject: {project}\n");
     for row in rows {
+        // A turn's answer delivered through `attempt_completion` reads as
+        // Wisp's answer, not as a tool call.
+        if row.is_completion_answer() {
+            out.push_str("\n## Wisp\n\n");
+            out.push_str(row.text.trim());
+            out.push('\n');
+            continue;
+        }
         match row.role.as_str() {
             "user" => {
                 out.push_str("\n## You\n\n");
@@ -93,10 +101,17 @@ pub(crate) fn markdown(title: &str, project: &str, rows: &[Item]) -> String {
 /// text, oldest first, without the tools between them.
 pub(crate) fn share_rows(rows: &[Item]) -> Vec<ShareRow> {
     rows.iter()
-        .filter(|row| matches!(row.role.as_str(), "user" | "assistant"))
+        .filter(|row| {
+            matches!(row.role.as_str(), "user" | "assistant") || row.is_completion_answer()
+        })
         .filter(|row| !row.text.trim().is_empty())
         .map(|row| ShareRow {
-            role: row.role.clone(),
+            // The answer a turn delivered through its completion is Wisp's.
+            role: if row.is_completion_answer() {
+                "assistant".to_owned()
+            } else {
+                row.role.clone()
+            },
             text: row.text.trim().to_owned(),
         })
         .collect()
@@ -106,6 +121,27 @@ pub(crate) fn share_rows(rows: &[Item]) -> Vec<ShareRow> {
 mod tests {
     use super::*;
     use crate::runtime::item;
+
+    #[test]
+    fn a_completions_answer_is_wisps_answer_in_the_document_and_the_page() {
+        let mut done = item("tool", "| a | b |\n|---|---|\n| 1 | 2 |");
+        done.tool_name = Some("attempt_completion".into());
+        done.status = Some("complete".into());
+        let mut failed = item(
+            "tool",
+            "attempt_completion error: 'result' must contain text",
+        );
+        failed.tool_name = Some("attempt_completion".into());
+        failed.status = Some("complete".into());
+        let rows = [item("user", "Count them"), done, failed];
+        let page = share_rows(&rows);
+        assert_eq!(page.len(), 2);
+        assert_eq!(page[1].role, "assistant");
+        assert!(page[1].text.starts_with("| a | b |"));
+        let document = markdown("t", "p", &rows);
+        assert!(document.contains("## Wisp\n\n| a | b |"));
+        assert!(document.contains("**Tool `attempt_completion`"));
+    }
 
     #[test]
     fn a_shared_page_has_what_was_said_and_no_tools() {

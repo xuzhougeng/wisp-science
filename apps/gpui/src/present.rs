@@ -58,6 +58,35 @@ pub fn title_line(text: &str) -> String {
     out.trim().to_owned()
 }
 
+/// Whether a row is an answer the user reads: Wisp's text, or a turn's
+/// answer delivered through `attempt_completion` that came back with text.
+/// A completion that failed or still runs, and every other tool, is a
+/// tool row. The one place this is decided.
+pub fn is_answer(item: &Item) -> bool {
+    (item.role == "assistant" && !item.text.trim().is_empty()) || item.is_completion_answer()
+}
+
+/// The row as the transcript holds it: a completion's answer becomes
+/// Wisp's answer, so copying, quoting, favourites, find, the outline and
+/// the turn's actions all take its text as the answer's; any other row is
+/// kept as it is.
+pub fn as_answer(item: Item) -> Item {
+    if item.is_completion_answer() {
+        Item {
+            role: "assistant".into(),
+            tool_name: None,
+            input: None,
+            call_id: None,
+            status: None,
+            ok: None,
+            duration_ms: None,
+            ..item
+        }
+    } else {
+        item
+    }
+}
+
 pub fn heading(item: &Item) -> String {
     item.tool_name
         .clone()
@@ -798,6 +827,48 @@ mod tests {
             session_mark(&row("idle", false), true).map(|mark| mark.0),
             Some("pin")
         );
+    }
+
+    #[test]
+    fn a_completions_answer_is_the_answer_and_anything_else_a_tool() {
+        let completion = |text: &str, ok: Option<bool>, status: &str| {
+            item(json!({
+                "tool_name": "attempt_completion", "text": text, "ok": ok,
+                "status": status
+            }))
+        };
+        // Came back with text: the answer, drawn as Wisp's.
+        let done = completion("| a | b |", None, "complete");
+        assert!(is_answer(&done));
+        let shown = as_answer(done);
+        assert_eq!(shown.role, "assistant");
+        assert_eq!(shown.text, "| a | b |");
+        assert_eq!(shown.tool_name, None);
+        assert!(is_answer(&completion("Done.", Some(true), "complete")));
+        // Failed, refused or still running: a tool row.
+        for row in [
+            completion("Done.", Some(false), "complete"),
+            completion(
+                "attempt_completion error: 'result' must contain text",
+                None,
+                "complete",
+            ),
+            completion("", None, "running"),
+            completion("", None, "complete"),
+        ] {
+            assert!(!is_answer(&row), "{row:?}");
+            assert_eq!(as_answer(row).role, "tool");
+        }
+        // Other tools stay tools; Wisp's text is an answer, an empty one not.
+        assert!(!is_answer(&item(
+            json!({"tool_name": "shell", "text": "ok", "ok": true})
+        )));
+        assert!(is_answer(&item(
+            json!({"role": "assistant", "text": "Yes."})
+        )));
+        assert!(!is_answer(&item(
+            json!({"role": "assistant", "text": "  "})
+        )));
     }
 
     #[test]

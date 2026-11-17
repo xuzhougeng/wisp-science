@@ -271,9 +271,12 @@ pub fn turn_of(rows: &[Item], index: usize) -> Option<TurnRef> {
 }
 
 /// The row whose actions stay shown: the latest one that is a message, not
-/// the line saying the conversation was compacted after it.
+/// the line saying the conversation was compacted after it, nor an answer
+/// with no text (it draws nothing).
 pub fn latest_message(rows: &[Item]) -> Option<usize> {
-    rows.iter().rposition(|row| row.role != "compaction")
+    rows.iter().rposition(|row| {
+        row.role != "compaction" && !(row.role == "assistant" && row.text.trim().is_empty())
+    })
 }
 
 pub fn awaiting_answer(rows: &[Item], index: usize, running: bool) -> bool {
@@ -705,6 +708,13 @@ mod tests {
         assert_eq!(latest_message(&rows[..2]), Some(1));
         assert_eq!(latest_message(&rows[2..]), None);
         assert_eq!(latest_message(&[]), None);
+        // Nor is an empty answer after it, which draws nothing.
+        let trailing = [
+            rows[0].clone(),
+            rows[1].clone(),
+            item("assistant", None, " ", None),
+        ];
+        assert_eq!(latest_message(&trailing), Some(1));
         // The turn a compaction line stands after is still the last one.
         assert_eq!(turn_of(&rows, 2).unwrap().from_end, 0);
         assert_eq!(turn_of(&rows, 2).unwrap().text, "Align these");

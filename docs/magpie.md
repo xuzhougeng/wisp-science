@@ -24,6 +24,12 @@ their context limits use one consistent model. Runtime session labels show
 `Magpie · <model>`. To disconnect, run `magpie wisp-science default` once and
 restart the application. A newly launched CLI process also picks up the change.
 
+The GPUI desktop reads the same file at startup: its built-in conversations,
+side calls and sub-agents run on the connection, ahead of saved models and of
+`WISP_*` variables; the model menu offers only `Magpie · <model>`, and
+Settings › Models keeps your models editable with a line saying they apply
+again after you disconnect and restart.
+
 接入、切换模型或断开后都需要重启 Wisp Science；原有个人模型和密钥会保留。
 
 ## File and scope

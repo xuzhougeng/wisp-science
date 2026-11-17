@@ -619,11 +619,14 @@ impl Workspace {
             .map(|project| project.name.clone())
             .unwrap_or_default();
 
+        // The rail scrolls when it runs past a short window.
         let side = div()
+            .id("journey-rail")
             .v_flex()
             .w(px(260.))
             .flex_shrink_0()
             .h_full()
+            .overflow_y_scroll()
             .p_2()
             .gap_1()
             .bg(cx.theme().sidebar)

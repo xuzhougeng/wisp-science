@@ -562,6 +562,12 @@ pub const ZH: &[(&str, &str)] = &[
     ("What Wisp can draw on in this project, and the tools it found on this computer.", "Wisp 在这个项目中可以利用的资源，以及它在这台电脑上找到的工具。"),
     ("Looking…", "正在查看…"),
     ("Tools on this computer", "这台电脑上的工具"),
+    ("Open its settings", "打开它的设置"),
+    (
+        "Magpie is connected: conversations run on {}. These models apply again after you \
+         disconnect it and restart Wisp.",
+        "Magpie 已连接：会话都在 {} 上运行。断开它并重启 Wisp 后，这些模型重新生效。",
+    ),
     ("Close", "关闭"),
     // Highlights and favorites.
     ("What you saved from this conversation. Everything you saved, from every project, is in Favorites.", "你从这个会话中收藏的内容。所有项目中收藏的全部内容都在“收藏”里。"),
@@ -644,7 +650,6 @@ pub const ZH: &[(&str, &str)] = &[
     ("Show it in the conversation", "在会话中显示"),
     ("… the rest is in the conversation", "… 其余内容在会话中"),
     ("Dismiss", "移除"),
-    ("Close the panel", "关闭面板"),
     ("Take this tab away", "移除这个标签页"),
     ("Add a tab", "添加标签页"),
     ("Clean up", "清理"),

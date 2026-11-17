@@ -1867,7 +1867,7 @@ impl Workspace {
 
     /// The rest of what can be done in the folder shown, under the Files
     /// header's More button: each an icon and a word.
-    fn files_menu(&self, cx: &mut Context<Self>) -> Div {
+    fn files_menu(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         type Run = fn(&mut Workspace, &mut Window, &mut Context<Workspace>);
         let item = |id: &'static str,
                     icon_name: &str,
@@ -1883,10 +1883,13 @@ impl Workspace {
             ))
         };
         div()
+            .id("files-menu")
             .absolute()
             .top(px(surfaces::ICON_BUTTON + 4.))
             .right_0()
             .w(px(240.))
+            .max_h(surfaces::menu_room(None, false))
+            .overflow_y_scroll()
             .v_flex()
             .p_1()
             .occlude()

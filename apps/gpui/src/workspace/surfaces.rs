@@ -88,6 +88,27 @@ fn fact_face() -> Font {
 /// have: each system's Chinese UI face, at the regular weight.
 const FACT_FALLBACKS: [&str; 3] = ["PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC"];
 
+/// The face of body text in the transcript (Wisp's answers, a question
+/// too long to be a title): the UI's face at the regular weight, its
+/// Chinese the UI's Chinese face named outright. Left to the system, the
+/// Chinese of the UI face comes out of its cascade a step heavier than
+/// the Latin beside it, so an answer read as Medium.
+pub(super) fn body_face(cx: &App) -> Font {
+    body_font(cx.theme().font_family.clone())
+}
+
+fn body_font(family: SharedString) -> Font {
+    let mut face = font(family);
+    face.weight = FontWeight::NORMAL;
+    face.fallbacks = Some(FontFallbacks::from_fonts(
+        FACT_FALLBACKS
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect(),
+    ));
+    face
+}
+
 /// A fact a machine measured, as the design's second rule says: a time, a
 /// duration, a size, a count, a path, an id, a model's name, a shortcut.
 /// The monospace face at the caption size (12 px), in faded ink. Not for a
@@ -832,7 +853,7 @@ pub(super) const QUESTION_FOLD_LINES: f32 = 3.;
 /// bubble: a short one (`present::title_question`) in the Title role, the
 /// serif at its regular weight; a longer one as body text in ink. A long one is cut
 /// to three lines while `folded`.
-pub(super) fn question(title: bool, folded: bool) -> Div {
+pub(super) fn question(title: bool, folded: bool, cx: &App) -> Div {
     // A line of the title (18 px at 1.45) or of body text (14 px at 1.5),
     // in rems.
     let line = (if title { 18. * 1.45 } else { 14. * 1.5 }) / 16.;
@@ -840,7 +861,9 @@ pub(super) fn question(title: bool, folded: bool) -> Div {
         .when(title, |question| {
             question.font(serif()).text_lg().line_height(relative(1.45))
         })
-        .when(!title, |question| question.line_height(relative(1.5)))
+        .when(!title, |question| {
+            question.font(body_face(cx)).line_height(relative(1.5))
+        })
         .when(folded, |question| {
             question
                 .max_h(rems(line * QUESTION_FOLD_LINES))
@@ -939,6 +962,13 @@ const TRAFFIC_LIGHTS_INSET: f32 = 84.;
 /// full screen).
 const BAR_INSET: f32 = 12.;
 
+/// How far the last icon button of the window's bar, and of the side
+/// panel's tab strip under it, stands from the window's right edge, so the
+/// two sit on one vertical line (the side panel's content is inset as
+/// much, `px_3`). On Windows the bar ends at the window's own buttons
+/// instead.
+pub(super) const RIGHT_INSET: f32 = 12.;
+
 /// How a window is opened: on macOS and Windows with a transparent title
 /// bar so the page draws its own (`window_bar`), on Linux with the
 /// system's. The title is not drawn in the bar but still names the window
@@ -986,7 +1016,7 @@ pub(super) fn window_bar(
                 .min_w_0()
                 .h_full()
                 .items_center()
-                .pr_3()
+                .pr(px(RIGHT_INSET))
                 .child(content)
         });
         // Windows: the top edge of a window that is not maximized resizes
@@ -1021,13 +1051,51 @@ pub(super) fn window_bar(
             .flex_shrink_0()
             .items_center()
             .h(px(TITLE_BAR_HEIGHT))
-            .px_4()
+            .pl_4()
+            .pr(px(RIGHT_INSET))
             .bg(cx.theme().sidebar)
             .border_b_1()
             .border_color(theme.sidebar_border)
             .child(content)
             .into_any_element(),
     )
+}
+
+thread_local! {
+    /// The height of the window being drawn, noted as its draw starts
+    /// (`note_window_height`); every window is drawn on this thread, one at
+    /// a time, so a menu reads the height of its own.
+    static WINDOW_HEIGHT: std::cell::Cell<f32> = const { std::cell::Cell::new(800.) };
+}
+
+/// What the window's bar, a menu's anchor and the composer under an
+/// upward menu leave a menu of the window's height, with a margin.
+const MENU_RESERVE: f32 = 150.;
+
+/// However short the window, a menu shows this much and scrolls the rest.
+const MENU_LEAST: f32 = 120.;
+
+/// Notes the height of the window about to be drawn, for `menu_room`.
+pub(super) fn note_window_height(height: f32) {
+    WINDOW_HEIGHT.with(|cell| cell.set(height));
+}
+
+/// How tall a menu, a popover or a list under a button may be: `cap` (or
+/// no cap), and never more than the window has room for, so in a short
+/// window it scrolls instead of running off the window. A menu opened
+/// from a row in the transcript, upwards or downwards, has half.
+pub(super) fn menu_room(cap: Option<f32>, half: bool) -> Pixels {
+    px(room_in(WINDOW_HEIGHT.with(|cell| cell.get()), cap, half))
+}
+
+fn room_in(height: f32, cap: Option<f32>, half: bool) -> f32 {
+    let room = if half {
+        height / 2. - TITLE_BAR_HEIGHT
+    } else {
+        height - TITLE_BAR_HEIGHT - MENU_RESERVE
+    };
+    let room = room.max(MENU_LEAST);
+    cap.map_or(room, |cap| room.min(cap))
 }
 
 /// A whole window: its bar (`window_bar`) over the page, which takes the
@@ -2802,6 +2870,163 @@ mod tests {
         assert!(!SERIF_FALLBACKS.contains(&"SimSun"));
     }
 
+    /// Every column, rail, list, menu and dialog body whose content can be
+    /// taller than its space scrolls under a stable id, instead of being
+    /// cut. Each entry is the file, the id, and how it scrolls: `scroll`
+    /// for `.overflow_y_scroll()` after the id, `page` for `page_scroll`,
+    /// `menu` for a menu as tall as the window has room for.
+    #[test]
+    fn what_can_outgrow_its_space_scrolls() {
+        let files = sources();
+        let file = |name: &str| {
+            files
+                .iter()
+                .find(|(path, _)| path.ends_with(name))
+                .map(|(_, text)| text.split_whitespace().collect::<String>())
+                .unwrap_or_else(|| panic!("no {name}"))
+        };
+        let scrolls = [
+            // Rails of the full pages.
+            ("workspace/papers_view.rs", "\"papers-side\"", "scroll"),
+            ("workspace/journey_view.rs", "\"journey-rail\"", "scroll"),
+            ("workspace/calendar_view.rs", "\"calendar-rail\"", "scroll"),
+            (
+                "workspace/favorites_view.rs",
+                "\"favorites-list\"",
+                "scroll",
+            ),
+            ("workspace/settings_view.rs", "\"settings-nav\"", "scroll"),
+            // The pages' content, headed by `page_head` or beside a rail.
+            ("workspace/mandates_view.rs", "\"mandates-body\"", "page"),
+            ("workspace/schedules_view.rs", "\"schedules-body\"", "page"),
+            (
+                "workspace/favorites_view.rs",
+                "\"favorite-detail\"",
+                "scroll",
+            ),
+            // The sidebar's conversations.
+            ("workspace/organise_view.rs", "\"sessions\"", "scroll"),
+            // Every tab of the side panel.
+            ("workspace/panel_tabs.rs", "\"runs\"", "scroll"),
+            ("workspace/hosts_view.rs", "\"hosts\"", "scroll"),
+            ("workspace/panel_tabs.rs", "\"artifacts\"", "scroll"),
+            ("workspace/memos_view.rs", "\"memos\"", "scroll"),
+            ("workspace/memory_view.rs", "\"memory\"", "scroll"),
+            ("workspace/favorites_view.rs", "\"highlights\"", "scroll"),
+            ("workspace/notebook_view.rs", "\"notebook-cells\"", "scroll"),
+            ("workspace/agents_view.rs", "\"agents\"", "scroll"),
+            ("workspace/aside_view.rs", "\"aside-thread\"", "scroll"),
+            ("workspace/files_panel.rs", "\"provenance-list\"", "scroll"),
+            (
+                "workspace/remote_files_view.rs",
+                "\"remote-files\"",
+                "scroll",
+            ),
+            // Lists and menus under a button.
+            ("workspace/tabs_view.rs", "\"waiting-list\"", "menu"),
+            ("workspace/shell.rs", "\"outline-menu\"", "menu"),
+            ("workspace/home_view.rs", "\"start-menu\"", "menu"),
+            ("workspace/files_panel.rs", "\"files-menu\"", "menu"),
+            ("workspace/panel_tabs.rs", "\"panel-tab-menu\"", "menu"),
+            ("workspace/centre_view.rs", "\"centre-tab-menu\"", "menu"),
+            ("workspace/shell.rs", "(\"message-menu\",index)", "menu"),
+            ("workspace/shell.rs", "\"composer-menu\"", "menu"),
+            // Its height is capped by `menu_room`; the list inside scrolls.
+            ("workspace/demos_view.rs", "\"demo-targets\"", "scroll"),
+            ("workspace/organise_view.rs", "id", "menu"),
+        ];
+        // A dialog's body scrolls unless its dialog fixes its own height.
+        assert!(
+            file("workspace/surfaces.rs").contains(".when(!fixed,|body|body.overflow_y_scroll())")
+        );
+        let mut missing = Vec::new();
+        for (name, id, how) in scrolls {
+            let text = file(name);
+            let ok = match how {
+                "page" => text.contains(&format!("page_scroll({id}")),
+                _ => text.match_indices(&format!(".id({id})")).any(|(at, _)| {
+                    let after = &text[at..text.len().min(at + 400)];
+                    after.contains(".overflow_y_scroll()")
+                        && (how != "menu" || after.contains("menu_room("))
+                }),
+            };
+            if !ok {
+                missing.push(format!("{name} {id} ({how})"));
+            }
+        }
+        assert!(missing.is_empty(), "{missing:#?}");
+        // A menu is never taller than the window has room for, and keeps a
+        // little however short the window.
+        assert_eq!(
+            super::room_in(1000., None, false),
+            1000. - TITLE_BAR_HEIGHT - 150.
+        );
+        assert_eq!(super::room_in(1000., Some(420.), false), 420.);
+        assert_eq!(super::room_in(300., Some(420.), false), 120.);
+        assert_eq!(super::room_in(1000., None, true), 500. - TITLE_BAR_HEIGHT);
+    }
+
+    #[test]
+    fn the_panel_strip_ends_on_the_bars_line_with_its_overflow_and_no_close() {
+        let tabs = include_str!("panel_tabs.rs");
+        let strip = tabs
+            .split("pub(super) fn panel_tabs(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n    }\n").next())
+            .expect("the strip");
+        // The rest of the tabs is a chevron, not `more`; the bar's toggle
+        // and Escape close the panel, so it has no cross of its own.
+        assert!(strip.contains("\"chevron-down\""));
+        assert!(!strip.contains("\"more\""));
+        assert!(!strip.contains("\"close\""));
+        assert!(!strip.contains("panel-close"));
+        // Its last button and the bar's stand as far from the window's
+        // right edge.
+        assert!(strip.contains(".pr(px(surfaces::RIGHT_INSET))"));
+        let bar = include_str!("surfaces.rs")
+            .split("pub(super) fn window_bar(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .expect("the bar");
+        assert_eq!(bar.matches(".pr(px(RIGHT_INSET))").count(), 2);
+        assert!(!bar.contains(".pr_3()") && !bar.contains(".px_4()"));
+        // The start menu's rest of the ways in is a chevron too.
+        let home = include_str!("home_view.rs");
+        let start = home.split("\"home-more-start\",").nth(1).expect("start");
+        assert!(
+            start
+                .trim_start()
+                .lines()
+                .nth(1)
+                .unwrap()
+                .contains("\"chevron-down\"")
+        );
+    }
+
+    #[test]
+    fn answers_are_the_ui_face_in_regular_with_its_chinese_named() {
+        let face = super::body_font(".SystemUIFont".into());
+        assert_eq!(face.family.as_ref(), ".SystemUIFont");
+        assert_eq!(face.weight, gpui::FontWeight::NORMAL);
+        let fallbacks = face.fallbacks.expect("body text names its Chinese");
+        assert_eq!(
+            fallbacks.fallback_list(),
+            super::FACT_FALLBACKS.map(String::from)
+        );
+        // Wisp's answers and a long question are set in it.
+        let shell = include_str!("shell.rs");
+        let answer = shell
+            .split("// An answer with no text draws nothing")
+            .nth(1)
+            .expect("the answer arm");
+        assert!(answer.contains(".font(surfaces::body_face(cx))"));
+        let question = include_str!("surfaces.rs")
+            .split("pub(super) fn question(")
+            .nth(1)
+            .expect("the question");
+        assert!(question.contains("question.font(body_face(cx))"));
+    }
+
     #[test]
     fn a_fact_is_the_bundled_monospace_with_even_figures() {
         let face = super::fact_face();
@@ -3741,6 +3966,25 @@ mod tests {
             .find("\n    }\n")
             .map_or(source.len(), |end| start + end);
         Some(&source[start..end])
+    }
+
+    /// The settings' pages are more than a short window holds: the list
+    /// scrolls under the back row, the title and the search, which stay.
+    #[test]
+    fn the_settings_navigation_scrolls_under_its_head() {
+        let view = include_str!("settings_view.rs");
+        let frame = &view[view.find("fn render_settings(").unwrap()..];
+        let list = &frame[frame.find(".id(\"settings-nav\")").expect("the list")..];
+        let list = &list[..list.find(';').unwrap()];
+        for needed in [".flex_1()", ".min_h_0()", ".overflow_y_scroll()"] {
+            assert!(list.contains(needed), "{needed}");
+        }
+        // The head is added to the column before the list, not inside it.
+        let head = frame
+            .find("surfaces::input(&self.settings_search, cx)")
+            .unwrap();
+        assert!(head < frame.find(".id(\"settings-nav\")").unwrap());
+        assert!(frame.contains("let nav = nav.child(list);"));
     }
 
     #[test]

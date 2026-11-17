@@ -254,7 +254,7 @@ impl Workspace {
             .top(px(30.))
             .right_0()
             .w(px(280.))
-            .max_h(px(320.))
+            .max_h(surfaces::menu_room(Some(320.), false))
             .v_flex()
             .p_1()
             .occlude()

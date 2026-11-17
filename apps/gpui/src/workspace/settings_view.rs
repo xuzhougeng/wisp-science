@@ -86,7 +86,7 @@ impl SettingsForm {
     pub(super) fn configured(&self) -> bool {
         self.current
             .as_ref()
-            .is_none_or(|current| current.source != ModelSource::None)
+            .is_none_or(|current| current.source != ModelSource::None || current.magpie.is_some())
     }
 
     pub(super) fn current(&self) -> Option<&ModelSettings> {
@@ -444,6 +444,24 @@ impl Workspace {
         let muted = cx.theme().muted_foreground;
         let hover = cx.theme().list_hover;
         let mut list = div().v_flex().w_full();
+        // While Magpie is connected the profiles stay editable; one line
+        // says they wait for it to go.
+        if let Some(line) = form.current.as_ref().and_then(settings::magpie_line) {
+            list = list.child(
+                surfaces::bar("models-magpie", cx)
+                    .h_flex()
+                    .items_center()
+                    .gap_2()
+                    .mb_3()
+                    .child(
+                        crate::assets::icon("circle-help")
+                            .size(rems(1.))
+                            .flex_none()
+                            .text_color(cx.theme().info),
+                    )
+                    .child(div().flex_1().min_w_0().text_sm().child(line)),
+            );
+        }
         match &form.current {
             Some(current) if !form.editable() => {
                 list = list.child(
@@ -802,15 +820,24 @@ impl Workspace {
             .child(surfaces::title(tr("Settings")).px_2().pt_3().pb_1());
         let query = self.settings_search.read(cx).value().to_string();
         let found = settings::search_sections(&query);
-        let mut nav = nav.child(
+        let nav = nav.child(
             div().px_1().pb_1().child(
                 surfaces::input(&self.settings_search, cx)
                     .small()
                     .prefix(crate::assets::icon("search").text_color(muted)),
             ),
         );
+        // The back row, the title and the search stay put; the pages under
+        // them scroll, so the last ones are reachable in a short window.
+        let mut list = div()
+            .id("settings-nav")
+            .v_flex()
+            .gap_1()
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll();
         if found.is_empty() {
-            nav = nav.child(
+            list = list.child(
                 div()
                     .px_2()
                     .pt_2()
@@ -823,10 +850,10 @@ impl Workspace {
         for section in found {
             if section.group() != group {
                 group = section.group();
-                nav = nav.child(div().px_2().pt_2().text_xs().text_color(muted).child(group));
+                list = list.child(div().px_2().pt_2().text_xs().text_color(muted).child(group));
             }
             let selected = self.settings_section == section;
-            nav = nav.child(
+            list = list.child(
                 nav_row(
                     SharedString::from(format!("settings-{}", section.label())),
                     section.icon(),
@@ -841,7 +868,7 @@ impl Workspace {
             );
         }
         // Help is not a page: both rows open in the system's browser.
-        nav = nav
+        list = list
             .child(
                 div()
                     .px_2()
@@ -883,6 +910,7 @@ impl Workspace {
                 )
                 .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::links::ISSUES))),
             );
+        let nav = nav.child(list);
         let body = match self.settings_section {
             // The list on top, the chosen model's form under it, in the
             // one column.

@@ -581,7 +581,7 @@ impl Workspace {
     /// and a word; one that cannot be taken now is dimmed and inert.
     /// It opens downward from a question's corner and upward from under an
     /// answer (`down`), towards the room there is.
-    fn message_menu(&self, index: usize, down: bool, cx: &mut Context<Self>) -> Div {
+    fn message_menu(&self, index: usize, down: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         type Run = fn(&mut Workspace, usize, &mut Window, &mut Context<Workspace>);
         let item = |id: &'static str,
                     icon_name: &str,
@@ -608,7 +608,12 @@ impl Workspace {
         // A read-only conversation's messages are not edited, a branch is
         // not branched again, and a frozen one is not reviewed.
         let offered = self.offered();
+        // Opened from a row anywhere in the transcript, up or down: half
+        // the window, and the rest scrolls.
         let mut menu = div()
+            .id(("message-menu", index))
+            .max_h(surfaces::menu_room(None, true))
+            .overflow_y_scroll()
             .absolute()
             .when(down, |menu| {
                 menu.top(px(surfaces::ICON_BUTTON + 4.)).right_0()
@@ -928,6 +933,17 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        // An answer with no text (the turn went on to a tool) draws nothing
+        // at all: not even the entry's gutter, whose top inset would leave a
+        // gap in the record.
+        if self
+            .rows
+            .get(index)
+            .is_some_and(|item| item.role == "assistant" && !present::is_answer(item))
+            && !self.own_run_cards.contains_key(&index)
+        {
+            return div().into_any_element();
+        }
         let body = self.row_body(index, window, cx);
         let number = present::entry_number(&self.rows, index, self.earlier_users);
         let time = number
@@ -1069,7 +1085,7 @@ impl Workspace {
         let answer = !matches!(
             before.role.as_str(),
             "user" | "tool" | "reasoning" | "review" | "branch_merge" | "compaction"
-        ) && !before.text.is_empty();
+        ) && !before.text.trim().is_empty();
         if answer { px(4.) } else { px(28.) }
     }
 
@@ -1131,7 +1147,7 @@ impl Workspace {
                     let long = present::long_question(&text);
                     let open = self.open_tools.contains(&key);
                     message = message.child(
-                        surfaces::question(present::title_question(&text), long && !open)
+                        surfaces::question(present::title_question(&text), long && !open, cx)
                             .w_full()
                             .child(TextView::markdown(id, text, window, cx).selectable(true)),
                     );
@@ -1366,15 +1382,17 @@ impl Workspace {
                 Some(card) => self.compaction_row(index, card, window, cx),
                 None => div().into_any_element(),
             },
-            _ if item.text.is_empty() => div().into_any_element(),
+            // An answer with no text draws nothing: no blank row, no gap.
+            _ if item.text.trim().is_empty() => div().into_any_element(),
             _ => {
                 // An answer the entry goes on after (a tool call, a thought)
                 // lays its actions over its corner: a line of them would
                 // stand between the text and what follows. The entry's
                 // last answer keeps them under it.
-                let ends_entry = self
-                    .rows
-                    .get(index + 1)
+                // An empty answer after it draws nothing and does not count.
+                let ends_entry = self.rows[index + 1..]
+                    .iter()
+                    .find(|next| next.role != "assistant" || present::is_answer(next))
                     .is_none_or(|next| next.role == "user");
                 let actions = self.message_actions(index, !ends_entry, cx);
                 let actions = if ends_entry {
@@ -1390,7 +1408,9 @@ impl Workspace {
                     .gap_1()
                     .px_6()
                     .pt_2()
-                    .child(TextView::markdown(id, item.text.clone(), window, cx).selectable(true))
+                    .child(div().font(surfaces::body_face(cx)).child(
+                        TextView::markdown(id, item.text.clone(), window, cx).selectable(true),
+                    ))
                     .children(self.inline_pictures(&item.text, cx))
                     .children(self.written_pictures(index, cx))
                     .children(self.generated_section(index, cx))
@@ -1645,8 +1665,12 @@ impl Workspace {
 
     /// The card a composer menu's rows sit in, drawn just above the button
     /// that opens it.
-    pub(super) fn composer_menu(width: f32, cx: &App) -> Div {
+    pub(super) fn composer_menu(width: f32, cx: &App) -> Stateful<Div> {
+        // One composer menu is open at a time: they share the id.
         div()
+            .id("composer-menu")
+            .max_h(surfaces::menu_room(None, false))
+            .overflow_y_scroll()
             .absolute()
             .bottom(px(34.))
             .left_0()
@@ -1725,7 +1749,7 @@ impl Workspace {
             })
     }
 
-    fn effort_menu(&self, current: &str, cx: &mut Context<Self>) -> Div {
+    fn effort_menu(&self, current: &str, cx: &mut Context<Self>) -> Stateful<Div> {
         let mut menu = Self::composer_menu(190., cx);
         for (effort, label) in controls::EFFORTS {
             menu = menu.child(
@@ -1745,7 +1769,7 @@ impl Workspace {
     }
 
     /// The experts, with "none" first.
-    fn expert_menu(&self, current: &str, cx: &mut Context<Self>) -> Div {
+    fn expert_menu(&self, current: &str, cx: &mut Context<Self>) -> Stateful<Div> {
         let mut menu = Self::composer_menu(320., cx);
         let chosen = self.experts.iter().any(|expert| expert.id == current);
         menu = menu.child(
@@ -1873,7 +1897,7 @@ impl Workspace {
     }
 
     /// Wisp, then the ACP agents that could run a new conversation.
-    fn agent_menu(&self, cx: &mut Context<Self>) -> Div {
+    fn agent_menu(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let mut menu = Self::composer_menu(320., cx).child(
             Self::menu_row(
                 "agent-wisp".into(),
@@ -1912,13 +1936,16 @@ impl Workspace {
     /// The saved models, with "follow the default" first.
     fn model_menu(&self, current: &str, cx: &mut Context<Self>) -> Stateful<Div> {
         // Two lists of every model: it scrolls rather than leave the window.
-        let mut menu = Self::composer_menu(300., cx)
-            .id("model-menu")
-            .max_h(px(440.))
-            .overflow_y_scroll();
+        let mut menu = Self::composer_menu(300., cx).max_h(surfaces::menu_room(Some(440.), false));
         let Some(models) = self.settings.current() else {
             return menu;
         };
+        // While Magpie is connected it is the one model on offer, for the
+        // conversation and its sub-agents alike; the saved choices are
+        // kept for when it is gone.
+        if let Some(label) = settings::magpie_label(models) {
+            return menu.child(Self::menu_row("model-magpie".into(), label, "", true, cx));
+        }
         let default = settings::default_profile(models)
             .map(|profile| profile.name.clone())
             .unwrap_or_default();
@@ -2001,7 +2028,7 @@ impl Workspace {
 
     /// Where the conversation's work runs: the default, this computer, or
     /// one of the saved hosts.
-    fn runs_on_menu(&self, current: &str, cx: &mut Context<Self>) -> Div {
+    fn runs_on_menu(&self, current: &str, cx: &mut Context<Self>) -> Stateful<Div> {
         let mut menu = Self::composer_menu(320., cx);
         let Some(view) = &self.environments else {
             return menu;
@@ -2065,7 +2092,7 @@ impl Workspace {
             .top(px(34.))
             .right_0()
             .w(px(420.))
-            .max_h(px(420.))
+            .max_h(surfaces::menu_room(Some(420.), false))
             .overflow_y_scroll()
             .v_flex()
             .p_1()
@@ -2762,7 +2789,12 @@ impl Workspace {
     /// command, workflow or skill from the `/` list), each an icon and a
     /// word with its key at the right; then the modes that change what Wisp
     /// does, each checked while it is on.
-    fn plus_menu(&self, by_agent: bool, fast_offered: bool, cx: &mut Context<Self>) -> Div {
+    fn plus_menu(
+        &self,
+        by_agent: bool,
+        fast_offered: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         type Run = fn(&mut Workspace, &mut Window, &mut Context<Workspace>);
         let options = self.options();
         let line = cx.theme().border;

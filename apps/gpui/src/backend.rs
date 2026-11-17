@@ -67,7 +67,11 @@ impl Backend {
                 fallback,
             );
             host.get_or_try_init(|| async {
-                let config = Config::local(data, workspace).map_err(|e| format!("{e:#}"))?;
+                let mut config = Config::local(data, workspace).map_err(|e| format!("{e:#}"))?;
+                // `~/.config/wisp-science/magpie.json`, read once at startup
+                // as the WebView desktop does: while it names a connection,
+                // built-in turns and side calls run on it.
+                config.magpie = wisp_server::config::startup_magpie();
                 let server = Server::open(config).await.map_err(|e| format!("{e:#}"))?;
                 // Scheduled tasks fire while the app is open.
                 server.start_scheduler();

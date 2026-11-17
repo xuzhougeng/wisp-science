@@ -103,11 +103,14 @@ impl Workspace {
         let this_month = Month::containing(now(), &Local);
         let today = today_in(month);
 
+        // The rail scrolls when its projects run past the window.
         let mut side = div()
+            .id("calendar-rail")
             .v_flex()
             .w(px(260.))
             .flex_shrink_0()
             .h_full()
+            .overflow_y_scroll()
             .p_2()
             .gap_1()
             .bg(cx.theme().sidebar)

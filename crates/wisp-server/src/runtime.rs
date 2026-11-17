@@ -418,9 +418,17 @@ pub async fn build(
     let mut cfg = model.provider.clone().with_session_id(frame);
     let network = crate::network::load(store).await;
     crate::network::route_model(&mut cfg.proxy, &network);
-    // The conversation's own choice outranks the model's default.
-    if reasoning_effort.is_some() {
-        cfg.reasoning_effort = reasoning_effort;
+    // The conversation's own choice outranks the model's default; on a
+    // Magpie model only an effort it lists, else its default.
+    match &model.magpie_efforts {
+        Some(efforts) => {
+            cfg.reasoning_effort = wisp_llm::magpie::resolve_effort(
+                efforts,
+                reasoning_effort.as_deref().unwrap_or_default(),
+            )
+        }
+        None if reasoning_effort.is_some() => cfg.reasoning_effort = reasoning_effort,
+        None => {}
     }
     let turns = turn_settings(config, store).await;
     // One switch for everything memory: the search tool and the habits.

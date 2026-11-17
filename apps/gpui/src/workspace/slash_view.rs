@@ -443,7 +443,7 @@ impl Workspace {
     /// The list of commands, workflows and skills above the composer's `+`
     /// button while the `/` menu is open, whether opened from there or by a
     /// `/` typed in the box.
-    pub(super) fn slash_menu(&self, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn slash_menu(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if !self.layers.contains(Layer::SlashMenu) {
             return None;
         }
