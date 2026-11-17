@@ -167,7 +167,11 @@ impl Workspace {
             && self.plugin_removing.as_deref() == Some(id.as_str());
         let mut about = div().v_flex().gap_1();
         if !row.description.is_empty() {
-            about = about.child(div().text_xs().child(row.description.clone()));
+            about = about.child(super::surfaces::one_line_note(
+                SharedString::from(format!("plugin-about-{}", row.name)),
+                row.description.clone(),
+                cx,
+            ));
         }
         about = about.child(
             div()

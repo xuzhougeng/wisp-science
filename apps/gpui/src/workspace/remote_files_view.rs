@@ -6,7 +6,7 @@
 //! and nothing there is replaced. Looking keeps nothing.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
-use gpui_component::{ActiveTheme, Disableable, Sizable, StyledExt, input::Input, text::TextView};
+use gpui_component::{ActiveTheme, Disableable, Sizable, StyledExt, text::TextView};
 
 use super::{
     Workspace,
@@ -393,7 +393,11 @@ impl Workspace {
                     div()
                         .flex_1()
                         .min_h_0()
-                        .child(Input::new(&self.remote_text).disabled(true).h_full())
+                        .child(
+                            super::surfaces::input(&self.remote_text, cx)
+                                .disabled(true)
+                                .h_full(),
+                        )
                         .into_any_element()
                 }
             }

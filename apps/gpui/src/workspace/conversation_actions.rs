@@ -5,7 +5,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_dto::SessionSearchInfo;
 
@@ -426,25 +425,28 @@ impl Workspace {
             .border_color(cx.theme().border);
         if self.layers.contains(Layer::Rename) {
             return Some(
-                bar.child(div().flex_1().min_w_0().child(Input::new(&self.rename)))
-                    .child(
-                        Button::new("rename-save")
-                            .label(tr("Save title"))
-                            .small()
-                            .primary()
-                            .disabled(busy)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.save_rename(window, cx)),
-                            ),
-                    )
-                    .child(
-                        Button::new("rename-cancel")
-                            .label(tr("Cancel"))
-                            .small()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.cancel_layer(Layer::Rename, window, cx)
-                            })),
-                    ),
+                bar.child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(super::surfaces::input(&self.rename, cx)),
+                )
+                .child(
+                    Button::new("rename-save")
+                        .label(tr("Save title"))
+                        .small()
+                        .primary()
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _, window, cx| this.save_rename(window, cx))),
+                )
+                .child(
+                    Button::new("rename-cancel")
+                        .label(tr("Cancel"))
+                        .small()
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.cancel_layer(Layer::Rename, window, cx)
+                        })),
+                ),
             );
         }
         if self.layers.contains(Layer::ConfirmDelete) {

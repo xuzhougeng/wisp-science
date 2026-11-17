@@ -7,7 +7,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 
 use super::{
@@ -684,7 +683,7 @@ impl Workspace {
                 div()
                     .flex_1()
                     .min_h(px(160.))
-                    .child(Input::new(&self.memory_text).h_full()),
+                    .child(super::surfaces::input(&self.memory_text, cx).h_full()),
             )
             .child(div().text_xs().text_color(muted).child(target.hint()))
             .children(self.memory_suggested.as_deref().map(|scope| {

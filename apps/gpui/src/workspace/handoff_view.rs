@@ -7,7 +7,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 
 use super::{
@@ -197,7 +196,7 @@ impl Workspace {
         )))
         .child(label(tr("Optional instruction for the note")))
         .child(
-            Input::new(&self.handoff_fields[0])
+            super::surfaces::input(&self.handoff_fields[0], cx)
                 .small()
                 .disabled(!editable),
         );
@@ -218,7 +217,7 @@ impl Workspace {
         card.child(label(tr("Handoff note")))
             .child(
                 div().h(px(300.)).child(
-                    Input::new(&self.handoff_fields[1])
+                    super::surfaces::input(&self.handoff_fields[1], cx)
                         .h_full()
                         .disabled(!editable),
                 ),

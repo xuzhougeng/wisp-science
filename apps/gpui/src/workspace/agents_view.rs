@@ -7,7 +7,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
     text::TextView,
 };
 use wisp_server::desktop::DelegatedBatch;
@@ -181,7 +180,7 @@ impl Workspace {
                 .child(
                     div()
                         .w(px(120.))
-                        .child(Input::new(&self.budget_input).xsmall()),
+                        .child(super::surfaces::input(&self.budget_input, cx).xsmall()),
                 )
                 .child(
                     Button::new(("budget-save", id))

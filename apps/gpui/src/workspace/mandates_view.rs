@@ -12,7 +12,7 @@ use wisp_dto::MandateOverview;
 
 use super::{
     Workspace, chip,
-    shell::{error_banner, glyph, nav_row},
+    shell::error_banner,
     surfaces::{self, switch},
 };
 use crate::{
@@ -348,17 +348,45 @@ impl Workspace {
                 .text_color(muted)
                 .child(mandates::next_line(mandate, &Local)),
         );
+        // What the mandate asks of the user: a white card to act on, the
+        // request and why, and Answer at its right.
         if let Some(request) = &overview.request {
-            let mut asked = div()
+            let mut words = div()
                 .v_flex()
-                .gap_1()
-                .p_2()
-                .rounded(cx.theme().radius)
-                .bg(super::tone_color(Tone::Attention, cx).opacity(0.08))
+                .flex_1()
+                .min_w_0()
+                .gap_0p5()
                 .child(div().text_sm().child(request.what.clone()));
             if !request.why.is_empty() {
-                asked = asked.child(div().text_xs().text_color(muted).child(request.why.clone()));
+                words = words.child(div().text_xs().text_color(muted).child(request.why.clone()));
             }
+            let mut asked = super::surfaces::bar(("mandate-request", index), cx)
+                .v_flex()
+                .gap_2()
+                .child(div().h_flex().items_start().gap_3().child(words).when(
+                    self.mandate_replying.as_deref() != Some(id.as_str()),
+                    |row| {
+                        let open = id.clone();
+                        row.child(
+                            super::surfaces::outlined_action(
+                                ("mandate-answer", index),
+                                "bubble",
+                                tr("Answer"),
+                                cx,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    this.mandate_replying = Some(open.clone());
+                                    this.mandate_fields[3].update(cx, |input, cx| {
+                                        input.set_value("", window, cx);
+                                        input.focus(window, cx);
+                                    });
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                    },
+                ));
             if self.mandate_replying.as_deref() == Some(id.as_str()) {
                 let send = id.clone();
                 asked = asked.child(
@@ -374,25 +402,11 @@ impl Workspace {
                             Button::new(("mandate-send", index))
                                 .label(tr("Send"))
                                 .small()
+                                .outline()
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.send_mandate_reply(send.clone(), window, cx)
                                 })),
                         ),
-                );
-            } else {
-                let open = id.clone();
-                asked = asked.child(
-                    Button::new(("mandate-answer", index))
-                        .label(tr("Answer"))
-                        .xsmall()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.mandate_replying = Some(open.clone());
-                            this.mandate_fields[3].update(cx, |input, cx| {
-                                input.set_value("", window, cx);
-                                input.focus(window, cx);
-                            });
-                            cx.notify();
-                        })),
                 );
             }
             card = card.child(asked);
@@ -421,63 +435,99 @@ impl Workspace {
         }
         let closed = mandate.status == "done";
         let paused = mandate.status == "paused";
-        let mut actions = div().h_flex().flex_wrap().gap_1().pt_1();
-        let button = |name: &'static str, label: &'static str| {
-            Button::new((name, index)).label(tr(label)).xsmall().ghost()
+        // Its actions: run now and its conversation as icon and word, the
+        // rest icon buttons, Delete last in the danger colour.
+        let mut actions = div().h_flex().flex_wrap().items_center().gap_1().pt_1();
+        let icon = |name: &'static str, glyph_name: &str, tooltip: &'static str, on: bool| {
+            super::surfaces::icon_action(
+                (name, index),
+                glyph_name,
+                tr(tooltip),
+                if on {
+                    super::surfaces::IconTone::On
+                } else {
+                    super::surfaces::IconTone::Faded
+                },
+                cx,
+            )
         };
         if !closed {
             let run = id.clone();
-            actions = actions.child(button("mandate-run", "Run now").on_click(cx.listener(
-                move |this, _, window, cx| {
-                    let reply = this.backend.run_mandate_now(run.clone());
-                    this.change_mandates(reply, window, cx);
-                },
-            )));
+            actions = actions.child(
+                super::surfaces::outlined_action(("mandate-run", index), "play", tr("Run now"), cx)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        let reply = this.backend.run_mandate_now(run.clone());
+                        this.change_mandates(reply, window, cx);
+                    })),
+            );
+        }
+        if let Some(frame) = mandate.frame_id.clone() {
+            let project = mandate.project_id.clone();
+            actions = actions.child(
+                super::surfaces::labelled_action(
+                    ("mandate-open", index),
+                    "chat",
+                    tr("Open its conversation"),
+                    super::surfaces::IconSize::Inline,
+                    super::surfaces::IconTone::Faded,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.layers.close(Layer::Mandates);
+                    this.open_session(project.clone(), frame.clone(), window, cx);
+                })),
+            );
+        }
+        if !closed {
             let toggled = id.clone();
             actions = actions.child(
-                button("mandate-pause", if paused { "Resume" } else { "Pause" }).on_click(
-                    cx.listener(move |this, _, window, cx| {
-                        let status = if paused { "active" } else { "paused" };
-                        let reply = this
-                            .backend
-                            .set_mandate_status(toggled.clone(), status.into());
-                        this.change_mandates(reply, window, cx);
-                    }),
-                ),
+                icon(
+                    "mandate-pause",
+                    "pause",
+                    if paused { "Resume" } else { "Pause" },
+                    paused,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    let status = if paused { "active" } else { "paused" };
+                    let reply = this
+                        .backend
+                        .set_mandate_status(toggled.clone(), status.into());
+                    this.change_mandates(reply, window, cx);
+                })),
             );
         }
         let reported = id.clone();
-        actions = actions.child(button("mandate-report", "Report now").on_click(cx.listener(
-            move |this, _, window, cx| {
-                let reply = this.backend.report_mandate(reported.clone());
-                this.change_mandates(reply, window, cx);
-            },
-        )));
-        let edited = overview.clone();
-        actions = actions.child(button("mandate-edit", "Edit").on_click(cx.listener(
-            move |this, _, window, cx| this.open_mandate_form(Some(&edited), window, cx),
-        )));
-        let status_id = id.clone();
         actions = actions.child(
-            button("mandate-close", if closed { "Reopen" } else { "Close" }).on_click(cx.listener(
+            icon("mandate-report", "activity-orbit", "Report now", false).on_click(cx.listener(
                 move |this, _, window, cx| {
-                    let status = if closed { "active" } else { "done" };
-                    let reply = this
-                        .backend
-                        .set_mandate_status(status_id.clone(), status.into());
+                    let reply = this.backend.report_mandate(reported.clone());
                     this.change_mandates(reply, window, cx);
                 },
             )),
         );
-        if let Some(frame) = mandate.frame_id.clone() {
-            let project = mandate.project_id.clone();
-            actions = actions.child(button("mandate-open", "Open its conversation").on_click(
-                cx.listener(move |this, _, window, cx| {
-                    this.layers.close(Layer::Mandates);
-                    this.open_session(project.clone(), frame.clone(), window, cx);
-                }),
-            ));
-        }
+        let edited = overview.clone();
+        actions = actions.child(
+            icon("mandate-edit", "edit", "Edit", false).on_click(cx.listener(
+                move |this, _, window, cx| this.open_mandate_form(Some(&edited), window, cx),
+            )),
+        );
+        let status_id = id.clone();
+        actions = actions.child(
+            icon(
+                "mandate-close",
+                "check",
+                if closed { "Reopen" } else { "Close" },
+                closed,
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                let status = if closed { "active" } else { "done" };
+                let reply = this
+                    .backend
+                    .set_mandate_status(status_id.clone(), status.into());
+                this.change_mandates(reply, window, cx);
+            })),
+        );
+        actions = actions.child(div().flex_1());
         let asking = self.layers.contains(Layer::ConfirmDeleteMandate)
             && self.mandate_deleting.as_deref() == Some(id.as_str());
         if asking {
@@ -498,67 +548,52 @@ impl Workspace {
                 );
         } else {
             let deleting = id.clone();
-            actions = actions.child(button("mandate-delete", "Delete").on_click(cx.listener(
-                move |this, _, _, cx| {
+            actions = actions.child(
+                super::surfaces::danger_action(
+                    ("mandate-delete", index),
+                    "trash",
+                    tr("Delete"),
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
                     this.mandate_deleting = Some(deleting.clone());
                     this.layers.open(Layer::ConfirmDeleteMandate);
                     cx.notify();
-                },
-            )));
+                })),
+            );
         }
         card.child(actions)
     }
 
     pub(super) fn render_mandates(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
-        let side = div()
-            .v_flex()
-            .w(px(260.))
-            .flex_shrink_0()
-            .h_full()
-            .p_2()
-            .gap_1()
-            .bg(cx.theme().sidebar)
-            .border_r_1()
-            .border_color(cx.theme().sidebar_border)
-            .child(
-                nav_row("mandates-back", "arrow-left", tr("Back"), false, true, cx)
-                    .on_click(cx.listener(|this, _, window, cx| this.close_mandates(window, cx))),
+        // No rail: the page has nothing to list beside its mandates. Back,
+        // its name and New head the centred column.
+        let head = surfaces::page_head(
+            surfaces::icon_action(
+                "mandates-back",
+                "arrow-left",
+                tr("Back"),
+                surfaces::IconTone::Faded,
+                cx,
             )
-            .child(
-                div()
-                    .h_flex()
-                    .items_center()
-                    .gap_1()
-                    .px_2()
-                    .pt_3()
-                    .pb_1()
-                    .child(surfaces::title(tr("Research mandates")))
-                    // What the page is for, a tooltip away, not a paragraph in
-                    // the rail.
-                    .child(surfaces::help(
-                        "mandates-help",
-                        tr(
+            .on_click(cx.listener(|this, _, window, cx| this.close_mandates(window, cx))),
+            tr("Research mandates"),
+            "mandates-help",
+            tr(
                 "Standing goals a project's agent works on in rounds, in one conversation of \
                  the project, while the app is open. A mandate asks you when it needs something \
                  only you can give, and reports on a cadence; both reach the research assistant.",
-                        ),
-                        cx,
-                    )),
-            )
-            .child(
-                div().px_1().child(
-                    Button::new("mandate-new")
-                        .icon(glyph("plus"))
-                        .label(tr("New mandate"))
-                        .small()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_mandate_form(None, window, cx)
-                        })),
+            ),
+            Some(
+                surfaces::outlined_action("mandate-new", "plus", tr("New mandate"), cx).on_click(
+                    cx.listener(|this, _, window, cx| this.open_mandate_form(None, window, cx)),
                 ),
-            );
+            ),
+            cx,
+        );
         // The page's records in a centred column (`surfaces::page_column`).
-        let mut body = surfaces::page_column();
+        let mut body = surfaces::page_column().child(head);
         if let Some(error) = &self.error {
             body = body.child(error_banner(error, cx));
         }
@@ -584,7 +619,6 @@ impl Workspace {
         div()
             .h_flex()
             .size_full()
-            .child(side)
             .child(surfaces::page_scroll("mandates-body", body))
     }
 }

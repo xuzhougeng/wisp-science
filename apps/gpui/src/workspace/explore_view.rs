@@ -327,7 +327,7 @@ impl Workspace {
                                 .text_sm()
                                 .child(summary.exploration.name.clone()),
                         )
-                        .child(chip(
+                        .child(super::surfaces::status(
                             explore::status_label(&summary.exploration.status),
                             Tone::Neutral,
                             cx,

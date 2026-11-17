@@ -958,7 +958,7 @@ mod tests {
         // And the box itself is not drawn: the card stands in its place.
         let composer = method(include_str!("workspace/shell.rs"), "render_composer").unwrap();
         let card = composer.find("self.read_only_card(").expect("the card");
-        let editor = composer.find("Input::new(&self.composer)").unwrap();
+        let editor = composer.find("surfaces::input(&self.composer, cx)").unwrap();
         assert!(card < editor);
     }
 

@@ -5,7 +5,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
     text::TextView,
 };
 use serde_json::json;
@@ -418,7 +417,7 @@ impl Workspace {
                 // White, with the fields' line, like the home page's.
                 div().py_1().child(
                     surfaces::field(cx).child(
-                        Input::new(&self.search)
+                        super::surfaces::input(&self.search, cx)
                             .small()
                             .appearance(false)
                             .prefix(icon("search").text_color(muted)),
@@ -930,7 +929,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let body = self.row_body(index, window, cx);
-        let number = present::entry_number(&self.rows, index);
+        let number = present::entry_number(&self.rows, index, self.earlier_users);
         let time = number
             .and_then(|_| self.rows.get(index)?.timestamp)
             .map(|at| crate::home::clock(unix_now(), at))
@@ -1591,56 +1590,57 @@ impl Workspace {
         let refuse = id.clone();
         let feedback = id;
         let ready = !self.plan_feedback.read(cx).value().trim().is_empty();
-        card.child(Input::new(&self.plan_feedback).small()).child(
-            div()
-                .h_flex()
-                .flex_wrap()
-                .gap_2()
-                .child(
-                    Button::new(SharedString::from(format!("plan-approve-{approve}")))
-                        .icon(glyph("check"))
-                        .label(tr("Approve"))
-                        .small()
-                        .primary()
-                        .disabled(self.pending)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.answer_approval(
-                                approve.clone(),
-                                true,
-                                wisp_server::desktop::Remember::No,
-                                window,
-                                cx,
-                            )
-                        })),
-                )
-                .child(
-                    Button::new(SharedString::from(format!("plan-feedback-{feedback}")))
-                        .icon(glyph("edit"))
-                        .label(tr("Send feedback"))
-                        .small()
-                        .disabled(self.pending || !ready)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.send_plan_feedback(feedback.clone(), window, cx)
-                        })),
-                )
-                .child(
-                    Button::new(SharedString::from(format!("plan-refuse-{refuse}")))
-                        .icon(glyph("ban"))
-                        .label(tr("Turn down"))
-                        .small()
-                        .ghost()
-                        .disabled(self.pending)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.answer_approval(
-                                refuse.clone(),
-                                false,
-                                wisp_server::desktop::Remember::No,
-                                window,
-                                cx,
-                            )
-                        })),
-                ),
-        )
+        card.child(super::surfaces::input(&self.plan_feedback, cx).small())
+            .child(
+                div()
+                    .h_flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(
+                        Button::new(SharedString::from(format!("plan-approve-{approve}")))
+                            .icon(glyph("check"))
+                            .label(tr("Approve"))
+                            .small()
+                            .primary()
+                            .disabled(self.pending)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.answer_approval(
+                                    approve.clone(),
+                                    true,
+                                    wisp_server::desktop::Remember::No,
+                                    window,
+                                    cx,
+                                )
+                            })),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("plan-feedback-{feedback}")))
+                            .icon(glyph("edit"))
+                            .label(tr("Send feedback"))
+                            .small()
+                            .disabled(self.pending || !ready)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.send_plan_feedback(feedback.clone(), window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("plan-refuse-{refuse}")))
+                            .icon(glyph("ban"))
+                            .label(tr("Turn down"))
+                            .small()
+                            .ghost()
+                            .disabled(self.pending)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.answer_approval(
+                                    refuse.clone(),
+                                    false,
+                                    wisp_server::desktop::Remember::No,
+                                    window,
+                                    cx,
+                                )
+                            })),
+                    ),
+            )
     }
 
     /// The card a composer menu's rows sit in, drawn just above the button
@@ -2726,7 +2726,7 @@ impl Workspace {
                             this.send(window, cx)
                         }))
                         .child(
-                            Input::new(&self.composer)
+                            super::surfaces::input(&self.composer, cx)
                                 .appearance(false)
                                 .disabled(self.pending),
                         ),

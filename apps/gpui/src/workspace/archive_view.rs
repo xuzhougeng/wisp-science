@@ -599,30 +599,32 @@ impl Workspace {
             return part;
         }
         part = part.child(note(tr("Local materials").into()));
+        // The materials as record rows: the file, what was done with it and
+        // its clean-up faded after it, the saved copy an icon button.
+        let mut rows = Vec::new();
         for (index, file) in frozen.files.iter().enumerate() {
             let mut said = vec![FileAction::of(&file.action).label().to_owned()];
             said.extend(archive::cleanup_line(&file.cleanup_status));
-            let mut row = div().h_flex().gap_2().child(
-                div()
-                    .v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .child(div().text_sm().child(file.path.clone()))
-                    .child(note(said.join(" · "))),
-            );
+            let mut row = super::surfaces::record_row(("archive-file", index), file.path.clone())
+                .icon("doc")
+                .suffix(said.join(" · "));
             if let Some(saved) = file.snapshot_path.clone() {
-                row = row.child(
-                    Button::new(("archive-material", index))
-                        .label(tr("Open saved material"))
-                        .xsmall()
-                        .ghost()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_archive_material(saved.clone(), window, cx)
-                        })),
+                row = row.action(
+                    super::surfaces::icon_action(
+                        ("archive-material", index),
+                        "external-link",
+                        tr("Open saved material"),
+                        super::surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_archive_material(saved.clone(), window, cx)
+                    })),
                 );
             }
-            part = part.child(row);
+            rows.push(row);
         }
+        part = part.child(super::surfaces::record_group(rows, cx));
         part
     }
 
@@ -630,6 +632,7 @@ impl Workspace {
     /// open was changed.
     fn archive_redraft(busy: bool, cx: &mut Context<Self>) -> Button {
         Button::new("archive-redraft")
+            .icon(super::shell::glyph("square-pen"))
             .label(tr("Draft again"))
             .small()
             .ghost()

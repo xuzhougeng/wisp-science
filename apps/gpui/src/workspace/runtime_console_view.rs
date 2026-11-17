@@ -6,7 +6,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::RuntimeLanguage;
 
@@ -306,7 +305,7 @@ impl Workspace {
                     div()
                         .flex_1()
                         .h(px(64.))
-                        .child(Input::new(&self.console_input).h_full()),
+                        .child(super::surfaces::input(&self.console_input, cx).h_full()),
                 )
                 .child(
                     Button::new("console-run")

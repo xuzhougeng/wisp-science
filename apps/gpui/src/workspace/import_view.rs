@@ -11,7 +11,7 @@ use gpui_component::{
 use wisp_server::desktop::{ExternalConversation, ImportOutcome};
 
 use super::{
-    Workspace, chip,
+    Workspace,
     shell::error_banner,
     surfaces::{self, DialogWidth},
 };
@@ -171,7 +171,11 @@ impl Workspace {
                             .py_2()
                             .border_b_1()
                             .border_color(border)
-                            .child(chip(external.source.to_string(), Tone::Neutral, cx))
+                            .child(super::surfaces::status(
+                                external.source.to_string(),
+                                Tone::Neutral,
+                                cx,
+                            ))
                             .child(
                                 div()
                                     .v_flex()

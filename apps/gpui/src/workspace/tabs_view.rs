@@ -248,6 +248,8 @@ impl Workspace {
         let mut place = div().relative().flex_none().mr_3().child(
             div()
                 .id("waiting-bell")
+                // In the window's bar: on Windows, not the caption to drag.
+                .occlude()
                 .h_flex()
                 .items_center()
                 .gap_1()
@@ -311,7 +313,7 @@ impl Workspace {
                 let (project, session) = (row.project_id.clone(), row.id.clone());
                 let mut record = surfaces::record_row(
                     SharedString::from(format!("inbox-{session}")),
-                    present::one_line(&row.title),
+                    present::title_line(&row.title),
                 )
                 .time(crate::home::clock(now, row.activity_at))
                 .icon("chat");

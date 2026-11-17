@@ -16,7 +16,7 @@ use gpui_component::{
 use wisp_server::desktop::{WebViewGroup, WebViewModel, WebViewOutcome, WebViewProject};
 
 use super::{
-    Workspace, chip,
+    Workspace,
     shell::{error_banner, glyph},
     surfaces::{self, DialogWidth},
 };
@@ -325,7 +325,8 @@ impl Workspace {
                                 .child(line),
                         );
                     if let Some(hold) = hold {
-                        row = row.child(chip(hold.to_owned(), Tone::Neutral, cx));
+                        row =
+                            row.child(super::surfaces::status(hold.to_owned(), Tone::Neutral, cx));
                     } else {
                         row = row
                             .cursor_pointer()
@@ -377,7 +378,11 @@ impl Workspace {
                             ),
                     );
                 if model.here {
-                    row = row.child(chip(tr("Already here"), Tone::Neutral, cx));
+                    row = row.child(super::surfaces::status(
+                        tr("Already here"),
+                        Tone::Neutral,
+                        cx,
+                    ));
                 } else {
                     row = row
                         .cursor_pointer()

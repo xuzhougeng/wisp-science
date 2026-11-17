@@ -9,7 +9,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
     tooltip::Tooltip,
 };
 use wisp_dto::image_pins::{ImagePin, pin_review_message};
@@ -639,7 +638,7 @@ impl Workspace {
                                 div()
                                     .flex_1()
                                     .min_w_0()
-                                    .child(Input::new(&self.pin_note).xsmall()),
+                                    .child(super::surfaces::input(&self.pin_note, cx).xsmall()),
                             )
                             .child(
                                 icon_button("picture-pin-add", "pin", "Add note")

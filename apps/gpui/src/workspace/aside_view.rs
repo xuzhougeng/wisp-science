@@ -7,7 +7,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
     text::TextView,
 };
 
@@ -281,7 +280,7 @@ impl Workspace {
                 .border_color(border)
                 .children(about)
                 .children(quotes)
-                .child(Input::new(&self.aside_input).small())
+                .child(super::surfaces::input(&self.aside_input, cx).small())
                 .child(actions),
         )
     }
