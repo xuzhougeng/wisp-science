@@ -6143,6 +6143,25 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return "research-assistant";
           case "close_research_assistant":
             return null;
+          case "start_research_assistant_discussion": {
+            // Mirrors research_assistant::start_new_discussion: refused while
+            // a turn holds the conversation, a no-op when already fresh,
+            // otherwise the divider arrives as a new_discussion Compaction.
+            if ((window as any).__assistantDiscussionBusy) {
+              throw new Error("The research assistant is replying. Start a new discussion when this reply finishes.");
+            }
+            if ((window as any).__assistantDiscussionFresh) return false;
+            (window as any).__assistantDiscussionFresh = true;
+            emit("agent", {
+              kind: "Compaction",
+              frame_id: "research-assistant",
+              before: 1200,
+              after: 400,
+              strategy: "new_discussion",
+              epoch: 1,
+            });
+            return true;
+          }
           case "generate_session_experience": {
             await reuseWaits.get("generate_session_experience");
             if ((window as any).__failExperience) throw new Error("Experience model unavailable");

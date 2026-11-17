@@ -1470,6 +1470,18 @@ fn render_compaction_row(
         }
         .into_view();
     }
+    if strategy == crate::dto::NEW_DISCUSSION_STRATEGY {
+        // A divider, not a compaction card: no counts, checkpoint or undo.
+        return view! {
+            <div class="discussion-divider" role="separator" data-testid="discussion-divider">
+                <span>
+                    {compose_icon("message-plus")}
+                    <span>{move || t(locale.get(), "chat.new_discussion_divider")}</span>
+                </span>
+            </div>
+        }
+        .into_view();
+    }
     let automatic = strategy == "auto";
     let strategy_key = if automatic {
         "chat.compaction_strategy_auto"

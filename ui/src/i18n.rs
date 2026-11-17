@@ -225,6 +225,14 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "assistant.research_calendar") => Some("研究日历"),
         (Locale::En, "assistant.back_to_home") => Some("Back to home"),
         (Locale::Zh, "assistant.back_to_home") => Some("返回首页"),
+        (Locale::En, "assistant.new_discussion") => Some("New discussion"),
+        (Locale::Zh, "assistant.new_discussion") => Some("新开讨论"),
+        (Locale::En, "assistant.new_discussion_hint") => Some("Start from a blank context in this conversation. Earlier messages stay above; plans and mandates are kept."),
+        (Locale::Zh, "assistant.new_discussion_hint") => Some("在这条对话里从空白上下文重新开始。之前的消息仍在上方，计划和职责不受影响。"),
+        (Locale::En, "assistant.new_discussion_already") => Some("This is already a new discussion."),
+        (Locale::Zh, "assistant.new_discussion_already") => Some("当前已经是新的讨论。"),
+        (Locale::En, "chat.new_discussion_divider") => Some("New discussion · earlier messages are not in the model's context"),
+        (Locale::Zh, "chat.new_discussion_divider") => Some("新开讨论 · 以上内容不在模型上下文中"),
         (Locale::En, "assistant.discuss_across_projects") => Some("Discuss across projects"),
         (Locale::Zh, "assistant.discuss_across_projects") => Some("跨项目讨论"),
         (Locale::En, "assistant.loading_projects") => Some("Loading projects…"),
@@ -8231,6 +8239,14 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
         m if m.ends_with("; see the log for details.") => {
             if locale == Locale::Zh { format!("{}；详见下方日志。", m.trim_end_matches("; see the log for details.")) } else { msg.into() }
         }
+        // Must stay equal to NEW_DISCUSSION_BUSY / NEW_DISCUSSION_QUEUED in
+        // src-tauri/src/research_assistant.rs.
+        "The research assistant is replying. Start a new discussion when this reply finishes." => {
+            if locale == Locale::Zh { "科研助理正在回复，等这一轮结束后再新开讨论。".into() } else { msg.into() }
+        }
+        "Messages are waiting for the research assistant. Start a new discussion after they are answered or removed." => {
+            if locale == Locale::Zh { "还有消息在排队等科研助理处理，处理完或移除后再新开讨论。".into() } else { msg.into() }
+        }
         "This decision model service needs an API key." => {
             if locale == Locale::Zh { "这个决策模型服务需要 API key。".into() } else { msg.into() }
         }
@@ -8905,6 +8921,25 @@ mod api_error_hint_tests {
         let msg = "That message could not be found in the saved conversation. Nothing was changed.";
         assert!(localize_backend(Locale::Zh, msg).contains("找不到这条消息"));
         assert_eq!(localize_backend(Locale::En, msg), msg);
+    }
+
+    #[test]
+    fn localize_backend_translates_new_discussion_refusals() {
+        // Must stay equal to NEW_DISCUSSION_BUSY / NEW_DISCUSSION_QUEUED in
+        // src-tauri/src/research_assistant.rs.
+        for (msg, zh) in [
+            (
+                "The research assistant is replying. Start a new discussion when this reply finishes.",
+                "正在回复",
+            ),
+            (
+                "Messages are waiting for the research assistant. Start a new discussion after they are answered or removed.",
+                "排队",
+            ),
+        ] {
+            assert!(localize_backend(Locale::Zh, msg).contains(zh));
+            assert_eq!(localize_backend(Locale::En, msg), msg);
+        }
     }
 
     #[test]

@@ -104,12 +104,15 @@
 }
 @media (max-width: 560px) {
   .assistant-topbar-note { display: none; }
+  /* Icon only on phones; the button keeps its aria-label and title. */
+  .assistant-new-discussion-label { display: none; }
   .assistant-workspace-header { padding-inline: 12px; gap: 8px; }
   .app.assistant-mode .center { --chat-col-max: calc(100% - 24px); }
 }
 
 .assistant-remote-toggle { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); cursor: pointer; }
 .assistant-remote-toggle svg, .assistant-remote-dialog svg { width: 16px; height: 16px; }
+.assistant-remote-toggle:disabled { opacity: .5; cursor: not-allowed; }
 .assistant-remote-dialog { width: min(520px, 100%); max-height: calc(100dvh - 40px); overflow-y: auto; box-sizing: border-box; padding: 24px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 20px 60px #0003; user-select: text; }
 .assistant-remote-dialog header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .assistant-remote-dialog h2 { font-size: calc(18px * var(--ui-font-scale, 1)); margin: 0; }

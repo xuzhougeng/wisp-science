@@ -8170,6 +8170,7 @@ pub fn run() {
             session_commands::new_session,
             research_assistant::open_research_assistant,
             research_assistant::close_research_assistant,
+            research_assistant::start_research_assistant_discussion,
             research_assistant::get_research_assistant_projects,
             research_assistant::get_research_assistant_plan,
             session_commands::branch_session,

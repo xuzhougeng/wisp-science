@@ -621,6 +621,12 @@ pub enum ChatItem {
     Checkpoint(String),
 }
 
+/// `Compaction` strategy (event, chat item and `context_epochs.strategy`) of a
+/// research-assistant "new discussion": a context epoch that carries only the
+/// system prompt, so the model sees nothing said before it. It is a divider,
+/// not a compaction: it cannot be undone and has no checkpoint.
+pub const NEW_DISCUSSION_STRATEGY: &str = "new_discussion";
+
 /// Prefix of archive-backed tool tombstones written into the model context.
 /// Keep in lockstep with `wisp_core::context::TOMBSTONE_PREFIX`.
 pub const CONTEXT_TOMBSTONE_PREFIX: &str = "[compacted;";

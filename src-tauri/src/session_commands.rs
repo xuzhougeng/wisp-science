@@ -2552,6 +2552,17 @@ async fn in_context_from_user_index(
     let Some(head) = epochs.iter().find(|row| row.epoch == head_epoch) else {
         return Ok(None);
     };
+    if head.strategy == wisp_store::NEW_DISCUSSION_STRATEGY {
+        // Nothing before the divider is in the model context.
+        let Some(divider) = head.ui_event_seq else {
+            return Ok(None);
+        };
+        return store
+            .visual_user_count_before(frame_id, divider)
+            .await
+            .map(Some)
+            .map_err(|error| error.to_string());
+    }
     let Some(seq) = head.first_kept_seq else {
         return Ok(None);
     };
@@ -2703,6 +2714,9 @@ async fn enrich_compaction_items(
             }
             let (can_undo, undo_reason) = if is_undone {
                 (false, Some("undone"))
+            } else if record.strategy == wisp_store::NEW_DISCUSSION_STRATEGY {
+                // A divider, not a compaction: the store refuses to undo it.
+                (false, Some(wisp_store::NEW_DISCUSSION_STRATEGY))
             } else if i64::try_from(record.epoch).unwrap_or(0) != head_epoch {
                 (false, Some("not_head"))
             } else if record.has_new_turns {
@@ -3224,6 +3238,60 @@ mod compaction_undo_tests {
             1
         );
         assert_eq!(store.frame_head_epoch("f").await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_new_discussion_marks_every_earlier_turn_out_of_context_and_cannot_be_undone() {
+        let store = store_with_compacted_frame().await;
+        for (seq, event) in [
+            (1, r#"{"kind":"User","frame_id":"f","text":"q1"}"#),
+            (2, r#"{"kind":"MessageBoundary","frame_id":"f","seq":2}"#),
+            (3, r#"{"kind":"User","frame_id":"f","text":"q2"}"#),
+            (4, r#"{"kind":"MessageBoundary","frame_id":"f","seq":4}"#),
+            (
+                5,
+                r#"{"kind":"Compaction","frame_id":"f","before":900,"after":100,"strategy":"new_discussion","epoch":2}"#,
+            ),
+        ] {
+            store
+                .append_session_ui_event("f", seq, event)
+                .await
+                .unwrap();
+        }
+        let epoch = store
+            .open_context_epoch(
+                "f",
+                wisp_store::OpenContextEpoch {
+                    messages: &[wisp_llm::Message::system("sys")],
+                    strategy: wisp_store::NEW_DISCUSSION_STRATEGY,
+                    kind: "fresh",
+                    before_tokens: 900,
+                    after_tokens: 100,
+                    checkpoint_index: None,
+                    first_kept_seq: None,
+                    archive_ref: None,
+                    ui_event_seq: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(epoch, 2);
+        store.set_context_epoch_ui_event("f", 2, 5).await.unwrap();
+        let state = read_session_context_state(&store, "f").await.unwrap();
+        assert_eq!(state.head_epoch, 2);
+        // Both earlier user turns sit before the divider.
+        assert_eq!(state.in_context_from_user_index, Some(2));
+        let divider = state
+            .compactions
+            .iter()
+            .find(|card| card.strategy == wisp_store::NEW_DISCUSSION_STRATEGY)
+            .unwrap();
+        assert!(!divider.can_undo);
+        assert_eq!(
+            divider.undo_reason.as_deref(),
+            Some(wisp_store::NEW_DISCUSSION_STRATEGY)
+        );
+        assert_eq!(store.load_messages("f").await.unwrap().len(), 1);
     }
 
     #[tokio::test]
