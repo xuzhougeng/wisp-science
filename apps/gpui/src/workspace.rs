@@ -2718,6 +2718,7 @@ impl Workspace {
                 self.layers.close(layer);
             }
             self.picks.clear();
+            self.paging = organise::Paging::default();
             self.folders.clear();
             self.grouped.clear();
             self.branched.clear();

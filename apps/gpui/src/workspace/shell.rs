@@ -2195,31 +2195,14 @@ impl Workspace {
             .text_xs()
     }
 
-    fn render_composer(&self, running: bool, cx: &mut Context<Self>) -> Div {
-        type Toggle = fn(&mut Workspace, &mut Window, &mut Context<Workspace>);
-        let attached = self.attached();
-        let typed = self.composer.read(cx).value();
-        // Files alone are a message.
-        let has_files = attached.iter().any(|chip| matches!(chip, Chip::File(_)));
-        let sendable = if typed.trim().is_empty() && has_files {
-            "files"
-        } else {
-            typed.as_ref()
-        };
-        let can_send = self.state.can_send(sendable, self.pending) && !self.loading_history;
-        let options = self.options();
-        let muted = cx.theme().muted_foreground;
-        let attention = tone_color(Tone::Attention, cx);
-        let full = options.full_access;
-
-        let planning = options.plan_first;
-        let started = !self.rows.is_empty() || running;
-        let by_agent = !options.acp_agent.is_empty();
-        let fast_offered = self
-            .status
-            .as_ref()
-            .is_some_and(|status| status.fast_available);
-
+    // Separate builders keep the toolbar's debug temporaries out of one large
+    // stack frame. This path exhausted the Windows GUI thread's 1 MiB stack.
+    fn render_composer_plus(
+        &self,
+        by_agent: bool,
+        fast_offered: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
         // The `+` button at the left end: what can be put into the message,
         // and the modes that change what Wisp does, in one menu. The menus
         // it leads to (quick actions, the `/` list, also opened by typing
@@ -2277,7 +2260,21 @@ impl Workspace {
             }
             plus = plus.child(deferred(menu));
         }
+        plus
+    }
 
+    fn render_composer_conditions(
+        &self,
+        options: &wisp_server::desktop::ConversationOptions,
+        running: bool,
+        fast_offered: bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        type Toggle = fn(&mut Workspace, &mut Window, &mut Context<Workspace>);
+        let full = options.full_access;
+        let planning = options.plan_first;
+        let started = !self.rows.is_empty() || running;
+        let by_agent = !options.acp_agent.is_empty();
         // The conditions line: one segment for each condition, its icon and
         // its value; a click opens the picker it had before.
         let mut conditions: Vec<AnyElement> = Vec::new();
@@ -2465,7 +2462,16 @@ impl Workspace {
                 );
             }
         }
+        conditions
+    }
 
+    fn render_composer_actions(
+        &self,
+        running: bool,
+        sendable: &str,
+        can_send: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
         // The right end: how full the context is, then send, or stop while
         // a turn runs.
         let mut actions = div().h_flex().flex_none().items_center().gap_2();
@@ -2532,6 +2538,36 @@ impl Workspace {
                 .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
             );
         }
+        actions
+    }
+
+    fn render_composer(&self, running: bool, cx: &mut Context<Self>) -> Div {
+        let attached = self.attached();
+        let typed = self.composer.read(cx).value();
+        // Files alone are a message.
+        let has_files = attached.iter().any(|chip| matches!(chip, Chip::File(_)));
+        let sendable = if typed.trim().is_empty() && has_files {
+            "files"
+        } else {
+            typed.as_ref()
+        };
+        let can_send = self.state.can_send(sendable, self.pending) && !self.loading_history;
+        let options = self.options();
+        let muted = cx.theme().muted_foreground;
+        let attention = tone_color(Tone::Attention, cx);
+        let by_agent = !options.acp_agent.is_empty();
+        let fast_offered = self
+            .status
+            .as_ref()
+            .is_some_and(|status| status.fast_available);
+
+        let plus = self.render_composer_plus(by_agent, fast_offered, cx);
+        let conditions = self.render_composer_conditions(&options, running, fast_offered, cx);
+        let actions = self.render_composer_actions(running, sendable, can_send, cx);
+        let usage = self
+            .status
+            .as_ref()
+            .and_then(|status| status.usage.as_ref());
 
         // `px_4` is the inset `surfaces::above_composer` shares, so the bars
         // there line up with the box below.
@@ -3040,6 +3076,20 @@ impl Workspace {
             ));
         }
         if self.state.session.is_none() {
+            if !self.paging.received() {
+                return page.child(
+                    content.child(
+                        div()
+                            .flex_1()
+                            .v_flex()
+                            .items_center()
+                            .justify_center()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(self.paging.empty_label(self.listing(cx))),
+                    ),
+                );
+            }
             let can_start = !self.pending && self.state.project.is_some();
             return page.child(
                 content.child(

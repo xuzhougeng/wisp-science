@@ -3795,7 +3795,14 @@ mod tests {
             .find(|(path, _)| path.ends_with("workspace/shell.rs"))
             .unwrap();
         let squeeze = |text: &str| -> String { text.split_whitespace().collect() };
-        let composer = squeeze(method(shell, "render_composer").unwrap());
+        let composer = [
+            "render_composer",
+            "render_composer_plus",
+            "render_composer_conditions",
+            "render_composer_actions",
+        ]
+        .map(|name| squeeze(method(shell, name).unwrap()))
+        .join("");
         // Everything that puts something into the message is in `+`, and
         // the modes are switched there; none is a button of its own.
         let menu = squeeze(method(shell, "plus_menu").unwrap());
