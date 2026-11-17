@@ -9,7 +9,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 use wisp_server::desktop::BatchAction;
 
@@ -850,7 +849,7 @@ impl Workspace {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(Input::new(&self.folder_name).small()),
+                    .child(super::surfaces::input(&self.folder_name, cx).small()),
             )
             .child(
                 Button::new("folder-name-save")
@@ -1090,7 +1089,7 @@ impl Workspace {
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .child(crate::present::one_line(&session.title)),
+                .child(crate::present::title_line(&session.title)),
         );
         // Its state is an icon alone in the state's colour, the word its
         // tooltip, so the title keeps its room.

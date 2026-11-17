@@ -25,7 +25,6 @@ use crate::{
     assets::icon,
     backend::{Reply, receive},
     favorites::{self, Filter},
-    home,
     layers::Layer,
     memos,
 };
@@ -270,7 +269,9 @@ impl Workspace {
                             .h_flex()
                             .gap_1()
                             .child(icon(favorites::icon(&item.kind)).text_color(muted))
-                            .child(surfaces::panel_label(item.title.clone())),
+                            .child(surfaces::panel_label(crate::present::title_line(
+                                &item.title,
+                            ))),
                     )
                     .child(div().text_xs().text_color(muted).child(if words {
                         crate::memory::preview(&item.code, 220)
@@ -714,7 +715,7 @@ impl Workspace {
                 div()
                     .v_flex()
                     .gap_1()
-                    .child(surfaces::title(item.title.clone()))
+                    .child(surfaces::title(crate::present::title_line(&item.title)))
                     .child(div().text_xs().text_color(muted).child(format!(
                         "{} · {}",
                         favorites::kind_label(&item.kind, item.language.as_deref()),
@@ -779,19 +780,24 @@ impl Workspace {
             .duration_since(UNIX_EPOCH)
             .map(|elapsed| elapsed.as_secs() as i64)
             .unwrap_or_default();
-        let mut filters = div().h_flex().gap_1().px_1();
-        for filter in Filter::ALL {
-            filters = filters.child(
-                Button::new(SharedString::from(format!("favorites-{}", filter.label())))
-                    .label(filter.label())
-                    .xsmall()
-                    .ghost()
-                    .selected(self.favorites_filter == filter)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.set_favorites_filter(filter, window, cx)
-                    })),
-            );
-        }
+        // The kinds as one segmented choice, an icon for each that has one.
+        let filters = div().h_flex().px_1().child(surfaces::segmented(
+            Filter::ALL.map(|filter| {
+                let id = SharedString::from(format!("favorites-{}", filter.label()));
+                let chosen = self.favorites_filter == filter;
+                match filter {
+                    Filter::All => surfaces::plain_segment(id, filter.label(), chosen, cx),
+                    Filter::Text => surfaces::segment(id, "doc", filter.label(), chosen, cx),
+                    Filter::Code => surfaces::segment(id, "code", filter.label(), chosen, cx),
+                    Filter::Figures => surfaces::segment(id, "image", filter.label(), chosen, cx),
+                }
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.set_favorites_filter(filter, window, cx)
+                }))
+                .into_any_element()
+            }),
+            cx,
+        ));
         let mut list = div()
             .id("favorites-list")
             .v_flex()
@@ -828,38 +834,27 @@ impl Workspace {
                         .favorite
                         .as_ref()
                         .is_some_and(|open| open.item.id == item.id);
+                    // A record row: when it was saved, its kind's icon, its
+                    // title, where it came from faded after it; the open one
+                    // on white.
+                    let paper = cx.theme().popover;
                     list = list.child(
-                        div()
-                            .id(SharedString::from(format!("favorite-row-{id}")))
-                            .h_flex()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .rounded(cx.theme().radius)
-                            .cursor_pointer()
-                            .when(open, |row| row.bg(accent))
-                            .hover(move |style| style.bg(accent.opacity(0.7)))
-                            .child(icon(favorites::icon(&item.kind)).text_color(muted))
-                            .child(
-                                div()
-                                    .v_flex()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(div().truncate().text_sm().child(item.title.clone()))
-                                    .child(div().truncate().text_xs().text_color(muted).child(
-                                        format!(
-                                            "{} · {}",
-                                            favorites::source_line(
-                                                &item.source_project_name,
-                                                &item.source_session_title
-                                            ),
-                                            home::age(now, item.created_at)
-                                        ),
-                                    )),
-                            )
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_favorite(id.clone(), window, cx)
-                            })),
+                        surfaces::record_row(
+                            SharedString::from(format!("favorite-row-{id}")),
+                            crate::present::title_line(&item.title),
+                        )
+                        .time(crate::home::clock(now, item.created_at))
+                        .icon(favorites::icon(&item.kind))
+                        .suffix(favorites::source_line(
+                            &item.source_project_name,
+                            &item.source_session_title,
+                        ))
+                        .cursor_pointer()
+                        .when(open, |row| row.bg(paper))
+                        .hover(move |style| style.bg(accent.opacity(0.7)))
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| this.open_favorite(id.clone(), window, cx),
+                        )),
                     );
                 }
             }

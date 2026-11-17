@@ -160,9 +160,20 @@ names and never a colour of their own.
   framed under it (`window_frame`); the home page puts its top bar in it, a
   project's page its tabs and actions, the other pages have it plain for
   now.
-- Windows and Linux keep the system's title bar for now; the home page's
-  and a project's bar is then the same strip at the top of the page, and
-  the other pages have none.
+- On Windows the window draws its own bar too, the same 40 px in the
+  margin colour, with no traffic-light inset (12 px) and the system's
+  minimize, maximize and close at its right end (the component library's
+  `TitleBar`, which marks them as the system's own hit areas, so maximize
+  offers Windows 11's snap layouts). Its empty parts drag the window and a
+  double click on them maximizes or restores it; a 5 px strip along its top
+  is left to the system so the top edge still resizes a window that is not
+  maximized. In the bar, what takes a click and is not a button (a tab,
+  the bell) occludes, so the system does not take it for the caption. The
+  window keeps its title for the taskbar; it is not drawn in the bar.
+- Linux keeps the system's title bar (drawing our own needs client-side
+  decorations); the home page's and a project's bar is then a strip at the
+  top of the page, and the other pages have none. The choice per platform
+  is `surfaces::OWN_TITLE_BAR`.
 - **What waits for the user** (`render_waiting`): on a project's page left
   of the four icon buttons, apart from them, and on the home page left of
   the documentation and settings, the bell and the count in the waiting
@@ -188,7 +199,11 @@ names and never a colour of their own.
   (`Layer::StartMenu`, closed by Escape) of the rarer ways, each an icon
   and a word: Example conversations, Bring over from WebView, Join from
   another device, Sample project.
-- Projects are cells side by side, two to a line, starred ones first, with
+- Without a model, a bar to act on (`surfaces::bar`: white, a hairline,
+  the waiting colour's `circle-alert`, the sentence, Open Settings as an
+  outlined `gear` and word) stands under the ways to start.
+- Projects are cells side by side, two to a line, starred ones first (a
+  last one alone takes the whole line, `home::last_cell_spans`), with
   hairlines between them and round the grid (`radius_lg`). A cell shows the
   name (Title), a waiting stamp with the bell and the count when something
   needs the user, the folder (a Fact), and a line of icons and numbers
@@ -552,8 +567,32 @@ names and never a colour of their own.
   a new version and rename as icon buttons, Remove last in the danger
   colour; its versions are a segmented control; a source's kind is a faded
   fact and its selection and a rerun's Matches / Differs are stamps.
-- **Scheduled tasks**: Run now is a `play` icon button and Delete a danger
-  icon button last; the cadence is a fact.
+- **Scheduled tasks** and **Research mandates** have nothing to list in a
+  rail, so they have none: back, the name with its help and the New button
+  (outlined icon and word) head the centred column (`surfaces::page_head`).
+  A task's Run now is a `play` icon button and Delete a danger icon button
+  last; its cadence, next and last run are facts, the next run only while
+  it is on. Templates are chips with their prompt as tooltip. The daily
+  recap's explanation is a help icon and its Save is outlined. A mandate's
+  Run now (`play`) and Open its conversation (`chat`) are icon and word,
+  pause, report, edit and close icon buttons, Delete a danger icon last;
+  what it asks is a white card (`bar`) with Answer outlined at its right.
+- **Research calendar**: the weekdays go through the translation table; the
+  month is a fact between arrow icon buttons; the projects shown are choice
+  chips with a check.
+- **Favorites**: the kind filter is a segmented control (`doc`, `code`,
+  `image`); saved items are record rows (when, the kind's icon, the title,
+  where from faded after it).
+- **Titles from a message's first line** drop Markdown's inline marks
+  (`present::title_line`): recent conversations, the bell's list, Favorites,
+  the journey.
+- **Segmented controls** hug their segments; they never stretch across a
+  column.
+- **The command palette** lists record rows: the object's icon from the
+  vocabulary, the name, where it is faded after it, its actions as icon
+  buttons; the chosen row is on white with a hairline.
+- **Entry numbers** count from the host's `user_offset` for the earliest
+  page loaded, so № stays the same whether or not earlier pages are loaded.
 - **Statuses** on these pages (a recap's, a run's, a mandate's, a task the
   assistant runs, a verdict) are stamps (`surfaces::status`); fields are
   white (`surfaces::input`), in dialogs too.

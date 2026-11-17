@@ -5,9 +5,9 @@ use crate::i18n::tr;
 use std::time::Duration;
 
 use gpui::{prelude::*, *};
-use gpui_component::{ActiveTheme, Sizable, StyledExt, input::Input};
+use gpui_component::{ActiveTheme, StyledExt};
 
-use super::{Workspace, shell::icon_button};
+use super::{Workspace, surfaces};
 use crate::{
     assets::icon,
     backend::receive,
@@ -634,7 +634,7 @@ impl Workspace {
         let entries = self.palette_entries();
         let selected = self.palette.selection(entries.len());
         let muted = cx.theme().muted_foreground;
-        let active = cx.theme().list_active;
+
         let hover = cx.theme().list_hover;
         let border = cx.theme().border;
         let radius = cx.theme().radius;
@@ -699,12 +699,13 @@ impl Workspace {
             // A project can also be opened in a window of its own.
             let new_window = entry.window_project(self.palette.mode).map(|id| {
                 let id = id.to_owned();
-                icon_button(
+                surfaces::icon_action(
                     ("palette-window", index),
                     "dock",
                     tr("Open in a new window"),
+                    surfaces::IconTone::Faded,
+                    cx,
                 )
-                .xsmall()
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
                     this.layers.close(Layer::Palette);
@@ -723,12 +724,13 @@ impl Workspace {
                     entry.chip_in(self.palette.mode, project, self.state.session.as_deref())
                 })
                 .map(|chip| {
-                    icon_button(
+                    surfaces::icon_action(
                         ("palette-attach", index),
                         "attach",
                         tr("Add to the message"),
+                        surfaces::IconTone::Faded,
+                        cx,
                     )
-                    .xsmall()
                     .on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
                         this.layers.close(Layer::Palette);
@@ -737,41 +739,32 @@ impl Workspace {
                         cx.notify();
                     }))
                 });
-            list = list.child(
-                div()
-                    .id(("palette-row", index))
-                    .h_flex()
-                    .gap_2()
-                    .px_2()
-                    .h(px(34.))
-                    .flex_shrink_0()
-                    .rounded(radius)
-                    .cursor_pointer()
-                    .hover(|style| style.bg(hover))
-                    .when(selected == Some(index), |row| row.bg(active))
-                    .child(icon(glyph).text_color(muted))
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .max_w(px(340.))
-                            .truncate()
-                            .child(title),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(detail),
-                    )
-                    .children(attach)
-                    .children(new_window)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.activate_palette(Some(index), window, cx)
-                    })),
-            );
+            // A record row: the object's icon, its name, where it is faded
+            // after it; the chosen row on white with a hairline.
+            let chosen = selected == Some(index);
+            let mut row = surfaces::record_row(("palette-row", index), title)
+                .icon(glyph)
+                .suffix(detail)
+                .rounded(radius)
+                .border_1()
+                .border_color(if chosen {
+                    border
+                } else {
+                    cx.theme().transparent
+                })
+                .when(chosen, |row| row.bg(cx.theme().background))
+                .cursor_pointer()
+                .hover(move |style| style.bg(hover))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.activate_palette(Some(index), window, cx)
+                }));
+            if let Some(attach) = attach {
+                row = row.action(attach);
+            }
+            if let Some(new_window) = new_window {
+                row = row.action(new_window);
+            }
+            list = list.child(row);
         }
         if entries.is_empty() {
             list = list.child(div().p_4().text_sm().text_color(muted).child(
@@ -807,7 +800,7 @@ impl Workspace {
                     .border_b_1()
                     .border_color(border)
                     .child(
-                        Input::new(&self.palette_input)
+                        super::surfaces::input(&self.palette_input, cx)
                             .appearance(false)
                             .prefix(icon("search").text_color(muted)),
                     ),

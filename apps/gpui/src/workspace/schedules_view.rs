@@ -11,7 +11,7 @@ use wisp_server::desktop::{ScheduleInput, ScheduleRow};
 
 use super::{
     Workspace, chip,
-    shell::{error_banner, glyph, nav_row},
+    shell::error_banner,
     surfaces::{self, switch},
 };
 use crate::{
@@ -96,12 +96,23 @@ impl Workspace {
             .rounded(cx.theme().radius)
             .border_1()
             .border_color(cx.theme().border)
-            .child(div().text_sm().child(tr("Daily recap")))
-            .child(div().text_xs().text_color(muted).child(tr(
-                "Each day after this time, a recap is drafted from the records of each \
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_1()
+                    .child(div().text_sm().child(tr("Daily recap")))
+                    // The whole of what it does is a tooltip away.
+                    .child(surfaces::help(
+                        "daily-recap-help",
+                        tr(
+                            "Each day after this time, a recap is drafted from the records of each \
                  project's last three days that have none yet. Drafts wait on the project's \
                  research journey for you to confirm or dismiss.",
-            )));
+                        ),
+                        cx,
+                    )),
+            );
         let Some(daily) = &self.daily_recap else {
             return card.child(div().text_xs().text_color(muted).child(tr("Loading…")));
         };
@@ -128,6 +139,7 @@ impl Workspace {
                         Button::new("daily-recap-time")
                             .label(tr("Save"))
                             .small()
+                            .outline()
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.save_daily_recap(enabled, window, cx)
                             })),
@@ -457,12 +469,14 @@ impl Workspace {
                         schedules::cadence_label(row.interval_secs),
                         cx,
                     ))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(schedules::next_label(row, &Local)),
-                    )
+                    // When it fires next, only while it is on: the switch
+                    // already says when it is off.
+                    .when(row.enabled, |line| {
+                        line.child(super::surfaces::fact(
+                            schedules::next_label(row, &Local),
+                            cx,
+                        ))
+                    })
                     .child(history),
             );
         let mut actions = div().h_flex().gap_1().flex_shrink_0();
@@ -541,54 +555,34 @@ impl Workspace {
 
     pub(super) fn render_schedules(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
-        let side = div()
-            .v_flex()
-            .w(px(260.))
-            .flex_shrink_0()
-            .h_full()
-            .p_2()
-            .gap_1()
-            .bg(cx.theme().sidebar)
-            .border_r_1()
-            .border_color(cx.theme().sidebar_border)
-            .child(
-                nav_row("schedules-back", "arrow-left", tr("Back"), false, true, cx)
-                    .on_click(cx.listener(|this, _, window, cx| this.close_schedules(window, cx))),
+        // No rail: the page has nothing to list beside its tasks. Back, its
+        // name and New head the centred column.
+        let head = surfaces::page_head(
+            surfaces::icon_action(
+                "schedules-back",
+                "arrow-left",
+                tr("Back"),
+                surfaces::IconTone::Faded,
+                cx,
             )
-            .child(
-                div()
-                    .h_flex()
-                    .items_center()
-                    .gap_1()
-                    .px_2()
-                    .pt_3()
-                    .pb_1()
-                    .child(surfaces::title(tr("Scheduled tasks")))
-                    // What the page is for, a tooltip away, not a paragraph in
-                    // the rail.
-                    .child(surfaces::help(
-                        "schedules-help",
-                        tr(
+            .on_click(cx.listener(|this, _, window, cx| this.close_schedules(window, cx))),
+            tr("Scheduled tasks"),
+            "schedules-help",
+            tr(
                 "Prompts sent on a schedule while the app is open, or any time you need \
                  them. Each firing is a conversation of its own in the task's project.",
-                        ),
-                        cx,
-                    )),
-            )
-            .child(
-                div().px_1().child(
-                    Button::new("schedule-new")
-                        .icon(glyph("plus"))
-                        .label(tr("New scheduled task"))
-                        .small()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_schedule_form("", "", window, cx)
-                        })),
-                ),
-            );
+            ),
+            Some(
+                surfaces::outlined_action("schedule-new", "plus", tr("New scheduled task"), cx)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_schedule_form("", "", window, cx)
+                    })),
+            ),
+            cx,
+        );
 
         // The page's records in a centred column (`surfaces::page_column`).
-        let mut body = surfaces::page_column();
+        let mut body = surfaces::page_column().child(head);
         if let Some(error) = &self.error {
             body = body.child(error_banner(error, cx));
         }
@@ -600,23 +594,19 @@ impl Workspace {
         }
         body = body.child(self.daily_recap_card(cx));
         let Some(rows) = &self.schedules else {
-            return div()
-                .h_flex()
-                .size_full()
-                .child(side)
-                .child(surfaces::page_scroll(
-                    "schedules-body",
-                    body.child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .child(if self.error.is_some() {
-                                ""
-                            } else {
-                                tr("Loading…")
-                            }),
-                    ),
-                ));
+            return div().h_flex().size_full().child(surfaces::page_scroll(
+                "schedules-body",
+                body.child(
+                    div()
+                        .text_sm()
+                        .text_color(muted)
+                        .child(if self.error.is_some() {
+                            ""
+                        } else {
+                            tr("Loading…")
+                        }),
+                ),
+            ));
         };
         if rows.is_empty() {
             body = body.child(div().text_sm().text_color(muted).child(tr(
@@ -626,12 +616,17 @@ impl Workspace {
         for row in rows {
             body = body.child(self.schedule_row(row, cx));
         }
+        // Templates to start from: chips, what each asks in its tooltip.
         let mut templates = div().h_flex().flex_wrap().gap_2();
         for (index, (name, prompt)) in schedules::TEMPLATES.iter().enumerate() {
+            let said = SharedString::from(tr(prompt).to_owned());
             templates = templates.child(
-                Button::new(("schedule-template", index))
-                    .label(tr(name))
-                    .small()
+                surfaces::choice_chip(("schedule-template", index), false, cx)
+                    .child(crate::assets::icon("clock").text_color(muted))
+                    .child(tr(name))
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(said.clone()).build(window, cx)
+                    })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_schedule_form(tr(name), prompt, window, cx)
                     })),
@@ -649,7 +644,6 @@ impl Workspace {
         div()
             .h_flex()
             .size_full()
-            .child(side)
             .child(surfaces::page_scroll("schedules-body", body))
     }
 }

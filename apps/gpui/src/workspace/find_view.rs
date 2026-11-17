@@ -2,7 +2,7 @@
 //! between matches, and marking the rows that match.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
-use gpui_component::{ActiveTheme, StyledExt, input::Input};
+use gpui_component::{ActiveTheme, StyledExt};
 
 use super::{Workspace, shell::icon_button};
 use crate::{assets::icon, layers::Layer};
@@ -83,7 +83,7 @@ impl Workspace {
             .border_color(cx.theme().border)
             .child(
                 div().w(px(320.)).child(
-                    Input::new(&self.find_input)
+                    super::surfaces::input(&self.find_input, cx)
                         .appearance(false)
                         .prefix(icon("search").text_color(muted)),
                 ),

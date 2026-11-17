@@ -863,6 +863,8 @@ pub(super) fn window_tab(
     div()
         .id(id)
         .group(ICON_HOVER)
+        // In the window's bar: on Windows, not the caption to drag.
+        .occlude()
         .h_flex()
         .flex_shrink_0()
         .items_center()
@@ -907,10 +909,21 @@ pub(super) fn tab_close(
     icon_action(id, "close", tooltip, IconTone::Faded, cx)
 }
 
-/// Whether the window draws its own title bar. On macOS it does, with the
-/// traffic lights inside it. Windows and Linux keep the system's title
-/// bar for now: their own window buttons are not drawn yet.
-pub(super) const OWN_TITLE_BAR: bool = cfg!(target_os = "macos");
+/// Whether the window draws its own title bar, one choice per platform:
+/// - macOS: yes, with the traffic lights inside it (the system draws them
+///   over a transparent title bar).
+/// - Windows: yes. GPUI hides the system's caption for a transparent title
+///   bar and asks the page which part of it is what (`WM_NCHITTEST`): the
+///   component library's `TitleBar` marks its empty parts as the caption
+///   to drag and draws minimize, maximize and close as the system's own
+///   hit areas, so Windows still moves, snaps and resizes the window.
+/// - Linux: no. Drawing the bar there needs client-side decorations and
+///   the compositor's say, a different job; the system's bar stays and
+///   ours is a strip on the page under it.
+pub(super) const OWN_TITLE_BAR: bool = cfg!(any(target_os = "macos", target_os = "windows"));
+
+/// Whether the system's traffic lights sit in our bar (macOS only).
+const TRAFFIC_LIGHTS_IN_BAR: bool = cfg!(target_os = "macos");
 
 /// How high the window's bar is.
 pub(super) const TITLE_BAR_HEIGHT: f32 = 40.;
@@ -922,24 +935,36 @@ const TRAFFIC_LIGHTS: (f32, f32) = (14., 13.);
 /// Where the bar's own content starts on macOS: past the traffic lights.
 const TRAFFIC_LIGHTS_INSET: f32 = 84.;
 
-/// How a window is opened: on macOS with a transparent title bar so the
-/// page draws its own (`window_bar`), elsewhere with the system's. The
-/// title is hidden in the bar but still names the window to the system.
+/// Where it starts where there are no traffic lights (Windows, and macOS in
+/// full screen).
+const BAR_INSET: f32 = 12.;
+
+/// How a window is opened: on macOS and Windows with a transparent title
+/// bar so the page draws its own (`window_bar`), on Linux with the
+/// system's. The title is not drawn in the bar but still names the window
+/// to the system (the Dock, the taskbar).
 pub fn window_titlebar() -> TitlebarOptions {
     TitlebarOptions {
         title: Some("Wisp Science".into()),
         appears_transparent: OWN_TITLE_BAR,
-        traffic_light_position: OWN_TITLE_BAR
+        traffic_light_position: TRAFFIC_LIGHTS_IN_BAR
             .then(|| point(px(TRAFFIC_LIGHTS.0), px(TRAFFIC_LIGHTS.1))),
     }
 }
 
 /// The bar across the top of the window, in the margin colour with a
-/// hairline under it, `content` laid out in it. On macOS it is the window's
-/// title bar: it leaves room for the traffic lights, drags the window and
-/// zooms it on a double click (the component library's `TitleBar`). On
-/// Windows and Linux, under the system's own title bar, it is a bar on the
-/// page, drawn only when there is something to put in it.
+/// hairline under it, `content` laid out in it. On macOS and Windows it is
+/// the window's title bar, through the component library's `TitleBar`: on
+/// macOS it leaves room for the traffic lights and zooms on a double click;
+/// on Windows it ends with the system's three window buttons, its empty
+/// parts drag the window and a double click on them maximizes it, and a
+/// thin strip along its top is left to the system so the top edge still
+/// resizes the window. On Linux, under the system's own title bar, it is a
+/// bar on the page, drawn only when there is something to put in it.
+///
+/// On Windows an element in the bar that takes a click and is not a button
+/// (a tab, the bell) must `occlude()`, so the system is told it is not the
+/// caption; buttons take their press themselves (`prevent_default`).
 pub(super) fn window_bar(
     content: Option<AnyElement>,
     window: &Window,
@@ -947,19 +972,45 @@ pub(super) fn window_bar(
 ) -> Option<AnyElement> {
     let theme = cx.theme();
     if OWN_TITLE_BAR {
-        let inset = if window.is_fullscreen() {
-            px(16.)
-        } else {
+        let inset = if TRAFFIC_LIGHTS_IN_BAR && !window.is_fullscreen() {
             px(TRAFFIC_LIGHTS_INSET)
+        } else {
+            px(BAR_INSET)
         };
+        // Our content ends with a gap before the window buttons on
+        // Windows; on macOS before the window's edge.
+        let content = content.map(|content| {
+            div()
+                .h_flex()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .items_center()
+                .pr_3()
+                .child(content)
+        });
+        // Windows: the top edge of a window that is not maximized resizes
+        // it. GPUI asks the page first and would take the bar's caption
+        // there; a strip that is not the caption leaves it to the system.
+        let resize_edge = (cfg!(target_os = "windows") && !window.is_maximized()).then(|| {
+            div()
+                .id("window-top-edge")
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .h(px(5.))
+                .occlude()
+        });
         return Some(
             TitleBar::new()
+                .relative()
                 .h(px(TITLE_BAR_HEIGHT))
                 .pl(inset)
-                .pr_3()
                 .bg(cx.theme().sidebar)
                 .border_color(theme.sidebar_border)
                 .children(content)
+                .children(resize_edge)
                 .into_any_element(),
         );
     }
@@ -1341,6 +1392,30 @@ pub(super) fn page_column() -> Div {
         .gap_3()
 }
 
+/// The head of a page with nothing to list in a rail (Research mandates,
+/// Scheduled tasks): back, the page's name as a Title with its `help`, and
+/// at its right the page's New button (an outlined icon and word), at the
+/// top of the centred column.
+pub(super) fn page_head(
+    back: Button,
+    name: impl Into<SharedString>,
+    help_id: &'static str,
+    explained: impl Into<SharedString>,
+    new: Option<Button>,
+    cx: &App,
+) -> Div {
+    div()
+        .h_flex()
+        .items_center()
+        .gap_2()
+        .pb_2()
+        .child(back)
+        .child(title(name))
+        .child(help(help_id, explained, cx))
+        .child(div().flex_1())
+        .children(new)
+}
+
 /// Centres `child` in the conversation's reading column.
 pub(super) fn reading_column(child: impl IntoElement) -> Div {
     div()
@@ -1460,7 +1535,7 @@ pub(super) fn segmented(children: impl IntoIterator<Item = AnyElement>, cx: &App
         }
         parts.push(child);
     }
-    div()
+    let mut control = div()
         .h_flex()
         .flex_none()
         .items_center()
@@ -1469,7 +1544,11 @@ pub(super) fn segmented(children: impl IntoIterator<Item = AnyElement>, cx: &App
         .border_color(line)
         .bg(theme.popover)
         .overflow_hidden()
-        .children(parts)
+        .children(parts);
+    // It hugs its segments: in a column it does not stretch across it, so
+    // one segment never looks like a field.
+    control.style().align_self = Some(AlignSelf::FlexStart);
+    control
 }
 
 /// Something pressed like a button that is not the component library's
@@ -1712,6 +1791,26 @@ pub(super) fn settings_note_help(
             explained,
             cx,
         ))
+}
+
+/// A description a list's row carries from its data (a connector's, a
+/// skill's, a plugin's): one faded line, cut short, the whole of it in the
+/// tooltip, so a list does not become a wall of faded text.
+pub(super) fn one_line_note(
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    cx: &App,
+) -> Stateful<Div> {
+    let text: SharedString = text.into();
+    let whole = text.clone();
+    div()
+        .id(id)
+        .min_w_0()
+        .truncate()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .tooltip(move |window, cx| Tooltip::new(whole.clone()).build(window, cx))
+        .child(text)
 }
 
 /// A value that cannot be changed here (a model from `WISP_*` variables, a
@@ -2879,10 +2978,52 @@ mod tests {
 
     #[test]
     fn the_window_bar_is_the_margin_colour_with_the_traffic_lights_inside_it() {
-        assert_eq!(OWN_TITLE_BAR, cfg!(target_os = "macos"));
+        // Our own bar on macOS and Windows, the system's on Linux.
+        assert_eq!(
+            OWN_TITLE_BAR,
+            cfg!(any(target_os = "macos", target_os = "windows"))
+        );
+        assert!(!cfg!(target_os = "linux") || !OWN_TITLE_BAR);
         let options = window_titlebar();
         assert_eq!(options.appears_transparent, OWN_TITLE_BAR);
-        assert_eq!(options.traffic_light_position.is_some(), OWN_TITLE_BAR);
+        // Traffic lights are macOS's alone.
+        assert_eq!(
+            options.traffic_light_position.is_some(),
+            cfg!(target_os = "macos")
+        );
+        // On Windows the top edge stays the system's to resize, and what
+        // takes a click in the bar and is not a button is not the caption.
+        {
+            let files = sources();
+            let (_, surfaces) = files
+                .iter()
+                .find(|(path, _)| path.ends_with("workspace/surfaces.rs"))
+                .unwrap();
+            let surfaces = code(surfaces);
+            let bar = free_function(surfaces, "window_bar").unwrap();
+            assert!(bar.contains("\"window-top-edge\""));
+            assert!(bar.contains("cfg!(target_os = \"windows\")"));
+            assert!(
+                free_function(surfaces, "window_tab")
+                    .unwrap()
+                    .contains(".occlude()")
+            );
+            let (_, tabs) = files
+                .iter()
+                .find(|(path, _)| path.ends_with("workspace/tabs_view.rs"))
+                .unwrap();
+            let bell = method(tabs, "render_waiting").unwrap();
+            assert!(bell.contains(".occlude()"));
+            // The home page's banner is a bar to act on, not a grey block.
+            let (_, home) = files
+                .iter()
+                .find(|(path, _)| path.ends_with("workspace/home_view.rs"))
+                .unwrap();
+            let page = method(home, "render_home").unwrap();
+            assert!(page.contains("surfaces::bar(\"home-configure\", cx)"));
+            assert!(!page.contains(".bg(cx.theme().muted)"));
+            assert!(page.contains("home::last_cell_spans("));
+        }
         // The lights (about 14 px high, 52 wide) sit in the bar, centred,
         // and the bar's own content starts past them.
         let (x, y) = TRAFFIC_LIGHTS;
@@ -3001,7 +3142,7 @@ mod tests {
         // Every row is framed as part of the record, numbered by one
         // function.
         let row = method(shell, "row").unwrap();
-        assert!(row.contains("present::entry_number(&self.rows, index)"));
+        assert!(row.contains("present::entry_number(&self.rows, index, self.earlier_users)"));
         assert!(row.contains("surfaces::entry_row("));
         assert!(row.contains("surfaces::EntryDot::Live"));
         // The line is each row's own left edge, so rows stack without gaps.
@@ -3168,7 +3309,10 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} has no fn {function}"))
                 .split_whitespace()
                 .collect();
-            assert!(body.contains("surfaces::help("), "{function}");
+            assert!(
+                body.contains("surfaces::help(") || body.contains("surfaces::page_head("),
+                "{function}"
+            );
             assert!(
                 !body.contains(".px_2().pb_2().text_xs().text_color(muted).child(tr\u{28}"),
                 "{function} keeps a paragraph in its rail"
@@ -3224,6 +3368,91 @@ mod tests {
         // What waits needs no stamp of its own in the bell's list.
         let waiting = method(file("workspace/tabs_view.rs"), "waiting_list").unwrap();
         assert!(!waiting.contains(".stamp("));
+    }
+
+    #[test]
+    fn pages_lists_dialogs_and_the_palette_follow_the_rules() {
+        let files = sources();
+        let file = |name: &str| {
+            files
+                .iter()
+                .find(|(path, _)| path.ends_with(name))
+                .map(|(_, text)| text.as_str())
+                .unwrap_or_else(|| panic!("no {name}"))
+        };
+        let squeeze = |text: &str| -> String { text.split_whitespace().collect() };
+        // Pages with nothing to list keep no rail: back, the name and New
+        // head the centred column.
+        for (name, function) in [
+            ("workspace/mandates_view.rs", "render_mandates"),
+            ("workspace/schedules_view.rs", "render_schedules"),
+        ] {
+            let body = method(file(name), function).unwrap();
+            assert!(body.contains("surfaces::page_head("), "{function}");
+            assert!(
+                !body.contains(".bg(cx.theme().sidebar)"),
+                "{function} has a rail"
+            );
+            assert!(!body.contains("nav_row("), "{function} has a rail");
+        }
+        // A mandate's actions are icons, two of them with words, and what
+        // it asks is a white card with Answer.
+        let mandate = squeeze(method(file("workspace/mandates_view.rs"), "mandate_card").unwrap());
+        assert!(!mandate.contains(".label(tr(label))"));
+        assert!(mandate.contains("surfaces::outlined_action((\"mandate-run\",index),\"play\""));
+        assert!(mandate.contains("surfaces::danger_action((\"mandate-delete\",index)"));
+        assert!(mandate.contains("surfaces::bar((\"mandate-request\",index),cx)"));
+        assert!(!mandate.contains("tone_color(Tone::Attention,cx).opacity("));
+        // Templates are chips with their prompt in the tooltip; the off
+        // state is not said twice.
+        let schedules = method(file("workspace/schedules_view.rs"), "render_schedules").unwrap();
+        assert!(schedules.contains("surfaces::choice_chip("));
+        let task = method(file("workspace/schedules_view.rs"), "schedule_row").unwrap();
+        assert!(task.contains(".when(row.enabled,"));
+        // The weekdays go through the table.
+        let calendar = method(file("workspace/calendar_view.rs"), "render_calendar").unwrap();
+        assert!(calendar.contains(".child(tr(name))"));
+        assert!(calendar.contains("surfaces::choice_chip("));
+        // Favorites: a segmented kind filter and record rows.
+        let favorites = method(file("workspace/favorites_view.rs"), "render_favorites").unwrap();
+        assert!(favorites.contains("surfaces::segmented("));
+        assert!(favorites.contains("surfaces::record_row("));
+        // Titles drawn from a message's first line drop Markdown marks.
+        for (name, function) in [
+            ("workspace/home_view.rs", "render_home"),
+            ("workspace/tabs_view.rs", "waiting_list"),
+            ("workspace/favorites_view.rs", "render_favorites"),
+            ("workspace/journey_view.rs", "render_journey"),
+        ] {
+            let body = method(file(name), function).unwrap();
+            assert!(body.contains("present::title_line("), "{function}");
+        }
+        // A segmented control hugs its segments.
+        let segmented = free_function(code(file("workspace/surfaces.rs")), "segmented").unwrap();
+        assert!(segmented.contains("AlignSelf::FlexStart"));
+        // The palette lists record rows, the chosen one on white with a line.
+        let palette = method(file("workspace/palette_view.rs"), "render_palette").unwrap();
+        assert!(palette.contains("surfaces::record_row("));
+        assert!(!palette.contains("icon_button("));
+        // A list's data-supplied description is one line.
+        let connections = method(
+            file("workspace/settings_sections.rs"),
+            "render_connection_settings",
+        )
+        .unwrap();
+        assert!(connections.contains("surfaces::one_line_note("));
+        // Fields in dialogs are white: none is the library's input as is.
+        for (name, function) in [
+            ("workspace/home_view.rs", "render_new_project"),
+            ("workspace/privacy_view.rs", "render_privacy"),
+            ("workspace/project_settings.rs", "render_project_settings"),
+            ("workspace/project_sync_view.rs", "render_join_synced"),
+            ("workspace/explore_view.rs", "render_start_exploration"),
+            ("workspace/share_view.rs", "render_share"),
+        ] {
+            let body = method(file(name), function).unwrap();
+            assert!(!body.contains("Input::new("), "{function}");
+        }
     }
 
     #[test]

@@ -961,6 +961,10 @@ pub struct Workspace {
     rows: Vec<Item>,
     history: Vec<Item>,
     before: Option<i64>,
+    /// How many of the user's messages come before the rows held: the
+    /// host's `user_offset` for the earliest page loaded. Entry numbers
+    /// start after it, so they do not change as earlier pages load.
+    earlier_users: usize,
     /// Where the latest page started (its `next_before_seq` and how many
     /// of the user's messages came before it) when `history` was loaded
     /// behind it; see [`crate::outline::earlier_pages_hold`].
@@ -2150,6 +2154,7 @@ impl Workspace {
             search,
             rows: vec![],
             history: vec![],
+            earlier_users: 0,
             before: None,
             history_under: (None, 0),
             history_epoch: 0,
@@ -3639,6 +3644,7 @@ impl Workspace {
         if self.history.is_empty() {
             self.before = snapshot.next_before_seq;
             self.history_under = latest;
+            self.earlier_users = snapshot.user_offset;
         }
         let mut rows = self.history.clone();
         rows.extend(snapshot.items.clone());
@@ -3692,6 +3698,7 @@ impl Workspace {
                         history.append(&mut this.history);
                         this.history = history;
                         this.before = page.next_before_seq;
+                        this.earlier_users = page.user_offset;
                         this.update_rows();
                         this.ensure_batches(window, cx);
                         this.load_inline_images(window, cx);
@@ -3720,6 +3727,8 @@ impl Workspace {
             // Newest first, as they are asked for.
             let mut pages: Vec<Vec<Item>> = Vec::new();
             let mut failure = None;
+            // The user's messages before the earliest page reached.
+            let mut earliest_offset = None;
             while let Some(seq) = before {
                 let page = receive(backend.snapshot(
                     selection.project.clone(),
@@ -3731,6 +3740,7 @@ impl Workspace {
                     Ok(page) => {
                         // A page that moves no further back ends the walk.
                         before = crate::outline::next_page(seq, page.next_before_seq);
+                        earliest_offset = Some(page.user_offset);
                         pages.push(page.items);
                     }
                     Err(error) => {
@@ -3746,6 +3756,9 @@ impl Workspace {
                 this.loading_history = false;
                 this.history = crate::outline::stitch(pages, std::mem::take(&mut this.history));
                 this.before = before;
+                if let Some(offset) = earliest_offset {
+                    this.earlier_users = offset;
+                }
                 this.update_rows();
                 this.ensure_batches(window, cx);
                 this.load_inline_images(window, cx);

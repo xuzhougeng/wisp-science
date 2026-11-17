@@ -171,6 +171,13 @@ fn age_in(locale: Locale, now: i64, then: i64) -> String {
     }
 }
 
+/// Whether the last cell of a grid of `count` cells, `columns` to a line,
+/// is alone on its line and takes the whole of it, so no empty bordered
+/// cell stands beside it.
+pub fn last_cell_spans(count: usize, columns: usize) -> bool {
+    columns > 1 && count % columns != 0
+}
+
 /// When `then` happened, as the time column of a record row: the clock
 /// time today (`17:03`), "Yesterday", the month and day this year
 /// (`11-03`), the full date before. Both are Unix seconds, read in the
@@ -457,6 +464,16 @@ mod tests {
             clock(1_800_000_000, 1_800_000_000_000),
             clock(1_800_000_000, 1_800_000_000)
         );
+    }
+
+    #[test]
+    fn a_lone_last_project_takes_the_whole_line() {
+        assert!(last_cell_spans(1, 2));
+        assert!(last_cell_spans(3, 2));
+        assert!(!last_cell_spans(2, 2));
+        assert!(!last_cell_spans(4, 2));
+        assert!(!last_cell_spans(0, 2));
+        assert!(!last_cell_spans(3, 1));
     }
 
     #[test]

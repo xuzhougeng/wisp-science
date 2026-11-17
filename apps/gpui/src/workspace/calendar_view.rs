@@ -6,14 +6,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{Datelike, Local};
 use gpui::{prelude::*, *};
-use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
-    button::{Button, ButtonVariants},
-};
+use gpui_component::{ActiveTheme, Disableable, StyledExt};
 
 use super::{
     Workspace,
-    shell::{error_banner, icon_button, nav_row},
+    shell::{error_banner, nav_row},
     surfaces,
 };
 use crate::{
@@ -144,32 +141,52 @@ impl Workspace {
                     .h_flex()
                     .gap_1()
                     .px_1()
+                    .items_center()
+                    // The month as a fact between its arrows; this month a
+                    // click away.
                     .child(
-                        icon_button("calendar-previous", "chevron-left", tr("Earlier month"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.show_calendar_month(month.previous(), window, cx)
-                            })),
+                        surfaces::icon_action(
+                            "calendar-previous",
+                            "chevron-left",
+                            tr("Earlier month"),
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.show_calendar_month(month.previous(), window, cx)
+                        })),
                     )
-                    .child(div().flex_1().text_sm().child(month.label()))
                     .child(
-                        icon_button("calendar-next", "chevron-right", tr("Later month"))
-                            .disabled(month == this_month)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.show_calendar_month(month.next(), window, cx)
-                            })),
-                    ),
-            )
-            .child(
-                div().px_1().pt_1().child(
-                    Button::new("calendar-today")
-                        .label(tr("This month"))
-                        .xsmall()
-                        .ghost()
+                        div().flex_1().h_flex().justify_center().child(
+                            surfaces::fact(month.label(), cx).text_color(cx.theme().foreground),
+                        ),
+                    )
+                    .child(
+                        surfaces::icon_action(
+                            "calendar-next",
+                            "chevron-right",
+                            tr("Later month"),
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
+                        .disabled(month == this_month)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.show_calendar_month(month.next(), window, cx)
+                        })),
+                    )
+                    .child(
+                        surfaces::icon_action(
+                            "calendar-today",
+                            "calendar",
+                            tr("This month"),
+                            surfaces::IconTone::Faded,
+                            cx,
+                        )
                         .disabled(month == this_month)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.show_calendar_month(this_month, window, cx)
                         })),
-                ),
+                    ),
             )
             .child(
                 div()
@@ -183,24 +200,30 @@ impl Workspace {
             let id = project.id.clone();
             let shown = !self.calendar_hidden.contains(&project.id);
             side = side.child(
-                // A button alone in a column would stretch across it.
+                // A chip that is chosen while its project is shown, with a
+                // check; a chip alone in a column would stretch across it.
                 div().h_flex().px_1().child(
-                    Button::new(SharedString::from(format!("calendar-project-{id}")))
-                        .label(project.name.clone())
-                        .xsmall()
-                        .ghost()
-                        .selected(shown)
-                        .tooltip(if shown {
+                    surfaces::choice_chip(
+                        SharedString::from(format!("calendar-project-{id}")),
+                        shown,
+                        cx,
+                    )
+                    .when(shown, |chip| chip.child(crate::assets::icon("check")))
+                    .child(div().max_w(px(180.)).truncate().child(project.name.clone()))
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(if shown {
                             tr("Shown; press to leave it out")
                         } else {
                             tr("Left out; press to show it")
                         })
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if !this.calendar_hidden.remove(&id) {
-                                this.calendar_hidden.insert(id.clone());
-                            }
-                            cx.notify();
-                        })),
+                        .build(window, cx)
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !this.calendar_hidden.remove(&id) {
+                            this.calendar_hidden.insert(id.clone());
+                        }
+                        cx.notify();
+                    })),
                 ),
             );
         }
@@ -252,7 +275,8 @@ impl Workspace {
                     .px_2()
                     .text_xs()
                     .text_color(muted)
-                    .child(name),
+                    // The table has the weekdays in each language.
+                    .child(tr(name)),
             );
         }
         grid = grid.child(heads);

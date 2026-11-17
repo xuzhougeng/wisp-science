@@ -861,7 +861,7 @@ impl Workspace {
             for (entry_index, (time, entry)) in day.entries.iter().enumerate() {
                 let mut row = surfaces::record_row(
                     ("journey-entry", day_index * 10_000 + entry_index),
-                    entry.title.clone(),
+                    crate::present::title_line(&entry.title),
                 )
                 .time(time.clone())
                 .icon(journey::kind_icon(&entry.kind));

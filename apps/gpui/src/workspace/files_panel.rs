@@ -9,7 +9,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::{Input, InputState},
+    input::InputState,
     text::TextView,
 };
 
@@ -1008,7 +1008,11 @@ impl Workspace {
         div()
             .flex_1()
             .min_h_0()
-            .child(Input::new(&self.file_view).disabled(true).h_full())
+            .child(
+                gpui_component::input::Input::new(&self.file_view)
+                    .disabled(true)
+                    .h_full(),
+            )
             .into_any_element()
     }
 
@@ -1620,7 +1624,7 @@ impl Workspace {
                     div()
                         .flex_1()
                         .min_h_0()
-                        .child(Input::new(text).disabled(true).h_full()),
+                        .child(super::surfaces::input(text, cx).disabled(true).h_full()),
                 )
                 .into_any_element();
         }
@@ -2076,7 +2080,7 @@ impl Workspace {
                     .child(
                         // White, with the fields' line, as every field is.
                         surfaces::field(cx).flex_1().min_w_0().child(
-                            Input::new(&self.file_search)
+                            super::surfaces::input(&self.file_search, cx)
                                 .small()
                                 .appearance(false)
                                 .cleanable(true),
@@ -2135,7 +2139,7 @@ impl Workspace {
                     .border_b_1()
                     .border_color(border)
                     .child(div().text_xs().text_color(muted).child(naming.title()))
-                    .child(Input::new(&self.file_name_input).small())
+                    .child(super::surfaces::input(&self.file_name_input, cx).small())
                     .child(
                         div()
                             .h_flex()

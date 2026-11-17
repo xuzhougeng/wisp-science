@@ -146,7 +146,12 @@ impl Workspace {
             .icon("skill")
             .suffix(entry.author.clone())
             .below((!entry.description.is_empty()).then(|| {
-                surfaces::settings_note(entry.description.clone(), cx).into_any_element()
+                surfaces::one_line_note(
+                    SharedString::from(format!("store-about-{}", entry.name)),
+                    entry.description.clone(),
+                    cx,
+                )
+                .into_any_element()
             }));
         if installed {
             row.stamp(surfaces::StampKind::Success, tr("Installed"))
@@ -179,7 +184,11 @@ impl Workspace {
         let mut about = div()
             .v_flex()
             .gap_0p5()
-            .child(surfaces::settings_note(candidate.description.clone(), cx))
+            .child(surfaces::one_line_note(
+                SharedString::from(format!("candidate-about-{}", candidate.name)),
+                candidate.description.clone(),
+                cx,
+            ))
             .child(surfaces::fact(
                 crate::i18n::fill(
                     tr("{} at {}, in {}"),

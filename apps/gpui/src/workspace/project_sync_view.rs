@@ -278,7 +278,7 @@ impl Workspace {
         }
         if let Some(note) = &self.project_sync_note {
             block = block.child(match note {
-                Ok(said) => chip(said.clone(), Tone::Success, cx),
+                Ok(said) => super::surfaces::status(said.clone(), Tone::Success, cx),
                 Err(error) => chip(crate::i18n::host(error), Tone::Danger, cx),
             });
         }
@@ -522,7 +522,7 @@ impl Workspace {
         );
         if let Some(note) = &self.sync_note {
             card = card.child(match note {
-                Ok(said) => chip(said.clone(), Tone::Success, cx),
+                Ok(said) => super::surfaces::status(said.clone(), Tone::Success, cx),
                 Err(error) => chip(crate::i18n::host(error), Tone::Danger, cx),
             });
         }

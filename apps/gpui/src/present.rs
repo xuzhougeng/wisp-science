@@ -22,6 +22,42 @@ pub fn one_line(title: &str) -> String {
     title.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// A message's first words shown as a title, on one line and without the
+/// inline marks of Markdown: `**Summary**: done` reads `Summary: done`. A
+/// heading's or a quote's mark at the start goes too, and a link keeps its
+/// words. Used wherever a conversation's or a saved passage's opening line
+/// stands as a title.
+pub fn title_line(text: &str) -> String {
+    let line = one_line(text);
+    let mut line = line.trim_start_matches(['#', '>', ' ']).to_owned();
+    for mark in ["**", "__", "~~", "`"] {
+        line = line.replace(mark, "");
+    }
+    // `[words](address)` keeps its words.
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line.as_str();
+    while let Some(open) = rest.find('[') {
+        let after = &rest[open + 1..];
+        match after.find("](").and_then(|close| {
+            after[close + 2..]
+                .find(')')
+                .map(|end| (close, close + 2 + end))
+        }) {
+            Some((close, end)) => {
+                out.push_str(&rest[..open]);
+                out.push_str(&after[..close]);
+                rest = &after[end + 1..];
+            }
+            None => {
+                out.push_str(&rest[..=open]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out.trim().to_owned()
+}
+
 pub fn heading(item: &Item) -> String {
     item.tool_name
         .clone()
@@ -136,19 +172,22 @@ pub fn tool_icon(item: &Item) -> &'static str {
 }
 
 /// The number of the entry `index` starts, when it is one of the user's
-/// messages: its place among them, from 1, in the rows the view holds.
-/// Every entry number comes from here, so how it is counted (and kept
-/// stable over compaction, rewinding and branches) can change in one
-/// place.
-pub fn entry_number(rows: &[Item], index: usize) -> Option<usize> {
+/// messages: its place among them, from 1. `earlier` is how many of the
+/// user's messages come before the rows the view holds (the host's
+/// `user_offset` for the earliest page loaded), so a number stays the same
+/// whether or not the earlier pages are loaded. Every entry number comes
+/// from here, so how it is counted (and kept stable over compaction,
+/// rewinding and branches) can change in one place.
+pub fn entry_number(rows: &[Item], index: usize, earlier: usize) -> Option<usize> {
     if rows.get(index)?.role != "user" {
         return None;
     }
     Some(
-        rows[..=index]
-            .iter()
-            .filter(|row| row.role == "user")
-            .count(),
+        earlier
+            + rows[..=index]
+                .iter()
+                .filter(|row| row.role == "user")
+                .count(),
     )
 }
 
@@ -472,6 +511,22 @@ mod tests {
     }
 
     #[test]
+    fn a_title_drops_the_marks_of_markdown() {
+        assert_eq!(
+            title_line("**Summary**: the reads align"),
+            "Summary: the reads align"
+        );
+        assert_eq!(title_line("## Plan\nnext"), "Plan next");
+        assert_eq!(title_line("> quoted `code` here"), "quoted code here");
+        assert_eq!(
+            title_line("See [the paper](https://example.org) now"),
+            "See the paper now"
+        );
+        assert_eq!(title_line("a [bracket] stays"), "a [bracket] stays");
+        assert_eq!(title_line("  "), "");
+    }
+
+    #[test]
     fn a_title_is_shown_on_one_line() {
         assert_eq!(
             one_line("[Scheduled task: 周报]\n\nSummarize  this\tweek "),
@@ -562,9 +617,17 @@ mod tests {
             item(json!({"role": "user", "text": "second"})),
             item(json!({"role": "assistant", "text": "b"})),
         ];
-        let numbers: Vec<_> = (0..rows.len()).map(|at| entry_number(&rows, at)).collect();
+        let numbers: Vec<_> = (0..rows.len())
+            .map(|at| entry_number(&rows, at, 0))
+            .collect();
         assert_eq!(numbers, [Some(1), None, None, Some(2), None]);
-        assert_eq!(entry_number(&rows, 9), None);
+        assert_eq!(entry_number(&rows, 9, 0), None);
+        // With 40 of the user's messages before the loaded page, the same
+        // messages keep the numbers they have when everything is loaded.
+        let later: Vec<_> = (0..rows.len())
+            .map(|at| entry_number(&rows, at, 40))
+            .collect();
+        assert_eq!(later, [Some(41), None, None, Some(42), None]);
         assert_eq!(latest_entry(&rows), Some(3));
         assert_eq!(latest_entry(&rows[1..3]), None);
     }

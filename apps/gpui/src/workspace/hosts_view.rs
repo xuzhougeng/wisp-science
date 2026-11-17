@@ -12,7 +12,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::Input,
 };
 
 use super::{
@@ -631,44 +630,55 @@ impl Workspace {
                     // runs has its console, and can be stopped.
                     if row.is_none_or(|row| row.state == RuntimeState::Stopped) {
                         actions = actions.child(
-                            Button::new(("host-runtime-start", index))
-                                .label(if *starting == Some(language) {
+                            surfaces::outlined_action(
+                                ("host-runtime-start", index),
+                                "play",
+                                if *starting == Some(language) {
                                     tr("Starting…")
                                 } else {
                                     tr("Start")
-                                })
-                                .xsmall()
-                                .disabled(starting.is_some())
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.start_on_host(language, window, cx)
-                                })),
+                                },
+                                cx,
+                            )
+                            .disabled(starting.is_some())
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| this.start_on_host(language, window, cx),
+                            )),
                         );
                     }
                     if let Some(row) = row {
                         if row.state != RuntimeState::Stopped {
                             let id = row.id.clone();
                             actions = actions.child(
-                                Button::new(("host-runtime-console", index))
-                                    .label(tr("Console"))
-                                    .xsmall()
-                                    .ghost()
-                                    .tooltip(tr("Its variables, and code of your own to run in it"))
-                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                surfaces::icon_action(
+                                    ("host-runtime-console", index),
+                                    "terminal",
+                                    tr("Its variables, and code of your own to run in it"),
+                                    surfaces::IconTone::Faded,
+                                    cx,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
                                         this.open_console(id.clone(), window, cx)
-                                    })),
+                                    },
+                                )),
                             );
                         }
                         if let Some((label, hint)) = crate::controls::runtime_action(row) {
                             let id = row.id.clone();
                             actions = actions.child(
-                                Button::new(("host-runtime-stop", index))
-                                    .label(label)
-                                    .xsmall()
-                                    .ghost()
-                                    .tooltip(hint)
-                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                surfaces::icon_action(
+                                    ("host-runtime-stop", index),
+                                    "stop",
+                                    format!("{label}: {hint}"),
+                                    surfaces::IconTone::Faded,
+                                    cx,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
                                         this.stop_runtime(id.clone(), window, cx)
-                                    })),
+                                    },
+                                )),
                             );
                         }
                     }
@@ -700,9 +710,9 @@ impl Workspace {
                     Some(Ok(_)) => {
                         card = card
                             .child(line(tr("Python executable").into()))
-                            .child(Input::new(&self.interpreter_fields[0]).small())
+                            .child(surfaces::input(&self.interpreter_fields[0], cx).small())
                             .child(line(tr("Rscript executable").into()))
-                            .child(Input::new(&self.interpreter_fields[1]).small())
+                            .child(surfaces::input(&self.interpreter_fields[1], cx).small())
                             .child(line(
                                 tr("One already running keeps its interpreter until it is restarted.")
                                     .into(),
@@ -907,11 +917,11 @@ impl Workspace {
             .child(label(tr(
                 "Uploaded data goes to (a whole path, or under ~/)",
             )))
-            .child(Input::new(&self.storage_fields[0]).small())
+            .child(surfaces::input(&self.storage_fields[0], cx).small())
             .child(label(tr("Run folders are made under (in the home folder)")))
-            .child(Input::new(&self.storage_fields[1]).small())
+            .child(surfaces::input(&self.storage_fields[1], cx).small())
             .child(label(tr("Results come back into (in the project)")))
-            .child(Input::new(&self.storage_fields[2]).small())
+            .child(surfaces::input(&self.storage_fields[2], cx).small())
             .child(
                 div()
                     .h_flex()

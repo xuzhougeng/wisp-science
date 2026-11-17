@@ -954,7 +954,11 @@ impl Workspace {
             let under = div()
                 .v_flex()
                 .gap_0p5()
-                .child(surfaces::settings_note(row.description.clone(), cx))
+                .child(surfaces::one_line_note(
+                    SharedString::from(format!("skill-about-{}", row.name)),
+                    row.description.clone(),
+                    cx,
+                ))
                 .child(surfaces::fact(about, cx));
             list = list.child(
                 item_row(
@@ -1166,7 +1170,14 @@ impl Workspace {
             list = list.child(
                 item_row(
                     SharedString::from(row.domain.clone()),
-                    Some(surfaces::settings_note(row.description.clone(), cx).into_any_element()),
+                    Some(
+                        surfaces::one_line_note(
+                            SharedString::from(format!("connector-about-{}", row.domain)),
+                            row.description.clone(),
+                            cx,
+                        )
+                        .into_any_element(),
+                    ),
                     controls,
                     cx,
                 )

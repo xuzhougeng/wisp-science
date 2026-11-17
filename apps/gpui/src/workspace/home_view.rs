@@ -784,8 +784,11 @@ impl Workspace {
                 .rounded(cx.theme().radius_lg)
                 .border_1()
                 .border_color(line);
+            let count = cells.len();
             for (index, row) in surfaces::rows_of(cells, 2).into_iter().enumerate() {
-                let short = row.len() < 2;
+                // A last cell alone takes the whole line: no empty bordered
+                // half beside it.
+                let short = !home::last_cell_spans(count, 2) && row.len() < 2;
                 // A plain flex row stretches its cells to one height.
                 let mut pair = div()
                     .flex()
@@ -817,7 +820,7 @@ impl Workspace {
                 let session = row.id.clone();
                 let mut record = surfaces::record_row(
                     SharedString::from(format!("recent-{session}")),
-                    crate::present::one_line(&row.title),
+                    crate::present::title_line(&row.title),
                 )
                 .time(home::clock(now, row.activity_at))
                 .icon("chat");
@@ -866,24 +869,30 @@ impl Workspace {
                     .child(start),
             );
         if !self.settings.configured() {
+            // A bar to act on: white, a line, its icon in the waiting
+            // colour, the sentence and the way to Settings.
             page = page.child(
-                div()
+                surfaces::bar("home-configure", cx)
                     .h_flex()
+                    .items_center()
                     .gap_3()
-                    .px_4()
-                    .py_3()
-                    .rounded(cx.theme().radius_lg)
-                    .bg(cx.theme().muted)
-                    .child(div().flex_1().child(tr(
+                    .child(
+                        crate::assets::icon("circle-alert")
+                            .text_color(surfaces::stamp_color(surfaces::StampKind::Waiting, cx)),
+                    )
+                    .child(div().flex_1().min_w_0().child(tr(
                         "Choose a model before you start: Wisp needs one to answer.",
                     )))
                     .child(
-                        Button::new("home-configure-model")
-                            .label(tr("Open Settings"))
-                            .small()
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.open_settings(window, cx)),
-                            ),
+                        surfaces::outlined_action(
+                            "home-configure-model",
+                            "gear",
+                            tr("Open Settings"),
+                            cx,
+                        )
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_settings(window, cx)),
+                        ),
                     ),
             );
         }

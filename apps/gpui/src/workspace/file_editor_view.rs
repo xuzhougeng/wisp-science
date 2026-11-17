@@ -12,7 +12,7 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    input::{Input, Position},
+    input::Position,
 };
 
 use super::{
@@ -378,7 +378,7 @@ impl Workspace {
             .on_action(
                 cx.listener(|this, _: &RunScript, window, cx| this.run_file_script(window, cx)),
             )
-            .child(Input::new(&self.file_view).h_full())
+            .child(super::surfaces::input(&self.file_view, cx).h_full())
     }
 
     /// The row over an edited script: how to run it, Run script, Run, and
