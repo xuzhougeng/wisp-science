@@ -6,6 +6,11 @@ desktop already has, so a researcher who moves over recognises the product.
 The direction was chosen on 2026-11-15 from four candidates and is called
 *paper notebook* (纸本笔记).
 
+A proposed successor, *lab record* (实验记录本), with an icon language shared
+with the WebView, is written up in
+[the design draft](superpowers/specs/2026-11-16-gpui-lab-record-design-language.md).
+It is not implemented; until it is, the rules below are the ones in force.
+
 This page is the rule book. [GPUI desktop](gpui-desktop.md) describes how the
 build works and [GPUI parity ledger](gpui-parity.md) what is ported.
 
