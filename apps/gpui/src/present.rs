@@ -58,6 +58,35 @@ pub fn title_line(text: &str) -> String {
     out.trim().to_owned()
 }
 
+/// Whether a row is an answer the user reads: Wisp's text, or a turn's
+/// answer delivered through `attempt_completion` that came back with text.
+/// A completion that failed or still runs, and every other tool, is a
+/// tool row. The one place this is decided.
+pub fn is_answer(item: &Item) -> bool {
+    (item.role == "assistant" && !item.text.trim().is_empty()) || item.is_completion_answer()
+}
+
+/// The row as the transcript holds it: a completion's answer becomes
+/// Wisp's answer, so copying, quoting, favourites, find, the outline and
+/// the turn's actions all take its text as the answer's; any other row is
+/// kept as it is.
+pub fn as_answer(item: Item) -> Item {
+    if item.is_completion_answer() {
+        Item {
+            role: "assistant".into(),
+            tool_name: None,
+            input: None,
+            call_id: None,
+            status: None,
+            ok: None,
+            duration_ms: None,
+            ..item
+        }
+    } else {
+        item
+    }
+}
+
 pub fn heading(item: &Item) -> String {
     item.tool_name
         .clone()
@@ -189,6 +218,13 @@ pub fn entry_number(rows: &[Item], index: usize, earlier: usize) -> Option<usize
                 .filter(|row| row.role == "user")
                 .count(),
     )
+}
+
+/// The number the next entry will have, written in the gutter beside the
+/// composer: one more than the user's messages so far, counted as
+/// `entry_number` counts them. None where nothing can be written.
+pub fn next_entry_number(rows: &[Item], earlier: usize, writable: bool) -> Option<usize> {
+    writable.then(|| earlier + rows.iter().filter(|row| row.role == "user").count() + 1)
 }
 
 /// The row of the latest entry: the last of the user's messages.
@@ -798,6 +834,66 @@ mod tests {
             session_mark(&row("idle", false), true).map(|mark| mark.0),
             Some("pin")
         );
+    }
+
+    #[test]
+    fn the_next_entry_follows_the_last_one_numbered() {
+        let user = |text: &str| item(json!({"role": "user", "text": text}));
+        let rows = [
+            user("one"),
+            item(json!({"role": "assistant", "text": "a"})),
+            user("two"),
+            item(json!({"tool_name": "shell", "text": "ok"})),
+        ];
+        assert_eq!(next_entry_number(&rows, 0, true), Some(3));
+        // As `entry_number` counts: earlier pages count too.
+        assert_eq!(entry_number(&rows, 2, 5), Some(7));
+        assert_eq!(next_entry_number(&rows, 5, true), Some(8));
+        assert_eq!(next_entry_number(&[], 0, true), Some(1));
+        // Nothing where the conversation cannot be written to.
+        assert_eq!(next_entry_number(&rows, 0, false), None);
+    }
+
+    #[test]
+    fn a_completions_answer_is_the_answer_and_anything_else_a_tool() {
+        let completion = |text: &str, ok: Option<bool>, status: &str| {
+            item(json!({
+                "tool_name": "attempt_completion", "text": text, "ok": ok,
+                "status": status
+            }))
+        };
+        // Came back with text: the answer, drawn as Wisp's.
+        let done = completion("| a | b |", None, "complete");
+        assert!(is_answer(&done));
+        let shown = as_answer(done);
+        assert_eq!(shown.role, "assistant");
+        assert_eq!(shown.text, "| a | b |");
+        assert_eq!(shown.tool_name, None);
+        assert!(is_answer(&completion("Done.", Some(true), "complete")));
+        // Failed, refused or still running: a tool row.
+        for row in [
+            completion("Done.", Some(false), "complete"),
+            completion(
+                "attempt_completion error: 'result' must contain text",
+                None,
+                "complete",
+            ),
+            completion("", None, "running"),
+            completion("", None, "complete"),
+        ] {
+            assert!(!is_answer(&row), "{row:?}");
+            assert_eq!(as_answer(row).role, "tool");
+        }
+        // Other tools stay tools; Wisp's text is an answer, an empty one not.
+        assert!(!is_answer(&item(
+            json!({"tool_name": "shell", "text": "ok", "ok": true})
+        )));
+        assert!(is_answer(&item(
+            json!({"role": "assistant", "text": "Yes."})
+        )));
+        assert!(!is_answer(&item(
+            json!({"role": "assistant", "text": "  "})
+        )));
     }
 
     #[test]

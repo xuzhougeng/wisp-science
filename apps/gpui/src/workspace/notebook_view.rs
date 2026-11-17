@@ -2,7 +2,7 @@
 //! as cells, with what each run returned.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
-use gpui_component::{ActiveTheme, StyledExt, text::TextView};
+use gpui_component::{ActiveTheme, StyledExt};
 
 use super::{Workspace, chip, shell::icon_button, surfaces};
 use crate::{
@@ -147,7 +147,7 @@ impl Workspace {
                         ),
                 )
                 .child(
-                    TextView::markdown(
+                    surfaces::markdown(
                         SharedString::from(format!("notebook-source-{}", cell.number)),
                         present::fenced(&cell.source, &cell.language),
                         window,

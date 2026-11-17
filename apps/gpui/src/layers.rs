@@ -26,6 +26,9 @@ pub enum Layer {
     PanelTabMenu,
     /// The rest of the Files tab's actions, under its header's More.
     FilesMenu,
+    /// The rest of a previewed file's actions, under its header's More, in
+    /// the side panel or the centre.
+    FilePreviewMenu,
     /// Question under a run's card before its workspace is deleted.
     ConfirmCleanRun,
     /// Where the project keeps things on one SSH host, in the
@@ -1365,6 +1368,17 @@ mod tests {
         stack.open(Layer::HookForm);
         assert!(stack.close(Layer::Settings));
         assert!(!stack.contains(Layer::HookForm));
+    }
+
+    #[test]
+    fn a_previews_more_closes_before_the_preview() {
+        let mut stack = EscapeStack::default();
+        stack.open(Layer::FilesPanel);
+        stack.open(Layer::FilePreview);
+        stack.open(Layer::FilePreviewMenu);
+        assert_eq!(stack.dismiss_top(), Some(Layer::FilePreviewMenu));
+        assert!(stack.contains(Layer::FilePreview));
+        assert!(stack.contains(Layer::FilesPanel));
     }
 
     #[test]

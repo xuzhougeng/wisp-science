@@ -818,9 +818,9 @@ impl Workspace {
                     .text_color(muted)
                     .child(match self.palette.mode {
                         Mode::Open | Mode::Commands => {
-                            "↑ ↓ to move · Return to open · Esc to close"
+                            tr("↑ ↓ to move · Return to open · Esc to close")
                         }
-                        Mode::Attach => "↑ ↓ to move · Return to add · Esc to close",
+                        Mode::Attach => tr("↑ ↓ to move · Return to add · Esc to close"),
                         Mode::Memos => {
                             tr("↑ ↓ to move · Return to put it into the message · Esc to close")
                         }

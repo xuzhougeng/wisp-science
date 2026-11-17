@@ -69,7 +69,11 @@ for text size moves all four together.
   for at most one line per region that must be seen first, used sparingly.
   What is chosen, open or current is said with the ground, ink against
   faded ink, or teal, never with weight. No Semibold or Bold anywhere; a
-  terminal's bold is drawn in Medium. A name with a note: the name in
+  terminal's bold is drawn in Medium. In Markdown (answers, documents,
+  reports) strong text and every heading are Medium, and headings rank by
+  size only: an h1 1.3× body text (no larger than a title), an h2 1.15×,
+  the rest body size (`surfaces::heading_scale`); a table's header row is
+  Regular like its cells. A name with a note: the name in
   ink, the note faded, the same weight. A test in `surfaces.rs` rejects a
   heavier weight anywhere else.
 - Rank is said with colour (`muted_foreground`), not with a smaller size.
@@ -195,7 +199,8 @@ names and never a colour of their own.
 - Below it one centred column, at most 880 px wide: the greeting (Display),
   the search field (white, a line, `radius`), then the ways to start (New
   project filled; Open folder and Import outlined, with icons), on one line
-  that does not wrap. At its right end "More ways to start" opens a menu
+  that does not wrap. At its right end "More ways to start" (a chevron:
+  the rest of these, not more actions) opens a menu
   (`Layer::StartMenu`, closed by Escape) of the rarer ways, each an icon
   and a word: Example conversations, Bring over from WebView, Join from
   another device, Sample project.
@@ -315,7 +320,24 @@ names and never a colour of their own.
   host, its output) is what the row opens to. Thoughts (`brain`), a review kept
   with the conversation (`review`, its outcome as a stamp; a click shows the
   report) and a branch brought back (`branch`) are record rows too.
-- Wisp's answers are body text on the paper. Questions the model asked,
+- Markdown (answers, the side chat, a `.md` preview, favourites, reports)
+  goes through `surfaces::markdown`: blocks stand about 0.6 em apart
+  (`PARAGRAPH_GAP`), before and after lists, code and tables too. The
+  component library drew no gap at all; the vendored copy fixes it
+  (`vendor/gpui-component/WISP-PATCH.md`). Closing CJK punctuation can
+  still start a line: GPUI 0.2.2's wrapper has no line-breaking rules.
+- Whether a model is there is one answer (`settings::has_model`: a usable
+  saved or `WISP_*` model, or Magpie), for the start-up jump to Settings,
+  the home page's bar, the composer's line and the guide's model step.
+- Wisp's answers are body text on the paper, in the UI face at Regular
+  with its Chinese face named outright (`surfaces::body_face`; left to the
+  system the Chinese came out a step heavier). The answer a turn delivers
+  through `attempt_completion` is Wisp's answer like any other
+  (`present::is_answer`, `present::as_answer`): drawn as body text with the
+  entry's actions and what the turn cost, and taken as the answer by copy,
+  quote, favourites, find, the outline, share and export. A completion
+  that failed or still runs stays a record row; an answer with no text
+  draws nothing. Questions the model asked,
   plans to approve, the working plan and the cards of work handed to other
   agents stay cards in the column; the compaction line stays a line.
 - A conversation that cannot be written to has no message box: one bar
@@ -334,6 +356,21 @@ names and never a colour of their own.
   line of them stands between the text and what follows.
 - **The composer** is one white box (`radius_lg`, the `input.border` line,
   the teal ring on focus): the text on top, one line of controls under it.
+  It is attached to the record line (spec §7.3): its left border is on the
+  line, past the 64 px gutter, and its right border is where answers and
+  record rows end (`ENTRY_RIGHT`, 24 px short of the column). Its text,
+  chips and the `+` icon start where an answer's text does (`ENTRY_TEXT`
+  past the line; the `+` button reaches `ICON_INSET` left of it); the send
+  button keeps the box's 8 px inset. The line runs unbroken down to the
+  box's top border (behind a short transcript too, `record_line_behind`)
+  and not beside or below it. The gutter beside the box's first line holds
+  the next entry's number in faded fact text (`present::next_entry_number`),
+  nothing where the conversation cannot be written to. The bars above it
+  and the composer's own strips are cards beside the line with the box's
+  edges. All of it goes through `surfaces::entry_aligned`. In a split
+  beside a document narrower than 420 px (`GUTTER_COLUMN_MIN`) the gutter
+  and the numbers are left out and the line is the column's left edge;
+  the box stays on it.
   - At the left end a `+` icon button opens a menu (`Layer::PlusMenu`) of
     what can be put into the message, each an icon and a word with its key
     in fact text: attach files, add a project file, conversation or skill
@@ -379,10 +416,14 @@ names and never a colour of their own.
     open tab is a white chip with a hairline, its icon and name in ink, Runs
     with the count still going; the others are faded icon buttons with
     their name as tooltip. They come in the panel's order as far as the
-    width allows (`panel::strip`, measured); the rest go into More at the
-    strip's right, which also holds Remove this tab and the tabs that can be
-    added back, each an icon and a word (`Layer::PanelTabMenu`). The close
-    button ends the strip.
+    width allows (`panel::strip`, measured); the rest go under a chevron
+    (`chevron-down`, "More tabs") at the strip's right, which also holds
+    Remove this tab and the tabs that can be added back, each an icon and a
+    word (`Layer::PanelTabMenu`). The strip has no close cross: the bar's
+    side-panel toggle and Escape close the panel. Its last button stands
+    `surfaces::RIGHT_INSET` (12 px) from the window's edge, as the bar's
+    last does, so the two sit on one vertical line (on macOS and Linux; on
+    Windows the bar ends at the system's buttons).
   - **Header** (`panel_header`): a tab with actions over its whole list,
     or a group in it with its own (Files and a host's folders, a file's
     preview, Artifacts, Highlights, Memos, Memory's habits and notes, the
@@ -438,8 +479,14 @@ names and never a colour of their own.
     conversation's header, on the paper, as the preview the Files tab draws
     (`preview_parts`): the same header row (its name in ink, a faded
     note, its actions as icon buttons, a hairline under it), the same bars
-    and the same inset. The header's last button splits the centre. The
-    centre draws no preview of its own.
+    and the same inset. The centre draws no preview of its own.
+  - **A file's header** has at most four icon buttons: Back first, at the
+    left of the name (in the side panel; the centre has none); after the
+    name where to show it (Open in centre from the side panel, the split
+    in the centre), Attach to the message, and More (`Layer::FilePreviewMenu`):
+    copy the path, keep as an artifact, ask aside about the selection,
+    where it came from, show in the file manager, open with the system's
+    application, each an icon and a word.
   - **Split**: the document on the left; a divider, a hairline in a 5 px
     grip that goes teal under the pointer and drags; the conversation on the
     right in a column of its own, 38% of the centre until dragged and never
@@ -627,11 +674,24 @@ names and never a colour of their own.
   under the pointer or when chosen, teal while a mode is on. Status colours
   are the stamp's, and the danger colour a delete's. `surfaces::sized_icon`
   draws one; an icon in a faded state turns to ink in an `ICON_HOVER` group.
+- **More and the rest** (spec §9.3): `more`, three horizontal dots, is
+  "more actions on this thing"; "the rest of these" (a strip's or a
+  toolbar's overflow, the start menu) is `chevron-down`. Two adjacent
+  controls never share an icon with different meanings, and a panel a
+  toggle closes has no cross of its own. `close` is inset (7 to 17) so it
+  is optically the size of its neighbours.
 - **Icon buttons** (`surfaces::icon_action`): a toolbar-size icon in a
   28 px square (more than the 26 a pointer needs), with a tooltip its
   signature requires. An icon and a word (`surfaces::labelled_action`) is
   for navigation and actions with consequences. The rest of the app moves
   onto these in later steps; the older `icon_button` stays until then.
+- **Scrolling**: a column, rail, list, menu or dialog body whose content
+  can be taller than its space scrolls under a stable id rather than being
+  cut. A menu or list under a button is never taller than the window has
+  room for (`surfaces::menu_room`; a message's menu, opened anywhere in
+  the transcript, half the window). The conversation menu is the one
+  exception for now: its Group and Move choices open beside it, and a
+  scrolling menu would clip them.
 - **Escape**: every dismissible layer joins the window's stack in
   `apps/gpui/src/layers.rs`.
 

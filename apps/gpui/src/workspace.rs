@@ -2220,7 +2220,9 @@ impl Workspace {
                 self.ensure_files(window, cx);
             }
             Some(Layer::FilesPanel) => self.restore_focus(window, cx),
-            Some(Layer::PanelTabMenu | Layer::StartMenu | Layer::FilesMenu) => {}
+            Some(
+                Layer::PanelTabMenu | Layer::StartMenu | Layer::FilesMenu | Layer::FilePreviewMenu,
+            ) => {}
             Some(Layer::MessageMenu) => self.message_menu = None,
             Some(Layer::Inbox) => {}
             Some(Layer::ConfirmCleanRun) => self.run_cleaning = None,
@@ -3647,8 +3649,15 @@ impl Workspace {
             self.history_under = latest;
             self.earlier_users = snapshot.user_offset;
         }
-        let mut rows = self.history.clone();
-        rows.extend(snapshot.items.clone());
+        // A turn's answer delivered through its completion reads as Wisp's
+        // answer everywhere the rows are read (`present::as_answer`).
+        let mut rows: Vec<Item> = self
+            .history
+            .iter()
+            .cloned()
+            .map(present::as_answer)
+            .collect();
+        rows.extend(snapshot.items.iter().cloned().map(present::as_answer));
         // Keep cached heights for unchanged rows. Streaming invalidates just its
         // changing suffix; GPUI lays out only visible rows and the overdraw area.
         let prefix = self
@@ -4893,6 +4902,8 @@ impl Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // How tall this window's menus may be (`surfaces::menu_room`).
+        surfaces::note_window_height(f32::from(window.viewport_size().height));
         let root = div()
             .relative()
             .size_full()

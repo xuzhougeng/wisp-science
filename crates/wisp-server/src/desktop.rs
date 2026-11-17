@@ -122,6 +122,10 @@ pub struct ModelProfile {
 pub struct ModelSettings {
     pub profiles: Vec<ModelProfile>,
     pub source: ModelSource,
+    /// The model of the Magpie connection the app started with, while one
+    /// is connected: every built-in conversation runs on it, and the saved
+    /// models apply again after disconnecting and restarting.
+    pub magpie: Option<String>,
 }
 
 pub struct ModelInput {
@@ -159,6 +163,8 @@ pub(crate) struct ModelState {
     source: ModelSource,
     profiles: Vec<Loaded>,
     default: String,
+    /// The Magpie connection's model, ahead of every profile (`pick`).
+    magpie: Option<ModelConfig>,
 }
 
 fn resolve(fields: &ModelFields, key: &str) -> Result<ModelConfig> {
@@ -232,6 +238,7 @@ impl ModelState {
                 model: Ok(model),
             }],
             default: ENVIRONMENT_PROFILE.into(),
+            magpie: None,
         }
     }
 
@@ -279,6 +286,7 @@ impl ModelState {
             source: ModelSource::Saved,
             profiles,
             default: saved.default,
+            magpie: None,
         };
         Self {
             source: if state.pick("").is_ok() {
@@ -288,6 +296,28 @@ impl ModelState {
             },
             ..state
         }
+    }
+
+    /// The same models with the Magpie connection's ahead of them, as the
+    /// WebView desktop takes it: ahead of the saved profiles and of a
+    /// `WISP_*` model alike. The profiles stay as they are, editable, and
+    /// a conversation's saved choice is kept for when Magpie is gone.
+    pub fn with_magpie(mut self, magpie: Option<ModelConfig>) -> Self {
+        self.magpie = magpie;
+        self
+    }
+
+    /// What the composer and the context meter need of the Magpie model;
+    /// never its address or key.
+    pub(crate) fn magpie_info(&self) -> Option<wisp_dto::MagpieModelDto> {
+        let model = self.magpie.as_ref()?;
+        Some(wisp_dto::MagpieModelDto {
+            model: model.provider.model.clone(),
+            context_window: model.max_context as u64,
+            max_tokens: model.provider.max_tokens,
+            default_effort: model.provider.reasoning_effort.clone().unwrap_or_default(),
+            efforts: model.magpie_efforts.clone().unwrap_or_default(),
+        })
     }
 
     fn default_profile(&self) -> Option<&Loaded> {
@@ -309,6 +339,9 @@ impl ModelState {
     /// the default. A choice that was deleted since falls back to the
     /// default, but a broken one is reported rather than silently replaced.
     pub fn pick(&self, id: &str) -> Result<ModelConfig> {
+        if let Some(magpie) = &self.magpie {
+            return Ok(magpie.clone());
+        }
         let loaded = self
             .profile(id)
             .or_else(|| self.default_profile())
@@ -334,6 +367,10 @@ impl ModelState {
             .default_profile()
             .map(|loaded| loaded.profile.id.clone());
         ModelSettings {
+            magpie: self
+                .magpie
+                .as_ref()
+                .map(|model| model.provider.model.clone()),
             source: self.source,
             profiles: self
                 .profiles
@@ -541,7 +578,11 @@ impl Server {
             .store
             .set_setting(MODELS_SETTING, &serde_json::to_string(saved)?)
             .await?;
-        let state = ModelState::saved(&self.0.store, self.0.secrets.as_ref()).await;
+        // A Magpie connection stays for the process's life.
+        let magpie = self.0.model.read().unwrap().magpie.clone();
+        let state = ModelState::saved(&self.0.store, self.0.secrets.as_ref())
+            .await
+            .with_magpie(magpie);
         let settings = state.settings();
         *self.0.model.write().unwrap() = state;
         Ok(settings)
@@ -8658,6 +8699,69 @@ mod tests {
             model: model.into(),
             ..Default::default()
         }
+    }
+
+    /// A Magpie connection from a fixture, never the user's file.
+    fn magpie() -> ModelConfig {
+        let text = serde_json::json!({
+            "baseURL": "http://127.0.0.1:3425/v1", "apiKey": "fixture", "model": "p/reasoner",
+            "modelInfo": {"id": "p/reasoner", "context": 400000, "output": 64000,
+                          "efforts": ["low", "high"]}
+        });
+        ModelConfig::magpie(wisp_llm::magpie::parse(text.to_string().as_bytes()).unwrap())
+    }
+
+    #[test]
+    fn a_magpie_connection_runs_every_conversation_and_leaves_the_profiles_alone() {
+        let model = magpie();
+        // What the connection says of the model, with its header and no
+        // system proxy for a gateway on this computer.
+        assert_eq!(model.max_context, 400_000);
+        assert_eq!(model.provider.max_tokens, 64_000);
+        assert_eq!(model.provider.session_header_name, "X-Session-Id");
+        assert_eq!(model.provider.proxy.as_deref(), Some("none"));
+        assert_eq!(
+            model.magpie_efforts.as_deref(),
+            Some(&["low".to_string(), "high".to_string()][..])
+        );
+        let mut env = ModelConfig::resolve(|name| match name {
+            "WISP_MODEL" => Some("gpt-4o".into()),
+            "WISP_API_KEY" => Some("k".into()),
+            "WISP_MAX_CONTEXT" => Some("128000".into()),
+            "WISP_MAX_TOKENS" => Some("4096".into()),
+            _ => None,
+        })
+        .unwrap();
+        env.provider.model = "from-env".into();
+        // Ahead of a `WISP_*` model too, as in the WebView desktop.
+        let state = ModelState::environment(env).with_magpie(Some(model));
+        for chosen in ["", ENVIRONMENT_PROFILE, "gone"] {
+            assert_eq!(state.pick(chosen).unwrap().provider.model, "p/reasoner");
+        }
+        let settings = state.settings();
+        assert_eq!(settings.magpie.as_deref(), Some("p/reasoner"));
+        // The profiles are listed as they are, for when it is gone.
+        assert_eq!(settings.profiles.len(), 1);
+        assert_eq!(settings.profiles[0].fields.model, "from-env");
+        let info = state.magpie_info().unwrap();
+        assert_eq!(info.model, "p/reasoner");
+        assert_eq!(info.context_window, 400_000);
+        assert_eq!(info.efforts, ["low", "high"]);
+        // Without one, nothing changes.
+        let plain = ModelState::environment(
+            ModelConfig::resolve(|name| match name {
+                "WISP_MODEL" => Some("gpt-4o".into()),
+                "WISP_API_KEY" => Some("k".into()),
+                "WISP_MAX_CONTEXT" => Some("128000".into()),
+                "WISP_MAX_TOKENS" => Some("4096".into()),
+                _ => None,
+            })
+            .unwrap(),
+        )
+        .with_magpie(None);
+        assert_eq!(plain.pick("").unwrap().provider.model, "gpt-4o");
+        assert_eq!(plain.settings().magpie, None);
+        assert!(plain.magpie_info().is_none());
     }
 
     #[test]

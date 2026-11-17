@@ -475,7 +475,7 @@ impl Workspace {
     /// The rarer ways to start, under the home page's More button: each an
     /// icon and a word, its longer name as its tooltip. Escape closes it
     /// (`Layer::StartMenu`); choosing one closes it first.
-    fn start_menu(&self, cx: &mut Context<Self>) -> Div {
+    fn start_menu(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let hover = cx.theme().list_hover;
         let pending = self.pending;
         type Start = fn(&mut Workspace, &mut Window, &mut Context<Workspace>);
@@ -521,10 +521,13 @@ impl Workspace {
             ),
         ];
         let mut menu = div()
+            .id("start-menu")
             .absolute()
             .top(px(surfaces::ICON_BUTTON + 4.))
             .right_0()
             .w(px(260.))
+            .max_h(surfaces::menu_room(None, false))
+            .overflow_y_scroll()
             .v_flex()
             .p_1()
             .occlude()
@@ -714,7 +717,8 @@ impl Workspace {
         let mut more = div().relative().flex_shrink_0().child(
             surfaces::labelled_action(
                 "home-more-start",
-                "more",
+                // The rest of the ways to start, not more actions.
+                "chevron-down",
                 tr("More ways to start"),
                 IconSize::Inline,
                 if starting {

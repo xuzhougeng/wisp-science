@@ -613,10 +613,11 @@ impl Workspace {
             .overflow_x_hidden();
         if showing {
             for (index, tab) in self.terminal.tabs.iter().enumerate() {
+                let title = tab_title(&tab.info);
                 let label = if tab.info.running {
-                    tab.info.title.clone()
+                    title
                 } else {
-                    crate::i18n::fill(tr("{} (ended)"), &[&tab.info.title])
+                    crate::i18n::fill(tr("{} (ended)"), &[&title])
                 };
                 tabs = tabs.child(
                     div()
@@ -1081,4 +1082,41 @@ fn colour((r, g, b): (u8, u8, u8)) -> Hsla {
         a: 1.,
     }
     .into()
+}
+
+/// A terminal's tab title in the interface's language, at draw time: this
+/// computer's is named by the host in English, a host's is its alias.
+fn tab_title(info: &TerminalInfo) -> String {
+    if info.context_id == "local" {
+        tr("This computer").to_owned()
+    } else {
+        info.title.clone()
+    }
+}
+
+#[cfg(test)]
+mod tab_title_tests {
+    use super::{TerminalInfo, tab_title};
+    use crate::i18n::tr;
+
+    #[test]
+    fn this_computers_terminal_is_named_in_the_interfaces_language() {
+        let info = |context: &str, title: &str| TerminalInfo {
+            id: "t".into(),
+            project_id: "p".into(),
+            context_id: context.into(),
+            title: title.into(),
+            kind: "shell".into(),
+            display_cwd: String::new(),
+            running: true,
+        };
+        assert_eq!(
+            tab_title(&info("local", "This computer")),
+            tr("This computer")
+        );
+        assert_eq!(tab_title(&info("ssh-1", "gpu-box")), "gpu-box");
+        // Drawn through it, not from the stored title.
+        let view = include_str!("terminal_view.rs");
+        assert!(view.contains("let title = tab_title(&tab.info);"));
+    }
 }

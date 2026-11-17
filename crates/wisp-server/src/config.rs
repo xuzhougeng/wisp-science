@@ -15,6 +15,9 @@ pub struct ModelConfig {
     pub provider: ProviderConfig,
     pub max_context: usize,
     pub supports_vision: bool,
+    /// Set for the model a Magpie connection names: the efforts it lists,
+    /// which a conversation's own choice is checked against.
+    pub magpie_efforts: Option<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -27,6 +30,12 @@ pub struct Config {
     /// Always set for the headless server. An embedding desktop may start
     /// without one and configure it later through its settings.
     pub model: Option<ModelConfig>,
+    /// The Magpie connection the desktop found at startup
+    /// (`wisp_llm::magpie::startup_connection`). While it is set, built-in
+    /// turns and side calls run on it, ahead of saved models and of a
+    /// `WISP_*` model, as the WebView desktop does. Never read here, so a
+    /// test or the headless server is not given the user's.
+    pub magpie: Option<wisp_llm::magpie::Connection>,
     pub max_iterations: usize,
     pub skills: Vec<PathBuf>,
     /// Your own skills, as the WebView desktop keeps them (`~/.wisp/skills`):
@@ -110,9 +119,61 @@ impl ModelConfig {
             provider,
             max_context: usize::try_from(context)?,
             supports_vision: entry.is_some_and(|entry| entry.v),
+            magpie_efforts: None,
         })
     }
+
+    /// The model a Magpie connection names, as the WebView desktop takes
+    /// it: what the connection says of the model first (context, output,
+    /// efforts), then the exact-ID catalog, then the usual default context.
+    /// The connection already carries the `X-Session-Id` header and, for a
+    /// gateway on this computer, no system proxy.
+    pub fn magpie(connection: wisp_llm::magpie::Connection) -> Self {
+        let wisp_llm::magpie::Connection {
+            config: mut provider,
+            info,
+        } = connection;
+        let catalog: Option<catalog::Catalog> = serde_json::from_str(include_str!(
+            "../../../src-tauri/model_catalog.snapshot.json"
+        ))
+        .ok();
+        let entry = catalog.as_ref().and_then(|catalog| {
+            catalog::lookup(catalog, "openai", &provider.base_url, &provider.model)
+        });
+        if info.output.is_none() {
+            if let Some(output) = entry.map(|entry| entry.o).filter(|tokens| *tokens >= 16) {
+                provider.max_tokens = output;
+            }
+        }
+        let efforts = if info.efforts.is_empty() {
+            entry.map(|entry| entry.e.clone()).unwrap_or_default()
+        } else {
+            info.efforts
+        };
+        provider.reasoning_effort = wisp_llm::magpie::default_effort(&efforts).map(str::to_string);
+        let context = info
+            .context
+            .or(entry.map(|entry| entry.c))
+            .unwrap_or(MAGPIE_DEFAULT_CONTEXT);
+        Self {
+            provider,
+            max_context: usize::try_from(context).unwrap_or(usize::MAX),
+            supports_vision: entry.is_some_and(|entry| entry.v),
+            magpie_efforts: Some(efforts),
+        }
+    }
 }
+
+/// The Magpie connection `~/.config/wisp-science/magpie.json` names, read
+/// once for the process (`wisp_llm::magpie::startup_connection`), for a
+/// desktop to put in `Config::magpie`.
+pub fn startup_magpie() -> Option<wisp_llm::magpie::Connection> {
+    wisp_llm::magpie::startup_connection()
+}
+
+/// The context of a Magpie model neither the connection nor the catalog
+/// knows, as the WebView desktop assumes.
+const MAGPIE_DEFAULT_CONTEXT: u64 = 128_000;
 
 /// Endpoint used when a provider is chosen without an explicit URL.
 pub fn default_api_url(provider: &str) -> &'static str {
@@ -213,6 +274,7 @@ impl Config {
             public_url,
             code,
             model,
+            magpie: None,
             max_iterations: usize::try_from(positive(&get, "WISP_MAX_ITER")?.unwrap_or(200))?,
             skills: get("WISP_SKILLS_PATH")
                 .map(|v| std::env::split_paths(&v).collect())

@@ -7,7 +7,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    text::TextView,
 };
 use wisp_server::desktop::DelegatedBatch;
 
@@ -535,7 +534,7 @@ impl Workspace {
             }
             if !helper.findings.is_empty() {
                 card = card.child(
-                    TextView::markdown(
+                    surfaces::markdown(
                         SharedString::from(format!("agent-findings-{}", helper.number)),
                         helper.findings.clone(),
                         window,

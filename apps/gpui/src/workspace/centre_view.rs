@@ -320,9 +320,12 @@ impl Workspace {
 
     /// What can be closed from a document's tab, under it: the tab, the
     /// tabs to its right, every document, as the WebView's menu has them.
-    fn centre_tab_menu(&self, path: &str, cx: &mut Context<Self>) -> Div {
+    fn centre_tab_menu(&self, path: &str, cx: &mut Context<Self>) -> Stateful<Div> {
         let (current, right) = (path.to_owned(), path.to_owned());
         div()
+            .id("centre-tab-menu")
+            .max_h(surfaces::menu_room(None, false))
+            .overflow_y_scroll()
             .absolute()
             .top(px(32.))
             .left_0()
@@ -398,7 +401,7 @@ impl Workspace {
             .min_w_0()
             .min_h_0()
             .h_full()
-            .children(self.preview_parts(split.into_any_element(), window, cx))
+            .children(self.preview_parts(None, Some(split.into_any_element()), window, cx))
     }
 
     /// The centre under the conversation's tabs and header (`page`): the

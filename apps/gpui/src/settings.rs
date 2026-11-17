@@ -1162,8 +1162,40 @@ pub fn default_profile(settings: &ModelSettings) -> Option<&ModelProfile> {
     settings.profiles.iter().find(|profile| profile.is_default)
 }
 
-/// One line saying which model new conversations use and where it comes from.
+/// The one model a picker offers while Magpie is connected: every
+/// built-in conversation runs on it, whatever it chose before.
+pub fn magpie_label(settings: &ModelSettings) -> Option<String> {
+    let model = settings.magpie.as_ref()?;
+    Some(format!("Magpie · {model}"))
+}
+
+/// What Settings › Models says while Magpie is connected: the saved models
+/// stay editable and apply again once it is gone.
+pub fn magpie_line(settings: &ModelSettings) -> Option<String> {
+    let model = settings.magpie.as_ref()?;
+    Some(crate::i18n::fill(
+        tr(
+            "Magpie is connected: conversations run on {}. These models apply again after you \
+            disconnect it and restart Wisp.",
+        ),
+        &[model],
+    ))
+}
+
+/// Whether new turns have a model to run on: a usable saved or `WISP_*`
+/// model, or a Magpie connection. The one answer the home page's bar, the
+/// composer's line, the start-up jump to Settings, the guide's model step
+/// and Settings itself give.
+pub fn has_model(settings: &ModelSettings) -> bool {
+    settings.source != ModelSource::None || settings.magpie.is_some()
+}
+
+/// One line saying which model new conversations use and where it comes
+/// from. Empty while Magpie is connected: its own line says what runs.
 pub fn summary(settings: &ModelSettings) -> String {
+    if settings.magpie.is_some() {
+        return String::new();
+    }
     match (settings.source, default_profile(settings)) {
         (ModelSource::Environment, Some(profile)) => crate::i18n::fill(
             tr("Using {} from WISP_* environment variables. Unset them to edit models here."),
@@ -1218,6 +1250,9 @@ pub fn model_label(settings: Option<&ModelSettings>, choice: &str) -> String {
     let Some(settings) = settings else {
         return tr("Model").into();
     };
+    if let Some(label) = magpie_label(settings) {
+        return label;
+    }
     settings
         .profiles
         .iter()
@@ -1709,7 +1744,11 @@ mod tests {
     }
 
     fn settings(source: ModelSource, profiles: Vec<ModelProfile>) -> ModelSettings {
-        ModelSettings { profiles, source }
+        ModelSettings {
+            profiles,
+            source,
+            magpie: None,
+        }
     }
 
     #[test]
@@ -1842,6 +1881,35 @@ mod tests {
             "No model"
         );
         assert_eq!(model_label(None, ""), "Model");
+    }
+
+    #[test]
+    fn with_magpie_connected_every_conversation_names_it_and_the_profiles_wait() {
+        let mut two = settings(
+            ModelSource::Saved,
+            vec![profile("a", false, None), profile("b", true, None)],
+        );
+        assert_eq!(magpie_label(&two), None);
+        assert_eq!(magpie_line(&two), None);
+        two.magpie = Some("gpt-x".into());
+        // Whatever a conversation chose, it runs on Magpie's model.
+        assert_eq!(model_label(Some(&two), ""), "Magpie · gpt-x");
+        assert_eq!(model_label(Some(&two), "a"), "Magpie · gpt-x");
+        // The saved models stay editable, and one line says when they apply.
+        assert!(editable(two.source));
+        let line = magpie_line(&two).unwrap();
+        assert!(line.contains("gpt-x") && line.contains("restart"));
+        // Magpie alone is a usable model.
+        let mut none = settings(ModelSource::None, vec![]);
+        assert!(!has_model(&none));
+        none.magpie = Some("gpt-x".into());
+        assert_eq!(model_label(Some(&none), ""), "Magpie · gpt-x");
+        assert!(has_model(&none));
+        // No "no model is configured" under the Magpie line, nor a default
+        // that does not run.
+        assert_eq!(summary(&none), "");
+        assert_eq!(summary(&two), "");
+        assert!(has_model(&settings(ModelSource::Saved, vec![])));
     }
 
     #[test]

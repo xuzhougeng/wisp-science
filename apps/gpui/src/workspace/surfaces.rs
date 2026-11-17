@@ -88,6 +88,27 @@ fn fact_face() -> Font {
 /// have: each system's Chinese UI face, at the regular weight.
 const FACT_FALLBACKS: [&str; 3] = ["PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC"];
 
+/// The face of body text in the transcript (Wisp's answers, a question
+/// too long to be a title): the UI's face at the regular weight, its
+/// Chinese the UI's Chinese face named outright. Left to the system, the
+/// Chinese of the UI face comes out of its cascade a step heavier than
+/// the Latin beside it, so an answer read as Medium.
+pub(super) fn body_face(cx: &App) -> Font {
+    body_font(cx.theme().font_family.clone())
+}
+
+fn body_font(family: SharedString) -> Font {
+    let mut face = font(family);
+    face.weight = FontWeight::NORMAL;
+    face.fallbacks = Some(FontFallbacks::from_fonts(
+        FACT_FALLBACKS
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect(),
+    ));
+    face
+}
+
 /// A fact a machine measured, as the design's second rule says: a time, a
 /// duration, a size, a count, a path, an id, a model's name, a shortcut.
 /// The monospace face at the caption size (12 px), in faded ink. Not for a
@@ -778,16 +799,19 @@ pub(super) fn entry_row(
     time: Option<SharedString>,
     dot: EntryDot,
     content: AnyElement,
+    gutter: bool,
     cx: &App,
 ) -> Div {
     let theme = cx.theme();
+    // In a column too narrow for it (`entry_gutter`), no gutter: the line
+    // is the column's left edge, and the number and time are left out.
+    let (number, time) = if gutter { (number, time) } else { (None, None) };
     let gutter = div()
         .flex_none()
-        .w(px(ENTRY_GUTTER))
+        .w(px(if gutter { ENTRY_GUTTER } else { 0. }))
         .v_flex()
         .items_end()
-        .pr_3()
-        .pt(px(ENTRY_FIRST_LINE - 9.))
+        .when(gutter, |gutter| gutter.pr_3().pt(px(ENTRY_FIRST_LINE - 9.)))
         .children(number.map(|number| fact(entry_label(number), cx)))
         .children(time.map(|time| fact(time, cx)));
     const DOT: f32 = 9.;
@@ -820,6 +844,114 @@ pub(super) fn entry_row(
     )
 }
 
+/// How far the content of an entry, and what is laid on the record line
+/// with it, stops short of the reading column's right edge: an answer's
+/// `px_6`, a record row's `pr_6`, the composer's and the bars' right edge.
+pub(super) const ENTRY_RIGHT: f32 = 24.;
+
+/// How far an answer's text stands right of the record line (its `px_6`),
+/// and so the composer's text inside its box.
+pub(super) const ENTRY_TEXT: f32 = 24.;
+
+/// How far a toolbar icon stands inside its icon button (`icon_action`):
+/// half of what the button is wider than the icon.
+pub(super) const ICON_INSET: f32 = (ICON_BUTTON - IconSize::Toolbar.px()) / 2.;
+
+/// The narrowest conversation column that keeps the gutter: in a narrower
+/// one (a split beside a document) the line is the column's left edge.
+pub(super) const GUTTER_COLUMN_MIN: f32 = 420.;
+
+/// Where the composer's first line of text sits below the box's top, for
+/// the gutter's number: the border, the box's `p_2` and the input's own
+/// 8 px, less the fact's slightly shorter line.
+const COMPOSER_FIRST_LINE: f32 = 1. + 8. + 8. + 1.;
+
+/// How something is laid on the record line with the transcript's rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct EntryPlace {
+    /// Whether the column keeps its gutter (`GUTTER_COLUMN_MIN`).
+    pub gutter: bool,
+    /// The number in the gutter, beside the composer's first line.
+    pub number: Option<usize>,
+    /// Whether the record line runs down beside it. The composer's box
+    /// does not: its own left border is where the line ends.
+    pub line: bool,
+}
+
+/// What sits between the transcript and the composer (`surfaces::bar`
+/// items, the composer's strips, the read-only card), and the composer's
+/// box, on the record line: past the gutter, the left edge on the line,
+/// the right edge `ENTRY_RIGHT` short of the column's, as the rows above
+/// are laid. The one place these edges are set, so the line, the box and
+/// the answers' text cannot drift apart.
+pub(super) fn entry_aligned(content: impl IntoElement, place: EntryPlace, cx: &App) -> Div {
+    let gutter = div()
+        .flex_none()
+        .w(px(if place.gutter { ENTRY_GUTTER } else { 0. }))
+        .v_flex()
+        .items_end()
+        .when(place.gutter, |gutter| {
+            gutter.pr_3().pt(px(COMPOSER_FIRST_LINE))
+        })
+        .children(
+            place
+                .number
+                .filter(|_| place.gutter)
+                .map(|number| fact(entry_label(number), cx)),
+        );
+    let line = place.line.then(|| {
+        div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left_0()
+            .w(px(1.))
+            .bg(cx.theme().border)
+    });
+    div().w_full().flex().child(gutter).child(
+        div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .mr(px(ENTRY_RIGHT))
+            .children(line)
+            .child(content),
+    )
+}
+
+/// The record line behind the transcript's list, so it runs on through
+/// the space under a short transcript down to the bars and the composer.
+/// The rows draw their own stretch on the same x.
+pub(super) fn record_line_behind(gutter: bool, cx: &App) -> Div {
+    div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left_0()
+        .right_0()
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .w_full()
+                .max_w(px(READING_WIDTH))
+                .h_full()
+                .flex()
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(if gutter { ENTRY_GUTTER } else { 0. })),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .h_full()
+                        .border_l_1()
+                        .border_color(cx.theme().border),
+                ),
+        )
+}
+
 /// How an entry's number is written in the gutter.
 pub(super) fn entry_label(number: usize) -> String {
     format!("№ {number}")
@@ -832,7 +964,7 @@ pub(super) const QUESTION_FOLD_LINES: f32 = 3.;
 /// bubble: a short one (`present::title_question`) in the Title role, the
 /// serif at its regular weight; a longer one as body text in ink. A long one is cut
 /// to three lines while `folded`.
-pub(super) fn question(title: bool, folded: bool) -> Div {
+pub(super) fn question(title: bool, folded: bool, cx: &App) -> Div {
     // A line of the title (18 px at 1.45) or of body text (14 px at 1.5),
     // in rems.
     let line = (if title { 18. * 1.45 } else { 14. * 1.5 }) / 16.;
@@ -840,7 +972,9 @@ pub(super) fn question(title: bool, folded: bool) -> Div {
         .when(title, |question| {
             question.font(serif()).text_lg().line_height(relative(1.45))
         })
-        .when(!title, |question| question.line_height(relative(1.5)))
+        .when(!title, |question| {
+            question.font(body_face(cx)).line_height(relative(1.5))
+        })
         .when(folded, |question| {
             question
                 .max_h(rems(line * QUESTION_FOLD_LINES))
@@ -939,6 +1073,13 @@ const TRAFFIC_LIGHTS_INSET: f32 = 84.;
 /// full screen).
 const BAR_INSET: f32 = 12.;
 
+/// How far the last icon button of the window's bar, and of the side
+/// panel's tab strip under it, stands from the window's right edge, so the
+/// two sit on one vertical line (the side panel's content is inset as
+/// much, `px_3`). On Windows the bar ends at the window's own buttons
+/// instead.
+pub(super) const RIGHT_INSET: f32 = 12.;
+
 /// How a window is opened: on macOS and Windows with a transparent title
 /// bar so the page draws its own (`window_bar`), on Linux with the
 /// system's. The title is not drawn in the bar but still names the window
@@ -986,7 +1127,7 @@ pub(super) fn window_bar(
                 .min_w_0()
                 .h_full()
                 .items_center()
-                .pr_3()
+                .pr(px(RIGHT_INSET))
                 .child(content)
         });
         // Windows: the top edge of a window that is not maximized resizes
@@ -1021,13 +1162,87 @@ pub(super) fn window_bar(
             .flex_shrink_0()
             .items_center()
             .h(px(TITLE_BAR_HEIGHT))
-            .px_4()
+            .pl_4()
+            .pr(px(RIGHT_INSET))
             .bg(cx.theme().sidebar)
             .border_b_1()
             .border_color(theme.sidebar_border)
             .child(content)
             .into_any_element(),
     )
+}
+
+thread_local! {
+    /// The height of the window being drawn, noted as its draw starts
+    /// (`note_window_height`); every window is drawn on this thread, one at
+    /// a time, so a menu reads the height of its own.
+    static WINDOW_HEIGHT: std::cell::Cell<f32> = const { std::cell::Cell::new(800.) };
+}
+
+/// What the window's bar, a menu's anchor and the composer under an
+/// upward menu leave a menu of the window's height, with a margin.
+const MENU_RESERVE: f32 = 150.;
+
+/// However short the window, a menu shows this much and scrolls the rest.
+const MENU_LEAST: f32 = 120.;
+
+/// Notes the height of the window about to be drawn, for `menu_room`.
+pub(super) fn note_window_height(height: f32) {
+    WINDOW_HEIGHT.with(|cell| cell.set(height));
+}
+
+/// How tall a menu, a popover or a list under a button may be: `cap` (or
+/// no cap), and never more than the window has room for, so in a short
+/// window it scrolls instead of running off the window. A menu opened
+/// from a row in the transcript, upwards or downwards, has half.
+pub(super) fn menu_room(cap: Option<f32>, half: bool) -> Pixels {
+    px(room_in(WINDOW_HEIGHT.with(|cell| cell.get()), cap, half))
+}
+
+fn room_in(height: f32, cap: Option<f32>, half: bool) -> f32 {
+    let room = if half {
+        height / 2. - TITLE_BAR_HEIGHT
+    } else {
+        height - TITLE_BAR_HEIGHT - MENU_RESERVE
+    };
+    let room = room.max(MENU_LEAST);
+    cap.map_or(room, |cap| room.min(cap))
+}
+
+/// How far apart the blocks of a Markdown text are: paragraphs, lists,
+/// code and tables, about 0.6 em of body text (14 px), so an answer's
+/// paragraphs read as paragraphs.
+pub(super) const PARAGRAPH_GAP: f32 = 0.55;
+
+/// How much larger than body text a Markdown heading is, by its level: an
+/// h1 no larger than a title (about 1.3×), an h2 1.15×, the rest body size.
+/// Every heading is Medium (the vendored renderer), so size ranks them.
+pub(super) fn heading_scale(level: u8) -> f32 {
+    match level {
+        1 => 1.3,
+        2 => 1.15,
+        _ => 1.0,
+    }
+}
+
+/// The style of Markdown text: the component library's, with the paragraph
+/// gap (`PARAGRAPH_GAP`, in rems) and headings sized by `heading_scale`
+/// from the body size the library assumes (14 px).
+pub(super) fn text_style() -> gpui_component::text::TextViewStyle {
+    gpui_component::text::TextViewStyle::default()
+        .paragraph_gap(rems(PARAGRAPH_GAP))
+        .heading_font_size(|level, base| base * heading_scale(level))
+}
+
+/// Markdown text, as answers, documents, reports and previews show it,
+/// with its paragraphs apart (`text_style`).
+pub(super) fn markdown(
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    window: &mut Window,
+    cx: &mut App,
+) -> gpui_component::text::TextView {
+    gpui_component::text::TextView::markdown(id, text, window, cx).style(text_style())
 }
 
 /// A whole window: its bar (`window_bar`) over the page, which takes the
@@ -1434,12 +1649,21 @@ pub(super) fn bar(id: impl Into<ElementId>, cx: &App) -> Stateful<Div> {
 }
 
 /// Stacks the bars that sit between the transcript and the composer in the
-/// conversation's reading column. The inset is the composer's own
-/// (`px_4` in `render_composer`), so their edges are the composer box's at
-/// any width.
-pub(super) fn above_composer(bars: Vec<AnyElement>) -> Option<Div> {
+/// conversation's reading column, on the record line (`entry_aligned`),
+/// so their edges are the composer box's at any width.
+pub(super) fn above_composer(bars: Vec<AnyElement>, gutter: bool, cx: &App) -> Option<Div> {
     (!bars.is_empty()).then(|| {
-        reading_column(div().v_flex().gap_2().px_4().pt_2().pb_1().children(bars)).flex_shrink_0()
+        // Cards beside the record line, which runs on past them.
+        reading_column(entry_aligned(
+            div().v_flex().gap_2().pt_2().pb_2().children(bars),
+            EntryPlace {
+                gutter,
+                number: None,
+                line: true,
+            },
+            cx,
+        ))
+        .flex_shrink_0()
     })
 }
 
@@ -1955,6 +2179,17 @@ pub(super) fn panel_header(
     detail: Option<SharedString>,
     cx: &App,
 ) -> Div {
+    panel_header_led(None, title, detail, cx)
+}
+
+/// A panel header with a button before its title: Back, in a file's
+/// preview.
+pub(super) fn panel_header_led(
+    lead: Option<AnyElement>,
+    title: impl Into<SharedString>,
+    detail: Option<SharedString>,
+    cx: &App,
+) -> Div {
     div()
         .h_flex()
         .items_center()
@@ -1965,6 +2200,7 @@ pub(super) fn panel_header(
         .flex_shrink_0()
         .border_b_1()
         .border_color(cx.theme().border)
+        .children(lead)
         .child(
             div()
                 .h_flex()
@@ -2308,6 +2544,51 @@ mod tests {
         }
     }
 
+    /// The composer attaches to the record line: one helper lays the bars,
+    /// the composer's strips and its box on the line, so the line, the
+    /// box's edges and the answers' text cannot drift apart again.
+    #[test]
+    fn the_composer_and_the_bars_are_laid_on_the_record_line() {
+        // The edges, from the column's left, at the full reading width.
+        let line = super::ENTRY_GUTTER;
+        let answer_text = line + 1. + 24.; // an answer's `px_6`
+        let box_text = line + 1. + super::ENTRY_TEXT;
+        assert_eq!(box_text, answer_text);
+        assert_eq!(READING_WIDTH - super::ENTRY_RIGHT, READING_WIDTH - 24.); // `pr_6`
+        // The `+` icon on the text edge, its hit area to the left.
+        assert_eq!(
+            super::ICON_INSET,
+            (ICON_BUTTON - IconSize::Toolbar.px()) / 2.
+        );
+        let squeeze = |text: &str| -> String { text.split_whitespace().collect() };
+        let files = sources();
+        let shell = &files
+            .iter()
+            .find(|(path, _)| path.ends_with("workspace/shell.rs"))
+            .unwrap()
+            .1;
+        let composer = squeeze(method(shell, "render_composer").unwrap());
+        assert_eq!(composer.matches("surfaces::entry_aligned(").count(), 3);
+        assert!(!composer.contains(".px_4()"));
+        assert!(composer.contains(".pl(px(surfaces::ENTRY_TEXT))"));
+        assert!(composer.contains(".px_0()"));
+        assert!(
+            composer.contains("present::next_entry_number(&self.rows,self.earlier_users,true)")
+        );
+        let plus = squeeze(method(shell, "render_composer_plus").unwrap());
+        assert!(plus.contains(".ml(px(-surfaces::ICON_INSET))"));
+        // The bars go through the same helper, and the line runs behind the
+        // transcript down to them.
+        let stacked = squeeze(method(include_str!("surfaces.rs"), "above_composer").unwrap());
+        assert!(stacked.contains("reading_column(entry_aligned("));
+        let conversation = squeeze(method(shell, "render_conversation").unwrap());
+        assert!(conversation.contains("surfaces::record_line_behind(self.entry_gutter(),cx)"));
+        // The rows take the same gutter rule.
+        let row = squeeze(method(shell, "row").unwrap());
+        assert_eq!(row.matches("gutter,cx").count(), 3);
+        assert!(super::GUTTER_COLUMN_MIN < READING_WIDTH);
+    }
+
     #[test]
     fn the_banners_above_the_transcript_keep_its_column() {
         // The error and the notice line up with the transcript and the bars
@@ -2424,6 +2705,7 @@ mod tests {
             ("workspace/home_view.rs", "start_menu"),
             ("workspace/shell.rs", "message_menu"),
             ("workspace/files_panel.rs", "files_menu"),
+            ("workspace/files_panel.rs", "file_preview_menu"),
             ("workspace/tabs_view.rs", "waiting_list"),
         ];
         let mut found = Vec::new();
@@ -2738,7 +3020,7 @@ mod tests {
         // header, the editor's and the picture's bars and the preview.
         let parts = method(panel, "preview_parts").unwrap();
         for part in [
-            "surfaces::panel_header(",
+            "surfaces::panel_header_led(",
             "self.render_file_editor_bar(cx)",
             "self.render_picture_bar(cx)",
             "self.render_preview(window, cx)",
@@ -2800,6 +3082,267 @@ mod tests {
             assert!(ui.contains(&face), "{face}");
         }
         assert!(!SERIF_FALLBACKS.contains(&"SimSun"));
+    }
+
+    /// Every column, rail, list, menu and dialog body whose content can be
+    /// taller than its space scrolls under a stable id, instead of being
+    /// cut. Each entry is the file, the id, and how it scrolls: `scroll`
+    /// for `.overflow_y_scroll()` after the id, `page` for `page_scroll`,
+    /// `menu` for a menu as tall as the window has room for.
+    #[test]
+    fn what_can_outgrow_its_space_scrolls() {
+        let files = sources();
+        let file = |name: &str| {
+            files
+                .iter()
+                .find(|(path, _)| path.ends_with(name))
+                .map(|(_, text)| text.split_whitespace().collect::<String>())
+                .unwrap_or_else(|| panic!("no {name}"))
+        };
+        let scrolls = [
+            // Rails of the full pages.
+            ("workspace/papers_view.rs", "\"papers-side\"", "scroll"),
+            ("workspace/journey_view.rs", "\"journey-rail\"", "scroll"),
+            ("workspace/calendar_view.rs", "\"calendar-rail\"", "scroll"),
+            (
+                "workspace/favorites_view.rs",
+                "\"favorites-list\"",
+                "scroll",
+            ),
+            ("workspace/settings_view.rs", "\"settings-nav\"", "scroll"),
+            // The pages' content, headed by `page_head` or beside a rail.
+            ("workspace/mandates_view.rs", "\"mandates-body\"", "page"),
+            ("workspace/schedules_view.rs", "\"schedules-body\"", "page"),
+            (
+                "workspace/favorites_view.rs",
+                "\"favorite-detail\"",
+                "scroll",
+            ),
+            // The sidebar's conversations.
+            ("workspace/organise_view.rs", "\"sessions\"", "scroll"),
+            // Every tab of the side panel.
+            ("workspace/panel_tabs.rs", "\"runs\"", "scroll"),
+            ("workspace/hosts_view.rs", "\"hosts\"", "scroll"),
+            ("workspace/panel_tabs.rs", "\"artifacts\"", "scroll"),
+            ("workspace/memos_view.rs", "\"memos\"", "scroll"),
+            ("workspace/memory_view.rs", "\"memory\"", "scroll"),
+            ("workspace/favorites_view.rs", "\"highlights\"", "scroll"),
+            ("workspace/notebook_view.rs", "\"notebook-cells\"", "scroll"),
+            ("workspace/agents_view.rs", "\"agents\"", "scroll"),
+            ("workspace/aside_view.rs", "\"aside-thread\"", "scroll"),
+            ("workspace/files_panel.rs", "\"provenance-list\"", "scroll"),
+            (
+                "workspace/remote_files_view.rs",
+                "\"remote-files\"",
+                "scroll",
+            ),
+            // Lists and menus under a button.
+            ("workspace/tabs_view.rs", "\"waiting-list\"", "menu"),
+            ("workspace/shell.rs", "\"outline-menu\"", "menu"),
+            ("workspace/home_view.rs", "\"start-menu\"", "menu"),
+            ("workspace/files_panel.rs", "\"files-menu\"", "menu"),
+            ("workspace/panel_tabs.rs", "\"panel-tab-menu\"", "menu"),
+            ("workspace/centre_view.rs", "\"centre-tab-menu\"", "menu"),
+            ("workspace/shell.rs", "(\"message-menu\",index)", "menu"),
+            ("workspace/shell.rs", "\"composer-menu\"", "menu"),
+            // Its height is capped by `menu_room`; the list inside scrolls.
+            ("workspace/demos_view.rs", "\"demo-targets\"", "scroll"),
+            ("workspace/organise_view.rs", "id", "menu"),
+        ];
+        // A dialog's body scrolls unless its dialog fixes its own height.
+        assert!(
+            file("workspace/surfaces.rs").contains(".when(!fixed,|body|body.overflow_y_scroll())")
+        );
+        let mut missing = Vec::new();
+        for (name, id, how) in scrolls {
+            let text = file(name);
+            let ok = match how {
+                "page" => text.contains(&format!("page_scroll({id}")),
+                _ => text.match_indices(&format!(".id({id})")).any(|(at, _)| {
+                    let after = &text[at..text.len().min(at + 400)];
+                    after.contains(".overflow_y_scroll()")
+                        && (how != "menu" || after.contains("menu_room("))
+                }),
+            };
+            if !ok {
+                missing.push(format!("{name} {id} ({how})"));
+            }
+        }
+        assert!(missing.is_empty(), "{missing:#?}");
+        // A menu is never taller than the window has room for, and keeps a
+        // little however short the window.
+        assert_eq!(
+            super::room_in(1000., None, false),
+            1000. - TITLE_BAR_HEIGHT - 150.
+        );
+        assert_eq!(super::room_in(1000., Some(420.), false), 420.);
+        assert_eq!(super::room_in(300., Some(420.), false), 120.);
+        assert_eq!(super::room_in(1000., None, true), 500. - TITLE_BAR_HEIGHT);
+    }
+
+    #[test]
+    fn the_panel_strip_ends_on_the_bars_line_with_its_overflow_and_no_close() {
+        let tabs = include_str!("panel_tabs.rs");
+        let strip = tabs
+            .split("pub(super) fn panel_tabs(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n    }\n").next())
+            .expect("the strip");
+        // The rest of the tabs is a chevron, not `more`; the bar's toggle
+        // and Escape close the panel, so it has no cross of its own.
+        assert!(strip.contains("\"chevron-down\""));
+        assert!(!strip.contains("\"more\""));
+        assert!(!strip.contains("\"close\""));
+        assert!(!strip.contains("panel-close"));
+        // Its last button and the bar's stand as far from the window's
+        // right edge.
+        assert!(strip.contains(".pr(px(surfaces::RIGHT_INSET))"));
+        let bar = include_str!("surfaces.rs")
+            .split("pub(super) fn window_bar(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .expect("the bar");
+        assert_eq!(bar.matches(".pr(px(RIGHT_INSET))").count(), 2);
+        assert!(!bar.contains(".pr_3()") && !bar.contains(".px_4()"));
+        // The start menu's rest of the ways in is a chevron too.
+        let home = include_str!("home_view.rs");
+        let start = home.split("\"home-more-start\",").nth(1).expect("start");
+        assert!(
+            start
+                .trim_start()
+                .lines()
+                .nth(1)
+                .unwrap()
+                .contains("\"chevron-down\"")
+        );
+    }
+
+    #[test]
+    fn a_previews_header_has_back_first_and_three_actions_after_the_name() {
+        let panel = include_str!("files_panel.rs");
+        let body = |name: &str| {
+            panel
+                .split(&format!("fn {name}("))
+                .nth(1)
+                .and_then(|rest| rest.split("\n    }\n").next())
+                .unwrap_or_else(|| panic!("no {name}"))
+        };
+        // Back leads, before the name, in every preview kind.
+        assert!(body("preview_parts").contains("surfaces::panel_header_led(back, name"));
+        // After the name: where to show it, attach, More; nothing else.
+        let actions = body("file_actions");
+        assert_eq!(actions.matches("surfaces::icon_action(").count(), 2);
+        assert!(actions.contains("\"file-attach\"") && actions.contains("\"file-preview-more\""));
+        assert!(actions.contains(".children(place)"));
+        assert!(!actions.contains("icon_button("));
+        // The rest is under More, each an icon and a word.
+        let menu = body("file_preview_menu");
+        for id in [
+            "file-copy-path",
+            "file-keep-artifact",
+            "file-quote-aside",
+            "file-preview-origin",
+            "file-reveal",
+            "file-open-system",
+        ] {
+            assert!(menu.contains(&format!("\"{id}\"")), "{id}");
+        }
+        // The side panel's place is Open in centre, the centre's the split.
+        assert!(body("render_files").contains("\"file-preview-centre\""));
+        assert!(
+            include_str!("centre_view.rs")
+                .contains("self.preview_parts(None, Some(split.into_any_element())")
+        );
+    }
+
+    /// A menu item is its short name; an explanation goes in its tooltip,
+    /// never after a colon in the item, where the menu's edge cuts it.
+    #[test]
+    fn menu_items_are_short_names_without_a_sentence_after_a_colon() {
+        let mut long = Vec::new();
+        for (path, text) in sources() {
+            let code: String = code(&text).split_whitespace().collect::<Vec<_>>().join(" ");
+            for call in ["menu_item(", "action( \"conversation-"] {
+                for (at, _) in code.match_indices(call) {
+                    let args = &code[at..code.len().min(at + 160)];
+                    if let Some(label) = args.split("tr(\"").nth(1) {
+                        let label = label.split('"').next().unwrap_or_default();
+                        if label.contains(": ") {
+                            long.push(format!("{}: {label}", path.display()));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(long.is_empty(), "{long:#?}");
+        let menu = include_str!("conversation_actions.rs");
+        assert!(menu.contains("tr(\"Outline\")"));
+        assert!(menu.contains("tr(\"What you asked, in order\")"));
+    }
+
+    #[test]
+    fn markdown_headings_rank_by_size_and_never_outgrow_a_title() {
+        assert_eq!(super::heading_scale(1), 1.3);
+        assert_eq!(super::heading_scale(2), 1.15);
+        for level in 3..=6 {
+            assert_eq!(super::heading_scale(level), 1.0);
+        }
+        // An h1 at 14 px body text stays at the title's 18 px or under.
+        assert!(14. * super::heading_scale(1) <= 18.5);
+        let style = super::text_style();
+        let size = style.heading_font_size.as_ref().expect("headings sized");
+        assert_eq!(size(1, gpui::px(14.)), gpui::px(14. * 1.3));
+        assert_eq!(size(4, gpui::px(14.)), gpui::px(14.));
+    }
+
+    #[test]
+    fn markdown_keeps_its_paragraphs_apart_everywhere() {
+        // About 0.6 em of 14 px body text, in rems.
+        assert!((super::PARAGRAPH_GAP * 16. / 14. - 0.6).abs() < 0.05);
+        assert_eq!(
+            super::text_style().paragraph_gap,
+            gpui::rems(super::PARAGRAPH_GAP)
+        );
+        // Every text view goes through `surfaces::markdown`, so answers, the
+        // side chat, previews, favourites and reports share the gap.
+        let mut direct = Vec::new();
+        for (path, text) in sources() {
+            if path.ends_with("workspace/surfaces.rs") {
+                continue;
+            }
+            if text.contains("TextView::markdown(") {
+                direct.push(path.display().to_string());
+            }
+        }
+        assert!(direct.is_empty(), "{direct:#?}");
+        // The vendored library gives each block of the root its own
+        // "last", so the gap is drawn (vendor/gpui-component/WISP-PATCH.md).
+        let node = include_str!("../../../../vendor/gpui-component/src/text/node.rs");
+        assert!(node.contains("options.is_last(ix == last)"));
+    }
+
+    #[test]
+    fn answers_are_the_ui_face_in_regular_with_its_chinese_named() {
+        let face = super::body_font(".SystemUIFont".into());
+        assert_eq!(face.family.as_ref(), ".SystemUIFont");
+        assert_eq!(face.weight, gpui::FontWeight::NORMAL);
+        let fallbacks = face.fallbacks.expect("body text names its Chinese");
+        assert_eq!(
+            fallbacks.fallback_list(),
+            super::FACT_FALLBACKS.map(String::from)
+        );
+        // Wisp's answers and a long question are set in it.
+        let shell = include_str!("shell.rs");
+        let answer = shell
+            .split("// An answer with no text draws nothing")
+            .nth(1)
+            .expect("the answer arm");
+        assert!(answer.contains(".font(surfaces::body_face(cx))"));
+        let question = include_str!("surfaces.rs")
+            .split("pub(super) fn question(")
+            .nth(1)
+            .expect("the question");
+        assert!(question.contains("question.font(body_face(cx))"));
     }
 
     #[test]
@@ -3282,6 +3825,28 @@ mod tests {
                 found.push(format!("{name} uses font_medium()"));
             }
         }
+        // The vendored text renderer draws answers, documents and reports:
+        // strong text and headings are Medium there, nothing heavier
+        // (vendor/gpui-component/WISP-PATCH.md).
+        // Outside comments, which may name what was there before.
+        let renderer: String = code(include_str!(
+            "../../../../vendor/gpui-component/src/text/node.rs"
+        ))
+        .lines()
+        .map(|line| line.split("//").next().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n");
+        for heavy in [
+            "FontWeight::BOLD",
+            "FontWeight::SEMIBOLD",
+            "FontWeight::EXTRA_BOLD",
+        ] {
+            if renderer.contains(heavy) {
+                found.push(format!(
+                    "vendor/gpui-component/src/text/node.rs uses {heavy}"
+                ));
+            }
+        }
         assert!(found.is_empty(), "{found:#?}");
     }
 
@@ -3748,6 +4313,25 @@ mod tests {
             .find("\n    }\n")
             .map_or(source.len(), |end| start + end);
         Some(&source[start..end])
+    }
+
+    /// The settings' pages are more than a short window holds: the list
+    /// scrolls under the back row, the title and the search, which stay.
+    #[test]
+    fn the_settings_navigation_scrolls_under_its_head() {
+        let view = include_str!("settings_view.rs");
+        let frame = &view[view.find("fn render_settings(").unwrap()..];
+        let list = &frame[frame.find(".id(\"settings-nav\")").expect("the list")..];
+        let list = &list[..list.find(';').unwrap()];
+        for needed in [".flex_1()", ".min_h_0()", ".overflow_y_scroll()"] {
+            assert!(list.contains(needed), "{needed}");
+        }
+        // The head is added to the column before the list, not inside it.
+        let head = frame
+            .find("surfaces::input(&self.settings_search, cx)")
+            .unwrap();
+        assert!(head < frame.find(".id(\"settings-nav\")").unwrap());
+        assert!(frame.contains("let nav = nav.child(list);"));
     }
 
     #[test]

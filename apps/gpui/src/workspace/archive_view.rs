@@ -10,7 +10,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    text::TextView,
 };
 use wisp_server::desktop::{ArchiveScript, ResearchArchive};
 
@@ -762,7 +761,7 @@ impl Workspace {
                         &[&format!(".wisp/research-archives/{}/REPORT.md", frozen.id)],
                     )))
                     .child(
-                        TextView::markdown("archive-report", frozen.report.clone(), window, cx)
+                        surfaces::markdown("archive-report", frozen.report.clone(), window, cx)
                             .selectable(true),
                     )
                     .child(note(scripts_line(&frozen.scripts)))

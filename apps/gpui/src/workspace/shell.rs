@@ -5,7 +5,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    text::TextView,
 };
 use serde_json::json;
 use wisp_server::desktop::{RUNS_LOCALLY, Remember};
@@ -581,7 +580,7 @@ impl Workspace {
     /// and a word; one that cannot be taken now is dimmed and inert.
     /// It opens downward from a question's corner and upward from under an
     /// answer (`down`), towards the room there is.
-    fn message_menu(&self, index: usize, down: bool, cx: &mut Context<Self>) -> Div {
+    fn message_menu(&self, index: usize, down: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         type Run = fn(&mut Workspace, usize, &mut Window, &mut Context<Workspace>);
         let item = |id: &'static str,
                     icon_name: &str,
@@ -608,7 +607,12 @@ impl Workspace {
         // A read-only conversation's messages are not edited, a branch is
         // not branched again, and a frozen one is not reviewed.
         let offered = self.offered();
+        // Opened from a row anywhere in the transcript, up or down: half
+        // the window, and the rest scrolls.
         let mut menu = div()
+            .id(("message-menu", index))
+            .max_h(surfaces::menu_room(None, true))
+            .overflow_y_scroll()
             .absolute()
             .when(down, |menu| {
                 menu.top(px(surfaces::ICON_BUTTON + 4.)).right_0()
@@ -733,7 +737,7 @@ impl Workspace {
                         tr("Wisp asked")
                     })),
             )
-            .child(TextView::markdown(id, question.question, window, cx).selectable(true));
+            .child(surfaces::markdown(id, question.question, window, cx).selectable(true));
         if waiting {
             for (n, (label, description)) in question.options.into_iter().enumerate() {
                 let answer = label.clone();
@@ -928,7 +932,19 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        // An answer with no text (the turn went on to a tool) draws nothing
+        // at all: not even the entry's gutter, whose top inset would leave a
+        // gap in the record.
+        if self
+            .rows
+            .get(index)
+            .is_some_and(|item| item.role == "assistant" && !present::is_answer(item))
+            && !self.own_run_cards.contains_key(&index)
+        {
+            return div().into_any_element();
+        }
         let body = self.row_body(index, window, cx);
+        let gutter = self.entry_gutter();
         let number = present::entry_number(&self.rows, index, self.earlier_users);
         let time = number
             .and_then(|_| self.rows.get(index)?.timestamp)
@@ -944,7 +960,7 @@ impl Workspace {
             Some(_) => surfaces::EntryDot::Open,
         };
         if !self.own_run_cards.contains_key(&index) {
-            return surfaces::entry_row(number, time, dot, body, cx).into_any_element();
+            return surfaces::entry_row(number, time, dot, body, gutter, cx).into_any_element();
         }
         let (above, below) = self.own_run_cards_at(index, window, cx);
         let above = (!above.is_empty()).then(|| {
@@ -953,6 +969,7 @@ impl Workspace {
                 None,
                 surfaces::EntryDot::None,
                 div().w_full().v_flex().children(above).into_any_element(),
+                gutter,
                 cx,
             )
         });
@@ -970,9 +987,23 @@ impl Workspace {
                     .child(body)
                     .children(below)
                     .into_any_element(),
+                gutter,
                 cx,
             ))
             .into_any_element()
+    }
+
+    /// Whether the conversation's column keeps the gutter for entry numbers:
+    /// always, but in a split beside a document narrower than
+    /// `surfaces::GUTTER_COLUMN_MIN`, where the line is the column's edge.
+    pub(super) fn entry_gutter(&self) -> bool {
+        if !self.centre.split_shown(self.state.session.as_deref()) {
+            return true;
+        }
+        self.centre_width.get().is_none_or(|width| {
+            crate::centre::split_widths(width, self.centre.chat_width).1
+                >= surfaces::GUTTER_COLUMN_MIN
+        })
     }
 
     /// Whether row `index` is drawn as a record row: a tool call (not a
@@ -1069,7 +1100,7 @@ impl Workspace {
         let answer = !matches!(
             before.role.as_str(),
             "user" | "tool" | "reasoning" | "review" | "branch_merge" | "compaction"
-        ) && !before.text.is_empty();
+        ) && !before.text.trim().is_empty();
         if answer { px(4.) } else { px(28.) }
     }
 
@@ -1131,9 +1162,9 @@ impl Workspace {
                     let long = present::long_question(&text);
                     let open = self.open_tools.contains(&key);
                     message = message.child(
-                        surfaces::question(present::title_question(&text), long && !open)
+                        surfaces::question(present::title_question(&text), long && !open, cx)
                             .w_full()
-                            .child(TextView::markdown(id, text, window, cx).selectable(true)),
+                            .child(surfaces::markdown(id, text, window, cx).selectable(true)),
                     );
                     if long {
                         message = message.child(
@@ -1252,7 +1283,7 @@ impl Workspace {
                 }
                 // The call's input and output while it is open.
                 let below = open.then(|| {
-                    TextView::markdown(id, present::body(item), window, cx)
+                    surfaces::markdown(id, present::body(item), window, cx)
                         .selectable(true)
                         .into_any_element()
                 });
@@ -1271,7 +1302,7 @@ impl Workspace {
                     div()
                         .text_color(cx.theme().muted_foreground)
                         .child(
-                            TextView::markdown(id, item.text.clone(), window, cx).selectable(true),
+                            surfaces::markdown(id, item.text.clone(), window, cx).selectable(true),
                         )
                         .into_any_element()
                 });
@@ -1324,7 +1355,7 @@ impl Workspace {
                 let title = item.tool_name.clone().unwrap_or_default();
                 let below = open.then(|| {
                     let mut below = div().v_flex().gap_2().child(
-                        TextView::markdown(id, item.text.clone(), window, cx).selectable(true),
+                        surfaces::markdown(id, item.text.clone(), window, cx).selectable(true),
                     );
                     if let (Some(project), Some(branch)) =
                         (self.state.project.clone(), item.input.clone())
@@ -1366,15 +1397,17 @@ impl Workspace {
                 Some(card) => self.compaction_row(index, card, window, cx),
                 None => div().into_any_element(),
             },
-            _ if item.text.is_empty() => div().into_any_element(),
+            // An answer with no text draws nothing: no blank row, no gap.
+            _ if item.text.trim().is_empty() => div().into_any_element(),
             _ => {
                 // An answer the entry goes on after (a tool call, a thought)
                 // lays its actions over its corner: a line of them would
                 // stand between the text and what follows. The entry's
                 // last answer keeps them under it.
-                let ends_entry = self
-                    .rows
-                    .get(index + 1)
+                // An empty answer after it draws nothing and does not count.
+                let ends_entry = self.rows[index + 1..]
+                    .iter()
+                    .find(|next| next.role != "assistant" || present::is_answer(next))
                     .is_none_or(|next| next.role == "user");
                 let actions = self.message_actions(index, !ends_entry, cx);
                 let actions = if ends_entry {
@@ -1390,7 +1423,9 @@ impl Workspace {
                     .gap_1()
                     .px_6()
                     .pt_2()
-                    .child(TextView::markdown(id, item.text.clone(), window, cx).selectable(true))
+                    .child(div().font(surfaces::body_face(cx)).child(
+                        surfaces::markdown(id, item.text.clone(), window, cx).selectable(true),
+                    ))
                     .children(self.inline_pictures(&item.text, cx))
                     .children(self.written_pictures(index, cx))
                     .children(self.generated_section(index, cx))
@@ -1645,8 +1680,12 @@ impl Workspace {
 
     /// The card a composer menu's rows sit in, drawn just above the button
     /// that opens it.
-    pub(super) fn composer_menu(width: f32, cx: &App) -> Div {
+    pub(super) fn composer_menu(width: f32, cx: &App) -> Stateful<Div> {
+        // One composer menu is open at a time: they share the id.
         div()
+            .id("composer-menu")
+            .max_h(surfaces::menu_room(None, false))
+            .overflow_y_scroll()
             .absolute()
             .bottom(px(34.))
             .left_0()
@@ -1725,7 +1764,7 @@ impl Workspace {
             })
     }
 
-    fn effort_menu(&self, current: &str, cx: &mut Context<Self>) -> Div {
+    fn effort_menu(&self, current: &str, cx: &mut Context<Self>) -> Stateful<Div> {
         let mut menu = Self::composer_menu(190., cx);
         for (effort, label) in controls::EFFORTS {
             menu = menu.child(
@@ -1745,7 +1784,7 @@ impl Workspace {
     }
 
     /// The experts, with "none" first.
-    fn expert_menu(&self, current: &str, cx: &mut Context<Self>) -> Div {
+    fn expert_menu(&self, current: &str, cx: &mut Context<Self>) -> Stateful<Div> {
         let mut menu = Self::composer_menu(320., cx);
         let chosen = self.experts.iter().any(|expert| expert.id == current);
         menu = menu.child(
@@ -1873,7 +1912,7 @@ impl Workspace {
     }
 
     /// Wisp, then the ACP agents that could run a new conversation.
-    fn agent_menu(&self, cx: &mut Context<Self>) -> Div {
+    fn agent_menu(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let mut menu = Self::composer_menu(320., cx).child(
             Self::menu_row(
                 "agent-wisp".into(),
@@ -1912,13 +1951,16 @@ impl Workspace {
     /// The saved models, with "follow the default" first.
     fn model_menu(&self, current: &str, cx: &mut Context<Self>) -> Stateful<Div> {
         // Two lists of every model: it scrolls rather than leave the window.
-        let mut menu = Self::composer_menu(300., cx)
-            .id("model-menu")
-            .max_h(px(440.))
-            .overflow_y_scroll();
+        let mut menu = Self::composer_menu(300., cx).max_h(surfaces::menu_room(Some(440.), false));
         let Some(models) = self.settings.current() else {
             return menu;
         };
+        // While Magpie is connected it is the one model on offer, for the
+        // conversation and its sub-agents alike; the saved choices are
+        // kept for when it is gone.
+        if let Some(label) = settings::magpie_label(models) {
+            return menu.child(Self::menu_row("model-magpie".into(), label, "", true, cx));
+        }
         let default = settings::default_profile(models)
             .map(|profile| profile.name.clone())
             .unwrap_or_default();
@@ -2001,7 +2043,7 @@ impl Workspace {
 
     /// Where the conversation's work runs: the default, this computer, or
     /// one of the saved hosts.
-    fn runs_on_menu(&self, current: &str, cx: &mut Context<Self>) -> Div {
+    fn runs_on_menu(&self, current: &str, cx: &mut Context<Self>) -> Stateful<Div> {
         let mut menu = Self::composer_menu(320., cx);
         let Some(view) = &self.environments else {
             return menu;
@@ -2065,7 +2107,7 @@ impl Workspace {
             .top(px(34.))
             .right_0()
             .w(px(420.))
-            .max_h(px(420.))
+            .max_h(surfaces::menu_room(Some(420.), false))
             .overflow_y_scroll()
             .v_flex()
             .p_1()
@@ -2181,22 +2223,27 @@ impl Workspace {
         // it leads to (quick actions, the `/` list, also opened by typing
         // `/`) open above it.
         let plus_open = self.layers.contains(Layer::PlusMenu);
-        let mut plus = div().relative().flex_none().child(
-            surfaces::icon_action(
-                "composer-plus",
-                "plus",
-                tr("Put something into the message, or switch a mode on"),
-                if plus_open {
-                    surfaces::IconTone::Ink
-                } else {
-                    surfaces::IconTone::Faded
-                },
-                cx,
-            )
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.toggle_composer_menu(Layer::PlusMenu, window, cx)
-            })),
-        );
+        // Its icon on the box's text edge; its hit area reaches left of it.
+        let mut plus = div()
+            .relative()
+            .flex_none()
+            .ml(px(-surfaces::ICON_INSET))
+            .child(
+                surfaces::icon_action(
+                    "composer-plus",
+                    "plus",
+                    tr("Put something into the message, or switch a mode on"),
+                    if plus_open {
+                        surfaces::IconTone::Ink
+                    } else {
+                        surfaces::IconTone::Faded
+                    },
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.toggle_composer_menu(Layer::PlusMenu, window, cx)
+                })),
+            );
         if plus_open {
             // Painted after everything else: a parent's border is drawn over
             // its own children, and the composer box has one.
@@ -2542,9 +2589,19 @@ impl Workspace {
             .as_ref()
             .and_then(|status| status.usage.as_ref());
 
-        // `px_4` is the inset `surfaces::above_composer` shares, so the bars
-        // there line up with the box below.
-        let mut area = div().v_flex().flex_shrink_0().gap_2().px_4().pb_4().pt_1();
+        // The composer's strips (console, usage, thinking, plan, the
+        // read-only card) and its box are laid on the record line
+        // (`surfaces::entry_aligned`): the strips beside the line, the box
+        // with its left border on it and the next entry's number in the
+        // gutter beside its first line.
+        let gutter = self.entry_gutter();
+        // No line before the first entry: nothing is on the record yet.
+        let strips = surfaces::EntryPlace {
+            gutter,
+            number: None,
+            line: !self.rows.is_empty(),
+        };
+        let mut area = div().v_flex().gap_2().pt_2().pb_2();
         if let Some(console) = self.render_console(cx) {
             area = area.child(console);
         }
@@ -2693,7 +2750,15 @@ impl Workspace {
         // A conversation that cannot be written to says why in place of
         // the box, so nothing looks typed into and refused.
         if let Some(why) = self.read_only() {
-            return area.child(self.read_only_card(&why, cx));
+            return div()
+                .v_flex()
+                .flex_shrink_0()
+                .pb_4()
+                .child(surfaces::entry_aligned(
+                    area.child(self.read_only_card(&why, cx)),
+                    strips,
+                    cx,
+                ));
         }
         if self.layers.contains(Layer::ConfirmFullAccess) {
             area = area.child(
@@ -2724,10 +2789,15 @@ impl Workspace {
                     ),
             );
         }
+        // The text, the chips and the `+` icon start where an answer's
+        // text does (`ENTRY_TEXT` past the line); the send button keeps
+        // the box's own inset on the right.
         let mut editor = div()
             .v_flex()
             .gap_1()
-            .p_2()
+            .py_2()
+            .pl(px(surfaces::ENTRY_TEXT))
+            .pr_2()
             .rounded(cx.theme().radius_lg)
             .border_1()
             .border_color(cx.theme().input)
@@ -2750,7 +2820,8 @@ impl Workspace {
             }
             editor = editor.child(chips);
         }
-        area.child(
+        let next = present::next_entry_number(&self.rows, self.earlier_users, true);
+        let editor =
             editor
                 .child(
                     // Return sends here when that is the chosen key: the
@@ -2764,6 +2835,8 @@ impl Workspace {
                         .child(
                             super::surfaces::input(&self.composer, cx)
                                 .appearance(false)
+                                // Its text on the box's text edge.
+                                .px_0()
                                 .disabled(self.pending),
                         ),
                 )
@@ -2789,8 +2862,21 @@ impl Workspace {
                                 .children(conditions),
                         )
                         .child(actions),
-                ),
-        )
+                );
+        div()
+            .v_flex()
+            .flex_shrink_0()
+            .pb_4()
+            .child(surfaces::entry_aligned(area, strips, cx))
+            .child(surfaces::entry_aligned(
+                editor,
+                surfaces::EntryPlace {
+                    gutter,
+                    number: next,
+                    line: false,
+                },
+                cx,
+            ))
     }
 
     /// The composer's `+` menu: first what can be put into the message
@@ -2798,7 +2884,12 @@ impl Workspace {
     /// command, workflow or skill from the `/` list), each an icon and a
     /// word with its key at the right; then the modes that change what Wisp
     /// does, each checked while it is on.
-    fn plus_menu(&self, by_agent: bool, fast_offered: bool, cx: &mut Context<Self>) -> Div {
+    fn plus_menu(
+        &self,
+        by_agent: bool,
+        fast_offered: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         type Run = fn(&mut Workspace, &mut Window, &mut Context<Workspace>);
         let options = self.options();
         let line = cx.theme().border;
@@ -3125,27 +3216,33 @@ impl Workspace {
         } else {
             px(0.)
         };
-        content = content.child(
-            div()
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .flex_col()
-                .pr(margin)
-                .child(
-                    // Every row keeps the reading column, centred in what the
-                    // sidebar and the side panel leave.
-                    list(self.list.clone(), move |index, window, cx| {
-                        weak.update(cx, |this, cx| this.found_row(index, window, cx))
-                            .map(|row| surfaces::reading_column(row).into_any_element())
-                            .unwrap_or_else(|_| div().into_any_element())
-                    })
+        content =
+            content.child(
+                div()
+                    .relative()
                     .flex_1()
-                    .min_h_0(),
-                )
-                .children(pet),
-        );
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .pr(margin)
+                    // The record line under a short transcript too, down to
+                    // the bars and the composer.
+                    .children((!self.rows.is_empty()).then(|| {
+                        surfaces::record_line_behind(self.entry_gutter(), cx).right(margin)
+                    }))
+                    .child(
+                        // Every row keeps the reading column, centred in what the
+                        // sidebar and the side panel leave.
+                        list(self.list.clone(), move |index, window, cx| {
+                            weak.update(cx, |this, cx| this.found_row(index, window, cx))
+                                .map(|row| surfaces::reading_column(row).into_any_element())
+                                .unwrap_or_else(|_| div().into_any_element())
+                        })
+                        .flex_1()
+                        .min_h_0(),
+                    )
+                    .children(pet),
+            );
         // What waits on the user between the transcript and the composer
         // keeps the composer's column, with its edges on the composer box's.
         let bars = [
@@ -3172,6 +3269,8 @@ impl Workspace {
         let content = content
             .children(surfaces::above_composer(
                 bars.into_iter().flatten().collect(),
+                self.entry_gutter(),
+                cx,
             ))
             .child(surfaces::reading_column(self.render_composer(running, cx)).flex_shrink_0());
         // A document opened in the centre takes the conversation's place,

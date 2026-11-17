@@ -3,9 +3,7 @@
 //! and copies it into a project as a conversation to go on with.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
-use gpui_component::{
-    ActiveTheme, Disableable, Selectable, Sizable, StyledExt, button::Button, text::TextView,
-};
+use gpui_component::{ActiveTheme, Disableable, Selectable, Sizable, StyledExt, button::Button};
 use wisp_server::desktop::{Demo, DemoRole};
 
 use super::{
@@ -162,7 +160,7 @@ impl Workspace {
                 .py_2()
                 .rounded(cx.theme().radius_lg)
                 .when(you, |body| body.bg(cx.theme().muted))
-                .child(TextView::markdown(id, row.text.clone(), window, cx).selectable(true));
+                .child(surfaces::markdown(id, row.text.clone(), window, cx).selectable(true));
             return div()
                 .v_flex()
                 .gap_1()
@@ -254,7 +252,7 @@ impl Workspace {
             .top(px(30.))
             .right_0()
             .w(px(280.))
-            .max_h(px(320.))
+            .max_h(surfaces::menu_room(Some(320.), false))
             .v_flex()
             .p_1()
             .occlude()

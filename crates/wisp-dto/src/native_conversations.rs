@@ -1121,6 +1121,28 @@ pub struct Item {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seq: Option<i64>,
 }
+
+/// The tool a native turn ends with; its result is the turn's answer.
+pub const COMPLETION_TOOL: &str = "attempt_completion";
+
+impl Item {
+    /// Whether this row is a turn's final answer delivered through
+    /// `attempt_completion`: the tool came back, did not fail and carries
+    /// text. Clients show it as the answer, not as a tool row; one that
+    /// failed, or is still running, stays a tool row.
+    pub fn is_completion_answer(&self) -> bool {
+        self.role == "tool"
+            && self.tool_name.as_deref() == Some(COMPLETION_TOOL)
+            && self.ok != Some(false)
+            && !matches!(
+                self.status.as_deref(),
+                Some("running" | "pending" | "in_progress" | "failed")
+            )
+            && !self.text.trim().is_empty()
+            && !self.text.starts_with("attempt_completion error")
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PlanProposal {
     pub entries: Vec<crate::PlanEntry>,

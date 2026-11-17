@@ -159,7 +159,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("Needs you", "等你处理"),
     ("Settings", "设置"),
     ("New research", "新的研究"),
-    ("Outline: what you asked, in order", "目录：按顺序列出你问过的内容"),
+    ("Outline", "目录"),
+    ("What you asked, in order", "按顺序列出你问过的内容"),
     ("Refresh", "刷新"),
     ("Open research folder", "打开研究文件夹"),
     // Transcript rows.
@@ -564,6 +565,17 @@ pub const ZH: &[(&str, &str)] = &[
     ("What Wisp can draw on in this project, and the tools it found on this computer.", "Wisp 在这个项目中可以利用的资源，以及它在这台电脑上找到的工具。"),
     ("Looking…", "正在查看…"),
     ("Tools on this computer", "这台电脑上的工具"),
+    ("Open its settings", "打开它的设置"),
+    ("More for this file", "这个文件的更多操作"),
+    (
+        "Magpie is connected and chooses the model; nothing to do here.",
+        "Magpie 已连接并选好了模型，这一步无需操作。",
+    ),
+    (
+        "Magpie is connected: conversations run on {}. These models apply again after you \
+         disconnect it and restart Wisp.",
+        "Magpie 已连接：会话都在 {} 上运行。断开它并重启 Wisp 后，这些模型重新生效。",
+    ),
     ("Close", "关闭"),
     // Highlights and favorites.
     ("What you saved from this conversation. Everything you saved, from every project, is in Favorites.", "你从这个会话中收藏的内容。所有项目中收藏的全部内容都在“收藏”里。"),
@@ -646,7 +658,6 @@ pub const ZH: &[(&str, &str)] = &[
     ("Show it in the conversation", "在会话中显示"),
     ("… the rest is in the conversation", "… 其余内容在会话中"),
     ("Dismiss", "移除"),
-    ("Close the panel", "关闭面板"),
     ("Take this tab away", "移除这个标签页"),
     ("Add a tab", "添加标签页"),
     ("Clean up", "清理"),
@@ -2909,6 +2920,8 @@ pub const ZH: &[(&str, &str)] = &[
     ("This project has no memos yet", "这个项目还没有备忘录"),
     ("Open Memos", "打开备忘录"),
     ("↑ ↓ to move · Return to put it into the message · Esc to close", "↑ ↓ 移动 · 回车放进消息 · Esc 关闭"),
+    ("↑ ↓ to move · Return to open · Esc to close", "↑ ↓ 移动 · 回车打开 · Esc 关闭"),
+    ("↑ ↓ to move · Return to add · Esc to close", "↑ ↓ 移动 · 回车添加 · Esc 关闭"),
     ("Put a memo into the message", "把一条备忘录插入输入框"),
     // Memory: Clear all.
     ("Clear all", "全部清除"),

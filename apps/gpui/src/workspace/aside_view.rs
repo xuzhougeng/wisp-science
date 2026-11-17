@@ -7,7 +7,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    text::TextView,
 };
 
 use super::{Workspace, shell::icon_button, surfaces};
@@ -125,7 +124,7 @@ impl Workspace {
                     let copied = answer.clone();
                     block
                         .child(
-                            TextView::markdown(
+                            surfaces::markdown(
                                 SharedString::from(format!("aside-answer-{index}")),
                                 answer.clone(),
                                 window,

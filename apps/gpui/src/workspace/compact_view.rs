@@ -11,7 +11,6 @@ use gpui::{prelude::*, *};
 use gpui_component::{
     ActiveTheme, Disableable, Selectable, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    text::TextView,
 };
 use wisp_dto::{ContextCompactionDto, native_conversations::SendRequest};
 
@@ -265,7 +264,7 @@ impl Workspace {
                     .p_3()
                     .text_sm()
                     .text_color(muted)
-                    .child(TextView::markdown(id, summary, window, cx).selectable(true)),
+                    .child(surfaces::markdown(id, summary, window, cx).selectable(true)),
             );
         }
         row.into_any_element()

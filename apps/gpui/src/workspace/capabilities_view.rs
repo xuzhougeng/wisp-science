@@ -2,10 +2,7 @@
 //! in the open project and which command-line tools this computer has.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
-use gpui_component::{
-    ActiveTheme, Sizable, StyledExt,
-    button::{Button, ButtonVariants},
-};
+use gpui_component::{ActiveTheme, Sizable, StyledExt, button::Button};
 
 use super::{
     Workspace,
@@ -82,17 +79,23 @@ impl Workspace {
                         .child(div().w(px(130.)).flex_shrink_0().text_sm().child(label))
                         .child(div().flex_1().min_w_0().text_sm().child(value));
                     if let Some(section) = section {
+                        // Where it is set, as an icon button at the row's end.
                         row = row.child(
-                            Button::new(SharedString::from(format!("capability-{label}")))
-                                .label(tr("Settings"))
-                                .xsmall()
-                                .ghost()
-                                .on_click(cx.listener(move |this, _, window, cx| {
+                            surfaces::icon_action(
+                                SharedString::from(format!("capability-{label}")),
+                                "gear",
+                                tr("Open its settings"),
+                                surfaces::IconTone::Faded,
+                                cx,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
                                     this.layers.close(Layer::Capabilities);
                                     this.capabilities = None;
                                     this.open_settings(window, cx);
                                     this.show_settings_section(section, window, cx);
-                                })),
+                                },
+                            )),
                         );
                     }
                     card = card.child(row);
@@ -103,13 +106,11 @@ impl Workspace {
                         div()
                             .h_flex()
                             .gap_3()
+                            // A command's name is a fact.
                             .child(
-                                div()
+                                surfaces::fact(tool.name.clone(), cx)
                                     .w(px(130.))
-                                    .flex_shrink_0()
-                                    .text_xs()
-                                    .font_family(cx.theme().mono_font_family.clone())
-                                    .child(tool.name.clone()),
+                                    .flex_shrink_0(),
                             )
                             .child(
                                 div()
@@ -135,5 +136,26 @@ impl Workspace {
                 .small()
                 .on_click(cx.listener(|this, _, window, cx| this.close_capabilities(window, cx))),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_line_leads_to_its_settings_by_an_icon_and_commands_are_facts() {
+        let source = include_str!("capabilities_view.rs");
+        let view: String = source
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .collect();
+        // No bare text link: the gear, with its tooltip (the source is read
+        // without its spaces).
+        assert!(!view.contains(".label(tr(\"Settings\"))"));
+        assert!(view.contains("\"gear\",tr(\"Openitssettings\")"));
+        // A command's name in the fact face.
+        assert!(view.contains("surfaces::fact(tool.name.clone(),cx)"));
+        assert!(!view.contains("mono_font_family"));
     }
 }

@@ -238,8 +238,8 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "link" => view! { <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/> }.into_view(),
         "bell" => view! { <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/> }.into_view(),
         "inbox" => view! { <path d="m22 12-3.45-6.9A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.1L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2Z"/><path d="M2 12h6l2 3h4l2-3h6"/> }.into_view(),
-        "close" => view! { <path d="M18 6 6 18"/><path d="m6 6 12 12"/> }.into_view(),
-        "more" => view! { <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/> }.into_view(),
+        "close" => view! { <path d="M17 7 7 17"/><path d="m7 7 10 10"/> }.into_view(),
+        "more" => view! { <circle cx="5" cy="12" r="1.25" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.25" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.25" fill="currentColor" stroke="none"/> }.into_view(),
         // Sidebar "More": an outlined circle keeps the stroke weight of the nav icons beside it.
         "circle-ellipsis" => view! { <circle cx="12" cy="12" r="9"/><circle cx="8" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r="1" fill="currentColor" stroke="none"/> }.into_view(),
         "arrow-right" => view! { <path d="M5 12h14m-6-6 6 6-6 6"/> }.into_view(),

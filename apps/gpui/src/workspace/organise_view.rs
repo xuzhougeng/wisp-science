@@ -46,8 +46,13 @@ fn caption(text: &'static str, cx: &App) -> Div {
 }
 
 /// The box of a menu that floats over the page. The caller places it.
-fn popup(width: f32, cx: &App) -> Div {
+/// A menu of the sidebar: it scrolls when the window is short
+/// (`surfaces::menu_room`).
+fn popup(id: impl Into<ElementId>, width: f32, cx: &App) -> Stateful<Div> {
     div()
+        .id(id)
+        .max_h(surfaces::menu_room(None, false))
+        .overflow_y_scroll()
         .absolute()
         .w(px(width))
         .v_flex()
@@ -550,8 +555,8 @@ impl Workspace {
             )
     }
 
-    fn sort_menu(&self, cx: &mut Context<Self>) -> Div {
-        let mut menu = popup(190., cx)
+    fn sort_menu(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let mut menu = popup("sort-menu", 190., cx)
             .top(px(34.))
             .right(px(4.))
             .child(caption(tr("Group by"), cx));
@@ -599,11 +604,11 @@ impl Workspace {
     /// picked conversations instead of the open one; `current` is checked.
     fn group_choices(
         &self,
-        mut menu: Div,
+        mut menu: Stateful<Div>,
         current: Option<&str>,
         batch: bool,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
         let prefix = if batch { "batch-group" } else { "group" };
         let choose = |folder: Option<String>| {
             cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
@@ -795,8 +800,8 @@ impl Workspace {
     /// The rest of the conversation list's heading actions, under its More:
     /// importing conversations, and the archived ones. Each an icon and a
     /// word.
-    fn list_menu(&self, disabled: bool, cx: &mut Context<Self>) -> Div {
-        let mut menu = popup(250., cx).top(px(34.)).right(px(4.));
+    fn list_menu(&self, disabled: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+        let mut menu = popup("list-menu", 250., cx).top(px(34.)).right(px(4.));
         if !self.show_archived {
             let mut import = Self::menu_item(
                 "import-conversations",
@@ -1297,7 +1302,7 @@ impl Workspace {
                 })),
         );
         if grouping {
-            let menu = popup(220., cx).bottom(px(28.)).left_0();
+            let menu = popup("batch-group-menu", 220., cx).bottom(px(28.)).left_0();
             group = group.child(deferred(self.group_choices(menu, None, true, cx)));
         }
         let mut bar = bar.child(
@@ -1385,7 +1390,7 @@ impl Workspace {
                 .as_ref()
                 .and_then(|id| self.grouped.get(id))
                 .map(String::as_str);
-            let menu = popup(220., cx).top_0().right(relative(1.));
+            let menu = popup("group-menu", 220., cx).top_0().right(relative(1.));
             // Not deferred: the menu this row sits in already is, and a
             // deferred draw cannot start another.
             button = button.child(self.group_choices(menu, current, false, cx));
@@ -1424,16 +1429,19 @@ impl Workspace {
                     cx.notify();
                 }))
         };
-        let mut menu = popup(300., cx).top_0().right(relative(1.)).child(
-            div()
-                .h_flex()
-                .gap_1()
-                .px_1()
-                .when(movable, |modes| {
-                    modes.child(mode("transfer-move", tr("Move"), false))
-                })
-                .child(mode("transfer-copy", tr("Copy"), true)),
-        );
+        let mut menu = popup("transfer-menu", 300., cx)
+            .top_0()
+            .right(relative(1.))
+            .child(
+                div()
+                    .h_flex()
+                    .gap_1()
+                    .px_1()
+                    .when(movable, |modes| {
+                        modes.child(mode("transfer-move", tr("Move"), false))
+                    })
+                    .child(mode("transfer-copy", tr("Copy"), true)),
+            );
         // A move waiting for its artifacts' preview to be confirmed.
         if let Some((_, name, preview)) = &self.transfer_preview {
             let mut confirm = div()

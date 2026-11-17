@@ -6,7 +6,7 @@
 //! and nothing there is replaced. Looking keeps nothing.
 use crate::i18n::tr;
 use gpui::{prelude::*, *};
-use gpui_component::{ActiveTheme, Disableable, Sizable, StyledExt, text::TextView};
+use gpui_component::{ActiveTheme, Disableable, Sizable, StyledExt};
 
 use super::{
     Workspace,
@@ -374,7 +374,7 @@ impl Workspace {
                         .min_h_0()
                         .p_3()
                         .child(
-                            TextView::markdown(
+                            surfaces::markdown(
                                 SharedString::from(format!(
                                     "remote-preview-{}",
                                     remote_key(&look.alias, &look.path)
