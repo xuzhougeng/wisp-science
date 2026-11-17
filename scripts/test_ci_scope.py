@@ -45,6 +45,16 @@ class ScopeTests(unittest.TestCase):
         ]), set())
         self.assertEqual(select_scopes(["ui-tests/package-lock.json"]), {"ui"})
 
+    def test_gpui_release_packaging_runs_only_its_own_workflow(self):
+        # release-gpui.yml builds and packs on pull requests through its own
+        # path filters; it must not fall through to "unknown input: run all".
+        self.assertEqual(select_scopes([
+            ".github/workflows/release-gpui.yml", "scripts/package_gpui.py",
+            "scripts/test_package_gpui.py",
+        ]), set())
+        self.assertEqual(select_scopes(["scripts/package_gpui.py", "apps/gpui/src/resources.rs"]),
+                         {"gpui"})
+
     def test_gpui_source_is_independent_of_legacy_webview_and_mobile(self):
         self.assertEqual(select_scopes([
             "apps/gpui/src/main.rs", "apps/gpui/Cargo.toml", "apps/gpui/Cargo.lock",

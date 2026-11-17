@@ -34,6 +34,8 @@ uuid = { version = "1", features = ["v4"] }
 # leaves on it, cell by cell, with colours and the cursor.
 vt100 = "0.18"
 wisp-dto = { path = "../../crates/wisp-dto" }
+# Where a release package's skills and workers are: src/resources.rs.
+wisp-paths = { path = "../../crates/wisp-paths" }
 wisp-server = { path = "../../crates/wisp-server" }
 wisp-sync = { path = "../../crates/wisp-sync" }
 

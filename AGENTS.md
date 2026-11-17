@@ -116,14 +116,14 @@ When asked to release, follow this section. Create the GitHub Release with `gh` 
    gh release create vX.Y.Z --title $title --notes-file .github/release-notes/vX.Y.Z.md --target (git rev-parse HEAD)
    ```
 
-5. Confirm the release exists, then wait until CI has **started** (Create Release, Windows Release, macOS Release, Linux Release, Android Release, Relay Image):
+5. Confirm the release exists, then wait until CI has **started** (Create Release, Windows Release, macOS Release, Linux Release, GPUI Preview Release, Android Release, Relay Image):
 
    ```bash
    gh release view vX.Y.Z
    gh run list --branch vX.Y.Z
    ```
 
-   Create Release is a no-op when the release already exists. Platform workflows attach installers only; they must not be given a release body. Android Release is skipped until the repository variable `ANDROID_RELEASE_ENABLED` is `true`; once enabled it attaches the signed APK and refuses any APK whose signer does not match `ANDROID_SIGNING_CERT_SHA256`. Windows Release signs with eSigner and fails when any `ESIGNER_*` secret is missing; `publish=false` is the signing dry-run. Relay Image publishes `ghcr.io/xuzhougeng/wisp-relay:X.Y.Z` and `latest` and attaches nothing to the release. Only watch those runs to completion when the user asked to ship or verify the published assets.
+   Create Release is a no-op when the release already exists. Platform workflows attach installers only; they must not be given a release body. Android Release is skipped until the repository variable `ANDROID_RELEASE_ENABLED` is `true`; once enabled it attaches the signed APK and refuses any APK whose signer does not match `ANDROID_SIGNING_CERT_SHA256`. Windows Release signs with eSigner and fails when any `ESIGNER_*` secret is missing; `publish=false` is the signing dry-run. GPUI Preview Release attaches the GPUI desktop preview as `Wisp-Science-GPUI-Preview_X.Y.Z_<os>-<arch>` archives (macOS aarch64 and x64, Windows x64, Linux x64), signed with the same Developer ID and eSigner credentials as the WebView installers; its `publish=false` is the same dry-run, and a failure there does not affect the WebView installers. Relay Image publishes `ghcr.io/xuzhougeng/wisp-relay:X.Y.Z` and `latest` and attaches nothing to the release. Only watch those runs to completion when the user asked to ship or verify the published assets.
 
 Do not `git push origin vX.Y.Z` after `gh release create` — the tag already exists on GitHub. To fix notes on an existing release, edit the notes file and run the Create Release workflow with `overwrite_notes`, or `gh release edit`. Never use `tauri-action` / `action-gh-release` with a body on a published release.
 

@@ -183,7 +183,9 @@ Use `cargo run build --release` for existing Tauri installers, or
 `cargo run build-gpui --release` for the GPUI executable. The GPUI preview has
 its own Cargo workspace and lockfile; it does not change CLI, server, or Tauri
 build dependencies. WebView installers remain the supported release channel
-until the migration acceptance criteria are met.
+until the migration acceptance criteria are met; releases also attach a GPUI
+preview archive per platform, packed by `scripts/package_gpui.py`
+(see [Preview downloads](gpui-desktop.md#preview-downloads)).
 
 Repository `cargo run` now compiles a dependency-free `wisp-dev` launcher;
 desktop commands no longer compile the entire headless agent just to dispatch

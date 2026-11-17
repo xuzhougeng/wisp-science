@@ -345,5 +345,5 @@ before the things that hang in it.
     run by them in a second; subscription accounts remain)*
 13. **Finish** — localization, notifications, several windows, updates,
     data import from the WebView desktop, installers. *(done: the Chinese
-    interface, notifications, several windows, the update check and the pet;
-    installers remain)*
+    interface, notifications, several windows, the update check, the pet and
+    a preview archive per platform on each release; installers remain)*

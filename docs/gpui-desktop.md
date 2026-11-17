@@ -10,9 +10,79 @@ still consume them.
 [parity ledger](gpui-parity.md) lists every WebView feature, what GPUI has, and
 the order the rest is ported in. How it should look, and where each rule lives
 in code, is in the [design language](gpui-design-language.md). WebView
-installers remain the release channel until the migration is accepted. No new
-SwiftUI/WinUI installers are built or offered in the download picker. Existing
-immutable download links continue to work.
+installers remain the release channel until the migration is accepted. Each
+release also carries a preview build of this desktop for every platform; see
+[Preview downloads](#preview-downloads). No new SwiftUI/WinUI installers are
+built or offered in the download picker. Existing immutable download links
+continue to work.
+
+## Preview downloads
+
+From the first release after v1.25.0, the
+[release page](https://github.com/xuzhougeng/wisp-science/releases) has one
+archive of this desktop per platform beside the WebView installers:
+
+| Platform | File | Inside |
+| --- | --- | --- |
+| macOS, Apple Silicon | `Wisp-Science-GPUI-Preview_<version>_macos-aarch64.zip` | `Wisp Science GPUI Preview.app` |
+| macOS, Intel | `Wisp-Science-GPUI-Preview_<version>_macos-x64.zip` | `Wisp Science GPUI Preview.app` |
+| Windows, x64 | `Wisp-Science-GPUI-Preview_<version>_windows-x64.zip` | a folder with `wisp-gpui.exe` and `resources` |
+| Linux, x64 | `Wisp-Science-GPUI-Preview_<version>_linux-x64.tar.gz` | a folder with `wisp-gpui` and `resources` |
+
+Unpack the archive and start the program; nothing is installed. On macOS move
+the app to Applications or run it where it is. On Windows and Linux keep the
+`resources` folder beside the program: it holds the bundled skills, the Python
+and R workers, the browser extension and the example conversations. The macOS
+app carries the same folders in `Contents/Resources`. Linux needs a working
+Vulkan driver and an X11 or Wayland session; the binary is built on Ubuntu
+22.04.
+
+What to expect:
+
+- It is a preview. The [parity ledger](gpui-parity.md) says what it does not do
+  yet. The WebView installers (`wisp-science_<version>_*`) remain the supported
+  desktop, and the website's download picker offers only those.
+- It can be installed beside the WebView desktop: it has its own name, its own
+  macOS bundle identifier (`science.wisp-science.gpui-preview`) and its own
+  data folder (`wisp-science-gpui`, see below). Bring over on its home page
+  copies projects from the WebView desktop.
+- It does not update itself. Its update check opens the release page, where
+  the newer archive is downloaded by hand. The signed updater manifest
+  (`latest.json`) lists WebView builds only.
+- The macOS app is signed with the same Developer ID as the WebView desktop
+  and notarized; the Windows executable is Authenticode-signed with the same
+  eSigner certificate. The Linux archive is not signed.
+- There is no Linux arm64 archive, no `.dmg`, no Windows installer and no
+  `.deb` or AppImage yet.
+
+The archives are built by `.github/workflows/release-gpui.yml` (GPUI Preview
+Release) with `scripts/package_gpui.py`. Like the other platform workflows it
+runs on the release tag, waits for the GitHub release and only attaches files.
+To rebuild one tag, dispatch it from `main`; `publish=false` is a dry run that
+still signs and keeps the archives as workflow artifacts:
+
+```bash
+gh workflow run "GPUI Preview Release" --ref main -f tag=vX.Y.Z -f publish=true
+```
+
+A tag older than the first preview release builds, but its executable does
+not look for packaged resources and would find no skills. Pull requests that
+change the workflow, the packaging script, the GPUI manifest or build script,
+the resource lookup (`apps/gpui/src/resources.rs`) or `crates/wisp-paths` run
+the same release build and packaging without signing or publishing.
+
+To pack a local build the same way:
+
+```sh
+cargo run build-gpui --release
+python3 scripts/package_gpui.py stage --os macos --arch aarch64 \
+  --binary apps/gpui/target/release/wisp-gpui --out dist
+python3 scripts/package_gpui.py archive --os macos --arch aarch64 --out dist
+```
+
+`--os` is `macos`, `windows` or `linux` and `--arch` is `aarch64` or `x64`;
+they name the layout and the file, the executable is whatever `--binary`
+points at. A local package is unsigned.
 
 ## Lessons from quiet-md
 
@@ -46,7 +116,8 @@ C++ Build Tools and Windows SDK. Linux dependencies are listed in
 This binary requires no Trunk, Node, .NET, Swift, Tauri or WebView.
 The preview enables GPUI's `runtime_shaders`: macOS compiles its Metal shaders
 at launch instead of requiring Xcode's separate Metal Toolchain at build time.
-Measure startup and choose precompiled shaders when preparing release packages.
+The preview archives are built the same way; precompiled shaders remain a
+choice to measure before GPUI becomes the release channel.
 
 ```sh
 cargo run build-gpui
@@ -55,6 +126,12 @@ cargo run build-gpui --release
 
 Output: `apps/gpui/target/debug/wisp-gpui` (`.exe` on Windows), or `release/` for
 optimized builds. Cargo target-directory overrides still apply.
+
+Skills, the Python and R workers, the browser extension and the example
+conversations are folders on disk. An executable built in a checkout reads
+the repository's. A packaged one reads the copy beside it: `Contents/Resources`
+in the macOS app, `resources` next to the executable on Windows and Linux. The
+packaged folder is used only when it holds `skills`; otherwise the checkout is.
 
 On Windows, the desktop executable reserves 8 MiB for its main thread's stack
 (MSVC and GNU targets). GPUI renders on that thread; the default 1 MiB can be
@@ -2037,8 +2114,10 @@ dismissible surface must be added there rather than handling the key itself.
 4. Finish localization, accessibility, platform menus,
    window restoration and input/scroll acceptance on all three platforms.
    Every new dismissible layer must participate in one Escape stack.
-5. Add installers, signing, updates and recovery. Verify feature/data parity
-   before making GPUI default or removing `ui/` and `src-tauri/`.
+5. Add installers, signing, updates and recovery (preview archives, signed on
+   macOS and Windows, are attached to each release; installers and in-app
+   updates remain). Verify feature/data parity before making GPUI default or
+   removing `ui/` and `src-tauri/`.
 
 ## Verification
 

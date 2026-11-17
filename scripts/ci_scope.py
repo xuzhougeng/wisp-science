@@ -29,6 +29,9 @@ def scopes_for_path(path):
         return {"gpui"}
     if path.startswith("apps/android/") or path == ".github/workflows/android.yml":
         return set()  # android.yml has its own path filters.
+    if path in {".github/workflows/release-gpui.yml", "scripts/package_gpui.py",
+                "scripts/test_package_gpui.py"}:
+        return set()  # release-gpui.yml has its own path filters.
     if path.startswith("crates/wisp-sync/cloudflare/"):
         return {"relay_worker"}
     if path.startswith(("crates/wisp-dto/", "crates/wisp-sync/", "src-tauri/", "contracts/", ".cargo/")):
