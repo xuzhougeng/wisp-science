@@ -7887,6 +7887,36 @@ fn App() -> impl IntoView {
             focus_composer();
         });
     });
+    // "New discussion": the backend opens a fresh model context in the same
+    // conversation and its divider arrives as a Compaction event. Nothing is
+    // deleted, so there is no confirmation.
+    let start_new_discussion = Callback::new(move |_: ()| {
+        spawn_local(async move {
+            match invoke_checked("start_research_assistant_discussion", JsValue::UNDEFINED).await {
+                // The status line is hidden in assistant mode; use a toast.
+                Ok(value) => {
+                    if value.as_bool() == Some(false) {
+                        show_toast(&t(
+                            locale.get_untracked(),
+                            "assistant.new_discussion_already",
+                        ));
+                    }
+                    focus_composer();
+                }
+                Err(error) => show_warning_toast(&localize_backend(
+                    locale.get_untracked(),
+                    &js_error_text(error),
+                )),
+            }
+        });
+    });
+    let assistant_replying = Signal::derive(move || {
+        active_session.with(|session| {
+            session
+                .as_ref()
+                .is_some_and(|id| running.with(|running| running.contains(id)))
+        })
+    });
     let toggle_model_view = Callback::new(move |_| {
         if model_view.get() {
             model_view.set(false);
@@ -13437,6 +13467,8 @@ fn App() -> impl IntoView {
             <assistant_workspace::AssistantHeader locale=locale state=assistant_workspace on_close=close_assistant
                 on_remote=Callback::new(move |_| assistant_remote_open.set(true))
                 on_automation=Callback::new(move |_| assistant_automation_open.set(true))
+                on_new_discussion=start_new_discussion
+                replying=assistant_replying
                 on_toggle=Callback::new(move |left| {
                     compose_menu_open.set(false);
                     model_menu_open.set(false);

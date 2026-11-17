@@ -19,6 +19,7 @@ use super::sessions::{insert_message_row_in_epoch, message_from_row};
 use super::Store;
 use anyhow::Result;
 use sqlx::Row;
+pub use wisp_dto::NEW_DISCUSSION_STRATEGY;
 use wisp_llm::Message;
 
 /// Predicate on a `messages` row aliased `m`: the row belongs to its frame's
@@ -324,7 +325,8 @@ impl Store {
 
     /// `session_ui_events.seq` of the newest persisted context-compaction
     /// event, if any. `auto_continue` reuses the Compaction event for
-    /// truncated-output continuation and is not a context rewrite.
+    /// truncated-output continuation and is not a context rewrite; a new
+    /// discussion's divider links its own epoch and is never a candidate.
     pub async fn latest_compaction_ui_event_seq(&self, frame_id: &str) -> Result<Option<i64>> {
         if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
             return Box::pin(store.latest_compaction_ui_event_seq(frame_id)).await;
@@ -332,11 +334,33 @@ impl Store {
         Ok(sqlx::query_scalar(
             "SELECT MAX(seq) FROM session_ui_events WHERE frame_id=? \
              AND json_extract(event_json,'$.kind')='Compaction' \
-             AND COALESCE(json_extract(event_json,'$.strategy'),'')<>'auto_continue'",
+             AND COALESCE(json_extract(event_json,'$.strategy'),'') NOT IN ('auto_continue',?)",
         )
         .bind(frame_id)
+        .bind(NEW_DISCUSSION_STRATEGY)
         .fetch_one(&self.pool)
         .await?)
+    }
+
+    /// Visual user turns (checkpoint cards omitted) recorded before the UI
+    /// event at `ui_seq`: the user index a new discussion's divider starts at.
+    pub async fn visual_user_count_before(&self, frame_id: &str, ui_seq: i64) -> Result<usize> {
+        if let Some(store) = self.route_entity("frames", "id", frame_id).await? {
+            return Box::pin(store.visual_user_count_before(frame_id, ui_seq)).await;
+        }
+        let rows: Vec<Option<String>> = sqlx::query_scalar(
+            "SELECT json_extract(event_json,'$.text') FROM session_ui_events \
+             WHERE frame_id=? AND seq<? AND json_extract(event_json,'$.kind')='User' ORDER BY seq",
+        )
+        .bind(frame_id)
+        .bind(ui_seq)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .flatten()
+            .filter(|text| !crate::is_compaction_checkpoint(text))
+            .count())
     }
 
     /// The epoch that owns `(frame_id, seq)`, or `None` when no such row.
@@ -794,6 +818,11 @@ impl Store {
             .await?
             .ok_or_else(|| anyhow::anyhow!("context_epoch_none: no compaction to undo"))?;
         let record = record_from_row(&row)?;
+        if record.strategy == NEW_DISCUSSION_STRATEGY {
+            // Rolling back would hand the model the previous discussion again
+            // while the transcript still shows the divider.
+            anyhow::bail!("context_epoch_new_discussion: a new discussion is not a compaction");
+        }
         let max_seq: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(seq),0) FROM messages WHERE frame_id=? AND epoch=?",
         )
@@ -1825,5 +1854,161 @@ mod tests {
             .unwrap()
             .iter()
             .any(|message| message.content.as_text() == "after"));
+    }
+
+    /// Epoch 0 holds two finished turns (seqs 1..=5, UI events 1..=8); a new
+    /// discussion opens epoch 1 with only a system row (seq 6) and its
+    /// divider is UI event 9.
+    async fn new_discussion_store() -> Store {
+        let store = store().await;
+        seed(
+            &store,
+            &[
+                ("system", "sys"),
+                ("user", "q1"),
+                ("assistant", "a1"),
+                ("user", "q2"),
+                ("assistant", "a2"),
+            ],
+        )
+        .await;
+        let mut event_seq = 1i64;
+        persist_visual_turn(&store, &mut event_seq, 2, "q1").await;
+        persist_visual_turn(&store, &mut event_seq, 4, "q2").await;
+        let fresh = [Message::system("sys")];
+        let epoch = store
+            .open_context_epoch(
+                "f",
+                OpenContextEpoch {
+                    messages: &fresh,
+                    strategy: NEW_DISCUSSION_STRATEGY,
+                    kind: "fresh",
+                    before_tokens: 100,
+                    after_tokens: 10,
+                    checkpoint_index: None,
+                    first_kept_seq: None,
+                    archive_ref: None,
+                    ui_event_seq: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(epoch, 1);
+        assert_eq!(event_seq, 9);
+        store
+            .append_session_ui_event(
+                "f",
+                event_seq,
+                r#"{"kind":"Compaction","frame_id":"f","before":100,"after":10,"strategy":"new_discussion","epoch":1}"#,
+            )
+            .await
+            .unwrap();
+        store
+            .set_context_epoch_ui_event("f", epoch, event_seq)
+            .await
+            .unwrap();
+        store
+    }
+
+    fn has_divider(events: &[String]) -> bool {
+        events
+            .iter()
+            .any(|event| event.contains(r#""strategy":"new_discussion""#))
+    }
+
+    #[tokio::test]
+    async fn a_new_discussion_hides_the_earlier_context_and_keeps_the_record() {
+        let store = new_discussion_store().await;
+        // The model sees only the fresh system row.
+        let head = store.load_messages_with_seq("f").await.unwrap();
+        assert_eq!(
+            head.iter()
+                .map(|(seq, message)| (*seq, message.content.as_text()))
+                .collect::<Vec<_>>(),
+            [(6, "sys".to_string())]
+        );
+        // Every earlier row is still saved, and the transcript keeps the turns
+        // plus the divider.
+        let all = store.load_messages_all_epochs("f").await.unwrap();
+        assert_eq!(all.len(), 6);
+        assert!(all
+            .iter()
+            .any(|(epoch, _, message)| *epoch == 0 && message.content.as_text() == "q2"));
+        let events = store.load_session_ui_events("f").await.unwrap();
+        assert_eq!(events.len(), 9);
+        assert!(has_divider(&events));
+        assert_eq!(store.visual_user_count("f").await.unwrap(), 2);
+        assert_eq!(store.visual_user_count_before("f", 9).await.unwrap(), 2);
+        // The divider is not a compaction a mid-turn fold could claim.
+        assert_eq!(
+            store.latest_compaction_ui_event_seq("f").await.unwrap(),
+            None
+        );
+        let record = store.context_epoch("f", 1).await.unwrap().unwrap();
+        assert_eq!(record.ui_event_seq, Some(9));
+        // A turn after the divider lands in the fresh epoch.
+        store
+            .append_message("f", 7, &Message::user("q3"))
+            .await
+            .unwrap();
+        assert_eq!(store.resolve_message_epoch("f", 7).await.unwrap(), Some(1));
+        assert_eq!(store.load_messages("f").await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn undo_refuses_a_new_discussion_without_side_effects() {
+        let store = new_discussion_store().await;
+        let before = rewind_state(&store).await;
+        let error = store.undo_context_epoch("f").await.unwrap_err().to_string();
+        assert!(error.contains("context_epoch_new_discussion"), "{error}");
+        assert_eq!(rewind_state(&store).await, before);
+        assert_eq!(store.load_messages("f").await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_rewind_inside_a_new_discussion_keeps_it_fresh_and_keeps_the_divider() {
+        let store = new_discussion_store().await;
+        store
+            .append_message("f", 7, &Message::user("q3"))
+            .await
+            .unwrap();
+        store
+            .append_message("f", 8, &Message::assistant("a3"))
+            .await
+            .unwrap();
+        let mut event_seq = 10i64;
+        persist_visual_turn(&store, &mut event_seq, 7, "q3").await;
+        // Before the discussion's first message: its anchor minus one is the
+        // fresh system row, owned by the new epoch.
+        store.rewind_to_seq("f", 1, 6).await.unwrap();
+        let (head, epochs, _, events) = rewind_state(&store).await;
+        assert_eq!((head, epochs.len()), (1, 1));
+        assert_eq!(
+            store
+                .load_messages("f")
+                .await
+                .unwrap()
+                .iter()
+                .map(|message| message.content.as_text())
+                .collect::<Vec<_>>(),
+            ["sys".to_string()]
+        );
+        assert!(has_divider(&events), "the divider must survive: {events:?}");
+        assert_eq!(events.len(), 9);
+        assert_eq!(store.visual_user_count("f").await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_rewind_into_the_earlier_discussion_drops_the_divider_with_its_epoch() {
+        let store = new_discussion_store().await;
+        // Edit q2: keep up to a1. The new discussion came after the edited
+        // message, so it goes with everything else after it.
+        store.rewind_to_seq("f", 0, 3).await.unwrap();
+        let (head, epochs, rows, events) = rewind_state(&store).await;
+        assert_eq!(head, 0);
+        assert!(epochs.is_empty());
+        assert_eq!(rows.len(), 3);
+        assert!(!has_divider(&events));
+        assert_eq!(store.visual_user_count("f").await.unwrap(), 1);
     }
 }

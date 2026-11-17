@@ -1604,15 +1604,31 @@ async fn truncate_message_rows(
         .bind(keep)
         .execute(&mut **tx)
         .await?;
+    // A cut that stays inside a new discussion (the head epoch, opened with
+    // only its system row) keeps that discussion's divider. The divider sits
+    // after the previous discussion's last boundary, so the boundary cut alone
+    // would drop it while the model context stays fresh.
+    let divider: Option<i64> = sqlx::query_scalar(
+        "SELECT ce.ui_event_seq FROM context_epochs ce JOIN frames f \
+         ON f.id=ce.frame_id AND f.head_epoch=ce.epoch \
+         WHERE ce.frame_id=? AND ce.strategy=? AND ce.first_seq<=?",
+    )
+    .bind(frame_id)
+    .bind(crate::NEW_DISCUSSION_STRATEGY)
+    .bind(keep)
+    .fetch_optional(&mut **tx)
+    .await?
+    .flatten();
     sqlx::query(
-        "DELETE FROM session_ui_events WHERE frame_id=? AND seq > COALESCE((\
+        "DELETE FROM session_ui_events WHERE frame_id=? AND seq > MAX(COALESCE((\
              SELECT MAX(seq) FROM session_ui_events WHERE frame_id=? \
              AND json_extract(event_json,'$.kind')='MessageBoundary' \
-             AND CAST(json_extract(event_json,'$.seq') AS INTEGER)<=?), 0)",
+             AND CAST(json_extract(event_json,'$.seq') AS INTEGER)<=?), 0), ?)",
     )
     .bind(frame_id)
     .bind(frame_id)
     .bind(keep)
+    .bind(divider.unwrap_or(0))
     .execute(&mut **tx)
     .await?;
     let retained_turns: i64 = sqlx::query_scalar(

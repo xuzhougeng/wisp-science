@@ -72,7 +72,7 @@ pub use agent_workflows::{
 pub use artifacts::{logical_artifact_id, scoped_logical_artifact_id};
 pub use ask_user_requests::AskUserPoll;
 pub use assistant_tasks::{AssistantTask, ASSISTANT_TASK_STATUSES};
-pub use context_epochs::{ContextEpochRecord, OpenContextEpoch};
+pub use context_epochs::{ContextEpochRecord, OpenContextEpoch, NEW_DISCUSSION_STRATEGY};
 pub use execution_contexts::FRAME_DEFAULT_EXECUTION_CONTEXT_PREFIX;
 pub use explorations::{
     ArtifactHead, ContextArchiveRecord, Exploration, ExplorationBaselineArtifactHead,

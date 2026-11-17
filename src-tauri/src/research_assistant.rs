@@ -204,6 +204,142 @@ pub(crate) async fn close_research_assistant(
     Ok(())
 }
 
+/// Refusal while an assistant turn (or a dispatch delivery) holds the
+/// conversation. Must stay equal to the string `localize_backend` matches in
+/// ui/src/i18n.rs.
+pub(crate) const NEW_DISCUSSION_BUSY: &str =
+    "The research assistant is replying. Start a new discussion when this reply finishes.";
+/// Refusal while messages wait in the assistant's turn queue. Must stay equal
+/// to the string `localize_backend` matches in ui/src/i18n.rs.
+pub(crate) const NEW_DISCUSSION_QUEUED: &str =
+    "Messages are waiting for the research assistant. Start a new discussion after they are answered or removed.";
+
+pub(crate) enum NewDiscussion {
+    /// The divider event, already persisted; the caller fans it out.
+    Started(crate::AgentEvent),
+    /// The model context holds nothing but the system prompt already.
+    AlreadyFresh,
+}
+
+/// Start a new discussion in the one assistant conversation: open a context
+/// epoch that carries only the system prompt, so the next turn sees nothing
+/// said before, and persist a divider (a `Compaction` event with the
+/// `new_discussion` strategy) where it began. Earlier rows stay frozen in
+/// their epochs and visible in the transcript; plans, mandates and project
+/// records live outside the context and are untouched.
+///
+/// Never interrupts: a running turn, a dispatch delivery (both hold the
+/// workflow lock) or queued messages refuse it.
+pub(crate) async fn start_new_discussion(
+    store: &Store,
+    rt: &crate::SessionRuntime,
+    turn_running: bool,
+) -> Result<NewDiscussion, String> {
+    let _workflow = rt
+        .workflow
+        .clone()
+        .try_lock_owned()
+        .map_err(|_| NEW_DISCUSSION_BUSY.to_string())?;
+    if turn_running {
+        return Err(NEW_DISCUSSION_BUSY.into());
+    }
+    if rt.has_queued_turns() {
+        return Err(NEW_DISCUSSION_QUEUED.into());
+    }
+    let err = |error: anyhow::Error| error.to_string();
+    let head = store.load_messages(ASSISTANT_FRAME_ID).await.map_err(err)?;
+    if head
+        .iter()
+        .all(|message| message.role == wisp_llm::Role::System)
+    {
+        return Ok(NewDiscussion::AlreadyFresh);
+    }
+    let before = head
+        .iter()
+        .map(wisp_core::ContextManager::estimated_tokens)
+        .sum::<usize>();
+    // The current prompt, not the saved one: a fresh context also drops a
+    // prompt that predates later policy changes.
+    let fresh = [wisp_llm::Message::system(ASSISTANT_SYSTEM)];
+    let after = wisp_core::ContextManager::estimated_tokens(&fresh[0]);
+    let epoch = store
+        .open_context_epoch(
+            ASSISTANT_FRAME_ID,
+            wisp_store::OpenContextEpoch {
+                messages: &fresh,
+                strategy: wisp_store::NEW_DISCUSSION_STRATEGY,
+                kind: "fresh",
+                before_tokens: before,
+                after_tokens: after,
+                checkpoint_index: None,
+                first_kept_seq: None,
+                archive_ref: None,
+                ui_event_seq: None,
+            },
+        )
+        .await
+        .map_err(err)?;
+    // The cached agent still holds the previous discussion; the next turn
+    // rebuilds it from the new head epoch.
+    *rt.agent.lock().await = None;
+    *rt.interrupted_turn_start.lock().unwrap() = None;
+    rt.sync_last_seq_from_store(store, ASSISTANT_FRAME_ID)
+        .await?;
+    let event = crate::AgentEvent::Compaction {
+        frame_id: ASSISTANT_FRAME_ID.into(),
+        before,
+        after,
+        strategy: wisp_store::NEW_DISCUSSION_STRATEGY.into(),
+        epoch: Some(u64::try_from(epoch).unwrap_or(0)),
+    };
+    crate::session_commands::flush_session_events(&rt.ui_event_writer).await?;
+    let ui_seq = store
+        .next_session_ui_event_seq(ASSISTANT_FRAME_ID)
+        .await
+        .map_err(err)?;
+    let json = serde_json::to_string(&event).map_err(|error| error.to_string())?;
+    store
+        .append_session_ui_event(ASSISTANT_FRAME_ID, ui_seq, &json)
+        .await
+        .map_err(err)?;
+    store
+        .set_context_epoch_ui_event(ASSISTANT_FRAME_ID, epoch, ui_seq)
+        .await
+        .map_err(err)?;
+    Ok(NewDiscussion::Started(event))
+}
+
+/// Shared by the desktop header and WeChat `/new`. `Ok(false)` when the
+/// context was already fresh and nothing changed.
+pub(crate) async fn new_discussion(state: &AppState, app: &AppHandle) -> Result<bool, String> {
+    ensure(&state.store, &state.app_data).await?;
+    let _activity = state.begin_project_activity(ASSISTANT_PROJECT_ID)?;
+    let rt = state.session_runtime(ASSISTANT_FRAME_ID).await;
+    let running = state
+        .running_turns
+        .lock()
+        .await
+        .contains(ASSISTANT_FRAME_ID);
+    match start_new_discussion(&state.store, &rt, running).await? {
+        NewDiscussion::Started(event) => {
+            crate::emit_agent_event_in(app, event, Some(ASSISTANT_PROJECT_ID));
+            rt.ui_activity
+                .send_modify(|count| *count = count.wrapping_add(1));
+            Ok(true)
+        }
+        NewDiscussion::AlreadyFresh => Ok(false),
+    }
+}
+
+/// Desktop "New discussion" in the assistant header.
+#[tauri::command]
+pub(crate) async fn start_research_assistant_discussion(
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<bool, String> {
+    new_discussion(state.inner(), &app).await
+}
+
 fn clip(text: &str, chars: usize) -> String {
     let text = text.trim();
     match text.char_indices().nth(chars) {

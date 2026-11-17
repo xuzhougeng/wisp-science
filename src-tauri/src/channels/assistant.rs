@@ -15,6 +15,8 @@ enum Inbound {
     Resume,
     /// `/mandates`: every visible research mandate at a glance.
     Mandates,
+    /// `/new`: start a new discussion in the same conversation, no model turn.
+    NewDiscussion,
     Message,
 }
 
@@ -34,7 +36,7 @@ fn classify(text: &str) -> Inbound {
     }
     let command = normalized.split_whitespace().next().unwrap_or_default();
     match command {
-        "/help" => Inbound::Reply("这里是科研助理，直接用自然语言管理所有可见项目。例如：这周各项目进展如何？在 RNA-seq 项目里安排分析。\nyes — 批准助理当前操作一次\nno — 拒绝助理当前操作\nfull — 批准本次并开启助理会话完全权限，后续普通工具操作免审批\nfull off — 关闭助理会话完全权限\n/approval — 查看助理待审批请求\n/status — 查看接入、模型和权限状态\n/model — 查看可用模型；/model <编号或名称> 切换助理模型\n/resume — 重跑上一轮失败的请求\n/mandates — 查看全部研究职责的状态、KPI 和等你处理的事项\n/stop — 停止助理当前回复\n完全权限仅限助理会话，重启 Wisp 后失效。无需 /project 或 /session 切换；派发任务由助理先判断审批，拿不准时在这里请你确认。".into()),
+        "/help" => Inbound::Reply("这里是科研助理，直接用自然语言管理所有可见项目。例如：这周各项目进展如何？在 RNA-seq 项目里安排分析。\nyes — 批准助理当前操作一次\nno — 拒绝助理当前操作\nfull — 批准本次并开启助理会话完全权限，后续普通工具操作免审批\nfull off — 关闭助理会话完全权限\n/approval — 查看助理待审批请求\n/status — 查看接入、模型和权限状态\n/model — 查看可用模型；/model <编号或名称> 切换助理模型\n/resume — 重跑上一轮失败的请求\n/new — 新开讨论：之后的提问从空白上下文开始，之前的记录仍可在桌面查看，计划和职责不受影响\n/mandates — 查看全部研究职责的状态、KPI 和等你处理的事项\n/stop — 停止助理当前回复\n完全权限仅限助理会话，重启 Wisp 后失效。无需 /project 或 /session 切换；派发任务由助理先判断审批，拿不准时在这里请你确认。".into()),
         "/status" => Inbound::Status,
         "/approval" | "/approvals" => Inbound::Approvals,
         "/stop" => Inbound::Stop,
@@ -42,7 +44,8 @@ fn classify(text: &str) -> Inbound {
         "/model" | "/models" => Inbound::Model(text.trim()[command.len()..].trim().into()),
         "/resume" => Inbound::Resume,
         "/mandates" | "/mandate" => Inbound::Mandates,
-        _ if command.starts_with('/') => Inbound::Reply("这里固定连接科研助理，不切换项目或新建助理会话。请直接说明项目和需求；发送 /help 查看帮助。".into()),
+        "/new" => Inbound::NewDiscussion,
+        _ if command.starts_with('/') => Inbound::Reply("这里固定连接科研助理，不切换项目或新建助理会话；换话题请发送 /new 新开讨论。请直接说明项目和需求；发送 /help 查看帮助。".into()),
         _ => Inbound::Message,
     }
 }
@@ -180,6 +183,21 @@ fn turn_failure(text: &str, error: &str) -> (Option<String>, String) {
     )
 }
 
+/// The WeChat reply to `/new`.
+fn new_discussion_reply(result: Result<bool, String>) -> String {
+    match result {
+        Ok(true) => "已新开讨论：之后的提问从空白上下文开始，助理不再看到之前的记录。之前的内容仍在桌面科研助理里，往上翻可以查看；计划、日历和研究职责不受影响。".into(),
+        Ok(false) => "当前已经是新的讨论，没有需要清空的上文。".into(),
+        Err(error) if error == crate::research_assistant::NEW_DISCUSSION_BUSY => {
+            "科研助理正在回复，等这一轮结束后再发送 /new。".into()
+        }
+        Err(error) if error == crate::research_assistant::NEW_DISCUSSION_QUEUED => {
+            "科研助理还有排队的消息，处理完后再发送 /new。".into()
+        }
+        Err(error) => format!("新开讨论失败: {error}"),
+    }
+}
+
 pub(super) fn approval_message(request: &crate::ConfirmRequest) -> String {
     if request.tool == "project_approval" {
         return format!("科研助理需要你确认项目操作。\n{}\n\n回复 yes 批准本次，no 拒绝。选择会转交给原项目的这条审批。", super::approval_preview(request));
@@ -285,6 +303,11 @@ pub(super) async fn handle_inbound(
                 Err(error) => format!("停止失败: {error}"),
             }
         }
+        Inbound::NewDiscussion => {
+            return new_discussion_reply(
+                crate::research_assistant::new_discussion(state.inner(), app).await,
+            )
+        }
         Inbound::Message | Inbound::Resume => {}
     }
     let Some(window) = app.workspace_surface("main") else {
@@ -333,7 +356,6 @@ mod tests {
             "/projects",
             "/session 1",
             "/sessions",
-            "/new",
             "/approve 123",
             "/reject 123",
             "/unknown",
@@ -348,6 +370,158 @@ mod tests {
             assert!(matches!(classify(command), Inbound::Mandates), "{command}");
             assert!(is_control_text(command));
         }
+    }
+
+    #[test]
+    fn new_starts_a_discussion_without_a_model_turn_and_is_listed_in_help() {
+        // `/new` stays inside the assistant: it is a control command answered
+        // at once, never a message for the turn queue or the model.
+        for command in ["/new", " /NEW ", "/new please"] {
+            assert!(
+                matches!(classify(command), Inbound::NewDiscussion),
+                "{command}"
+            );
+            assert!(is_control_text(command), "{command}");
+        }
+        assert!(matches!(classify("new"), Inbound::Message));
+        let Inbound::Reply(help) = classify("/help") else {
+            panic!("/help must reply directly");
+        };
+        assert!(help.contains("/new — 新开讨论"), "{help}");
+
+        assert!(new_discussion_reply(Ok(true)).starts_with("已新开讨论"));
+        assert!(new_discussion_reply(Ok(false)).contains("已经是新的讨论"));
+        assert!(
+            new_discussion_reply(Err(crate::research_assistant::NEW_DISCUSSION_BUSY.into()))
+                .contains("等这一轮结束后再发送 /new")
+        );
+        assert!(
+            new_discussion_reply(Err(crate::research_assistant::NEW_DISCUSSION_QUEUED.into()))
+                .contains("排队的消息")
+        );
+    }
+
+    #[tokio::test]
+    async fn new_discussion_on_the_assistant_path_clears_the_model_context_only() {
+        use crate::research_assistant::{start_new_discussion, NewDiscussion};
+        let dir = std::env::temp_dir().join(format!("wisp-assistant-new-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(&dir.join("wisp.sqlite")).await.unwrap();
+        resolve_session(&store, &dir).await.unwrap();
+        let rt = crate::SessionRuntime::new();
+        // An untouched conversation is already fresh: nothing is written.
+        assert!(matches!(
+            start_new_discussion(&store, &rt, false).await,
+            Ok(NewDiscussion::AlreadyFresh)
+        ));
+        for (seq, message) in [
+            wisp_llm::Message::system("old prompt"),
+            wisp_llm::Message::user("RNA-seq: which samples failed QC?"),
+            wisp_llm::Message::assistant("S3 and S7."),
+        ]
+        .iter()
+        .enumerate()
+        {
+            store
+                .append_message(ASSISTANT_FRAME_ID, seq as i64 + 1, message)
+                .await
+                .unwrap();
+        }
+        store
+            .append_session_ui_event(
+                ASSISTANT_FRAME_ID,
+                1,
+                r#"{"kind":"User","frame_id":"research-assistant","text":"RNA-seq: which samples failed QC?"}"#,
+            )
+            .await
+            .unwrap();
+
+        // Refused, with nothing changed, while a turn runs or holds the
+        // conversation, and while messages are queued.
+        assert_eq!(
+            start_new_discussion(&store, &rt, true)
+                .await
+                .err()
+                .as_deref(),
+            Some(crate::research_assistant::NEW_DISCUSSION_BUSY)
+        );
+        {
+            let _turn = rt.workflow.clone().lock_owned().await;
+            assert_eq!(
+                start_new_discussion(&store, &rt, false)
+                    .await
+                    .err()
+                    .as_deref(),
+                Some(crate::research_assistant::NEW_DISCUSSION_BUSY)
+            );
+        }
+        rt.queued.lock().unwrap().push(crate::QueuedItem {
+            id: 1,
+            message: "next".into(),
+            attachments: Vec::new(),
+            references: Vec::new(),
+            unattended: false,
+        });
+        assert_eq!(
+            start_new_discussion(&store, &rt, false)
+                .await
+                .err()
+                .as_deref(),
+            Some(crate::research_assistant::NEW_DISCUSSION_QUEUED)
+        );
+        rt.queued.lock().unwrap().clear();
+        assert_eq!(store.frame_head_epoch(ASSISTANT_FRAME_ID).await.unwrap(), 0);
+        assert_eq!(
+            store.load_messages(ASSISTANT_FRAME_ID).await.unwrap().len(),
+            3
+        );
+
+        let Ok(NewDiscussion::Started(event)) = start_new_discussion(&store, &rt, false).await
+        else {
+            panic!("an idle assistant starts a new discussion");
+        };
+        assert!(matches!(
+            &event,
+            crate::AgentEvent::Compaction { strategy, epoch: Some(1), .. }
+                if strategy == wisp_store::NEW_DISCUSSION_STRATEGY
+        ));
+        // The model sees only the current system prompt; no model turn ran.
+        let model = store.load_messages(ASSISTANT_FRAME_ID).await.unwrap();
+        assert_eq!(model.len(), 1);
+        assert_eq!(model[0].role, wisp_llm::Role::System);
+        assert_eq!(
+            model[0].content.as_text(),
+            crate::research_assistant::ASSISTANT_SYSTEM
+        );
+        assert_eq!(rt.last_seq(), 4);
+        // The full record still holds the earlier discussion and the divider.
+        let all = store
+            .load_messages_all_epochs(ASSISTANT_FRAME_ID)
+            .await
+            .unwrap();
+        assert!(all
+            .iter()
+            .any(|(epoch, _, message)| *epoch == 0 && message.content.as_text() == "S3 and S7."));
+        let events = store
+            .load_session_ui_events(ASSISTANT_FRAME_ID)
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(events[1].contains(r#""strategy":"new_discussion""#));
+        let record = store
+            .context_epoch(ASSISTANT_FRAME_ID, 1)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.ui_event_seq, Some(2));
+        // Pressing it again before anything new was said changes nothing.
+        assert!(matches!(
+            start_new_discussion(&store, &rt, false).await,
+            Ok(NewDiscussion::AlreadyFresh)
+        ));
+        assert_eq!(store.frame_head_epoch(ASSISTANT_FRAME_ID).await.unwrap(), 1);
+        drop(store);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn profile(id: &str, label: &str, model: &str) -> ModelProfile {

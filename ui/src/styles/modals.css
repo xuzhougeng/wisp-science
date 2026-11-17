@@ -494,6 +494,15 @@ button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
   from { opacity: 0; transform: translateY(4px); filter: blur(2px); }
 }
 @media (prefers-reduced-motion: reduce) { .context-compaction-flag.auto { animation: none; } }
+/* Research assistant: where a new discussion began. A rule across the column,
+   label centred; the record above stays readable. */
+.discussion-divider {
+  display: flex; align-items: center; gap: 10px; width: 100%; margin: 6px 0;
+  color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.35;
+}
+.discussion-divider::before, .discussion-divider::after { content: ""; flex: 1 1 auto; min-width: 12px; border-top: 1px solid var(--border); }
+.discussion-divider > span { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; text-align: center; }
+.discussion-divider svg { width: 14px; height: 14px; flex: 0 0 auto; opacity: .8; }
 /* Confirm/approval dialog: pin the buttons and scroll only the message body, so
    a long command to approve can never push the Approve button off-screen (#63).
    Overrides the generic .modal whole-modal scroll above (later, equal specificity). */

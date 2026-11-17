@@ -195,6 +195,10 @@ pub(crate) fn AssistantHeader(
     on_toggle: Callback<bool>,
     on_remote: Callback<()>,
     on_automation: Callback<()>,
+    /// Start a fresh model context in the same conversation (#1588).
+    on_new_discussion: Callback<()>,
+    /// An assistant turn is running; a new discussion would be refused.
+    replying: Signal<bool>,
 ) -> impl IntoView {
     view! {
         <header class="assistant-workspace-header" data-testid="assistant-header">
@@ -205,6 +209,11 @@ pub(crate) fn AssistantHeader(
                 on:click=move |_| on_toggle.call(true)>{compose_icon("panel-left")}</button>
             <h1 class="assistant-title">{move || crate::i18n::tr(locale.get(), "assistant.title")}</h1>
             <span class="assistant-topbar-note">{move || crate::i18n::tr(locale.get(), "assistant.a_little_more_clarity_every_day")}</span>
+            <button type="button" id="assistant-new-discussion" class="assistant-remote-toggle" data-testid="assistant-new-discussion"
+                title=move || crate::i18n::tr(locale.get(), "assistant.new_discussion_hint")
+                aria-label=move || crate::i18n::tr(locale.get(), "assistant.new_discussion")
+                disabled=move || replying.get()
+                on:click=move |_| on_new_discussion.call(())>{compose_icon("message-plus")}<span class="assistant-new-discussion-label">{move || crate::i18n::tr(locale.get(), "assistant.new_discussion")}</span></button>
             <button type="button" id="assistant-automation-toggle" class="assistant-remote-toggle" data-testid="open-automation"
                 on:click=move |_| on_automation.call(())>{compose_icon("clock")}{move || crate::i18n::tr(locale.get(), "automation.automation")}</button>
             <button type="button" id="assistant-remote-toggle" class="assistant-remote-toggle"
