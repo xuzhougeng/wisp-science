@@ -9193,6 +9193,7 @@ dependencies = [
  "uuid",
  "vt100",
  "wisp-dto",
+ "wisp-paths",
  "wisp-server",
  "wisp-sync",
 ]

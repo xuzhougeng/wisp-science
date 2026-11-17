@@ -1,0 +1,286 @@
+name: GPUI Preview Release
+
+# Attaches the GPUI desktop preview (apps/gpui, `wisp-gpui`) to an existing
+# GitHub release: one archive per platform, named
+# Wisp-Science-GPUI-Preview_<version>_<os>-<arch>. Like the other platform
+# workflows it waits for the release and uploads files only; it never sets
+# the release title or body. The WebView installers stay the release channel:
+# the download picker and the updater manifest do not select these files.
+#
+# - Tag push: build, sign, attach.
+# - workflow_dispatch from main with a tag: rebuild that tag. publish=false is
+#   a dry run that still signs and keeps the archives as workflow artifacts.
+# - Pull requests that touch the packaging path: build and pack without
+#   signing or publishing, so a broken package is found before a release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build and publish (e.g. v1.26.0)
+        required: true
+        default: v1.26.0
+      publish:
+        description: Attach to the GitHub release (uncheck for a dry run; signing still runs)
+        type: boolean
+        required: true
+        default: true
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/release-gpui.yml
+      - scripts/package_gpui.py
+      - scripts/test_package_gpui.py
+      - apps/gpui/Cargo.toml
+      - apps/gpui/build.rs
+      - apps/gpui/src/resources.rs
+      - crates/wisp-paths/**
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gpui-release-${{ github.event.pull_request.number || inputs.tag || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  package:
+    name: ${{ matrix.system }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-latest, target: aarch64-apple-darwin, system: macos, arch: aarch64 }
+          - { runner: macos-latest, target: x86_64-apple-darwin, system: macos, arch: x64 }
+          - { runner: windows-latest, target: x86_64-pc-windows-msvc, system: windows, arch: x64 }
+          # The oldest hosted Ubuntu, so the binary also starts on its glibc.
+          - { runner: ubuntu-22.04, target: x86_64-unknown-linux-gnu, system: linux, arch: x64 }
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event_name == 'push' && github.ref_name || '' }}
+      # Pull requests never see the signing secrets and never publish.
+      SIGN: ${{ github.event_name != 'pull_request' }}
+      PUBLISH: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+      BINARY: apps/gpui/target/${{ matrix.target }}/release/wisp-gpui${{ matrix.system == 'windows' && '.exe' || '' }}
+      # Also written to the bundle's Info.plist by scripts/package_gpui.py.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+      # Load the waiter, packager and signer from this workflow revision, not
+      # the tagged app tree, so a rebuild from main uses the current scripts.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            .github/actions/wait-for-release
+            scripts
+          path: _release_ci
+
+      - name: Wait for GitHub release
+        if: env.PUBLISH == 'true'
+        uses: ./_release_ci/.github/actions/wait-for-release
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Keep in step with .github/workflows/gpui.yml.
+      - name: Install Linux native build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config cmake clang libclang-dev libdbus-1-dev \
+            libfontconfig1-dev libfreetype6-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libxcb1-dev libxcb-xkb-dev libxcb-randr0-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev libxcb-sync-dev libxcb-render0-dev \
+            libxcb-shm0-dev libegl1-mesa-dev libvulkan-dev libasound2-dev libssl-dev
+
+      - name: Check the packaging script
+        run: python -m unittest discover -s _release_ci/scripts -p test_package_gpui.py
+
+      - name: Build the GPUI desktop (release)
+        run: cargo build --locked --release --manifest-path apps/gpui/Cargo.toml --target ${{ matrix.target }}
+
+      # ---- Windows: Authenticode through eSigner, as Windows Release does.
+      # Slot 1 keeps this job's one-time codes apart from Windows Release's
+      # when both run for the same tag. A missing ESIGNER_* secret or a failed
+      # signature fails the job, so an unsigned executable is never attached.
+      - name: Set eSigner sign log path
+        if: runner.os == 'Windows' && env.SIGN == 'true'
+        shell: pwsh
+        run: '"ESIGNER_SIGN_LOG=$env:RUNNER_TEMP\esigner-signed.log" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
+
+      - name: Cache CodeSignTool
+        if: runner.os == 'Windows' && env.SIGN == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/CodeSignTool
+          key: codesigntool-1.3.2-windows
+
+      - name: Install CodeSignTool
+        if: runner.os == 'Windows' && env.SIGN == 'true'
+        shell: pwsh
+        run: pwsh -NoProfile -File _release_ci/scripts/install_esigner_codesigntool.ps1
+
+      - name: Sign the Windows executable
+        if: runner.os == 'Windows' && env.SIGN == 'true'
+        shell: pwsh
+        env:
+          ESIGNER_CREDENTIAL_ID: ${{ secrets.ESIGNER_CREDENTIAL_ID }}
+          ESIGNER_USERNAME: ${{ secrets.ESIGNER_USERNAME }}
+          ESIGNER_PASSWORD: ${{ secrets.ESIGNER_PASSWORD }}
+          ESIGNER_TOTP_SECRET: ${{ secrets.ESIGNER_TOTP_SECRET }}
+          ESIGNER_PIN: ${{ secrets.ESIGNER_PIN }}
+          ESIGNER_PROGRAM_NAME: wisp-science
+          WISP_SIGN_SLOT: preview
+        run: |
+          $exe = (Resolve-Path $env:BINARY).Path
+          pwsh -NoProfile -File _release_ci/scripts/esigner_sign.ps1 -Path $exe
+          if ($LASTEXITCODE -ne 0) { throw "esigner_sign.ps1 exited $LASTEXITCODE" }
+          pwsh -NoProfile -File _release_ci/scripts/assert_esigner_signatures.ps1 -Path $exe
+          if ($LASTEXITCODE -ne 0) { throw "assert_esigner_signatures.ps1 exited $LASTEXITCODE" }
+
+      - name: Lay out the package
+        run: |
+          python _release_ci/scripts/package_gpui.py stage --repo . \
+            --os ${{ matrix.system }} --arch ${{ matrix.arch }} --binary "$BINARY" --out dist
+
+      # ---- macOS: the Developer ID certificate and notary account macOS
+      # Release uses. Import the certificate into a temporary keychain and read
+      # the identity from it, so no APPLE_SIGNING_IDENTITY secret is needed.
+      - name: Import Developer ID certificate
+        if: runner.os == 'macOS' && env.SIGN == 'true'
+        env:
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="${RUNNER_TEMP}/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          python3 -c 'import base64,os; open("cert.p12","wb").write(base64.b64decode(os.environ["MAC_CERT_P12_BASE64"].strip()))'
+
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security list-keychains -d user -s "${KEYCHAIN_PATH}"
+          security default-keychain -s "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security import cert.p12 -k "${KEYCHAIN_PATH}" -P "${MAC_CERT_PASSWORD}" \
+            -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/xcrun
+          security set-key-partition-list -S apple-tool:,apple: -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+
+          IDENTITY="$(security find-identity -v -p codesigning "${KEYCHAIN_PATH}" | awk '/Developer ID Application/ {print $2; exit}')"
+          if [ -z "${IDENTITY}" ]; then
+            echo "::error::No Developer ID Application identity in the .p12 — check MAC_CERT_P12_BASE64 / MAC_CERT_PASSWORD and that the .p12 contains the private key." >&2
+            security find-identity -v -p codesigning "${KEYCHAIN_PATH}" >&2
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=${IDENTITY}" >> "${GITHUB_ENV}"
+          echo "CODESIGN_KEYCHAIN=${KEYCHAIN_PATH}" >> "${GITHUB_ENV}"
+          rm -f cert.p12
+
+      # Hardened runtime and a secure timestamp are what notarization requires.
+      - name: Sign the macOS bundle
+        if: runner.os == 'macOS' && env.SIGN == 'true'
+        run: |
+          set -euo pipefail
+          APP="dist/Wisp Science GPUI Preview.app"
+          codesign --force --options runtime --timestamp \
+            --keychain "${CODESIGN_KEYCHAIN}" --sign "${APPLE_SIGNING_IDENTITY}" "${APP}"
+          codesign --verify --deep --strict --verbose=2 "${APP}"
+
+      - name: Pack the archive
+        run: |
+          ARCHIVE="$(python _release_ci/scripts/package_gpui.py archive --repo . \
+            --os ${{ matrix.system }} --arch ${{ matrix.arch }} --out dist)"
+          test -s "${ARCHIVE}"
+          ls -l "${ARCHIVE}"
+          echo "ARCHIVE=${ARCHIVE}" >> "${GITHUB_ENV}"
+
+      # Notarize the zip, staple the ticket to the bundle, then pack again so
+      # the download carries the ticket and opens without a network check.
+      - name: Notarize and staple the macOS bundle
+        if: runner.os == 'macOS' && env.SIGN == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          APP="dist/Wisp Science GPUI Preview.app"
+          xcrun notarytool submit "${ARCHIVE}" \
+            --apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${APPLE_TEAM_ID}" \
+            --wait --timeout 45m --output-format json > "${RUNNER_TEMP}/notary.json"
+          STATUS="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status",""))' "${RUNNER_TEMP}/notary.json")"
+          if [ "${STATUS}" != "Accepted" ]; then
+            echo "::error::Notarization status: ${STATUS:-unknown}" >&2
+            ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id",""))' "${RUNNER_TEMP}/notary.json")"
+            if [ -n "${ID}" ]; then
+              xcrun notarytool log "${ID}" \
+                --apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${APPLE_TEAM_ID}" >&2 || true
+            fi
+            exit 1
+          fi
+          xcrun stapler staple "${APP}"
+          xcrun stapler validate "${APP}"
+          python _release_ci/scripts/package_gpui.py archive --repo . \
+            --os ${{ matrix.system }} --arch ${{ matrix.arch }} --out dist
+          # Informational: Gatekeeper's verdict depends on the runner's own policy.
+          spctl --assess --type execute --verbose=2 "${APP}" || echo "::warning::spctl did not accept the stapled bundle on this runner"
+
+      - name: Clean up keychain
+        if: always() && runner.os == 'macOS'
+        run: |
+          if [ -n "${CODESIGN_KEYCHAIN:-}" ] && [ -f "${CODESIGN_KEYCHAIN}" ]; then
+            security delete-keychain "${CODESIGN_KEYCHAIN}" || true
+          fi
+
+      # Pull requests and dry runs: keep the archive with the run instead.
+      - name: Upload the archive as a workflow artifact
+        if: env.PUBLISH != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpui-preview-${{ matrix.system }}-${{ matrix.arch }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Attach the archive to the existing GitHub release
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${RELEASE_TAG}" "${ARCHIVE}" --clobber --repo "${GITHUB_REPOSITORY}"
+
+  verify-assets:
+    needs: package
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Verify every platform attached its preview archive
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" -R "${{ github.repository }}" --json assets --jq '.assets[].name' > assets.txt
+          cat assets.txt
+          for suffix in macos-aarch64.zip macos-x64.zip windows-x64.zip linux-x64.tar.gz; do
+            count=$(grep -c "^Wisp-Science-GPUI-Preview_.*_${suffix}\$" assets.txt || true)
+            if [ "$count" -ne 1 ]; then
+              echo "::error::Expected one Wisp-Science-GPUI-Preview_*_${suffix} asset, found $count"
+              exit 1
+            fi
+          done

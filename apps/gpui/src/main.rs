@@ -55,6 +55,7 @@ mod present;
 mod project_windows;
 mod queue;
 mod remote;
+mod resources;
 mod reuse;
 mod review;
 mod run_cards;
@@ -237,6 +238,8 @@ fn main() -> anyhow::Result<()> {
     if let Ok(program) = std::env::current_exe() {
         wisp_server::acp_bridge::set_relay(program);
     }
+    // A release package carries its skills and workers beside the executable.
+    resources::install();
     let runtime = Arc::new(tokio::runtime::Runtime::new()?);
     let backend = backend::Backend::new(runtime.clone());
     let ui_backend = backend.clone();

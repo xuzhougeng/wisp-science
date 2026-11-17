@@ -225,4 +225,4 @@ releases keep the license published with them.
 }
 ```
 
-Desktop development is moving to one cross-platform [GPUI frontend](docs/gpui-desktop.md). The separate SwiftUI and WinUI desktop clients are retired; iOS/Android remain. Published desktop installers still use WebView during the migration.
+Desktop development is moving to one cross-platform [GPUI frontend](docs/gpui-desktop.md). The separate SwiftUI and WinUI desktop clients are retired; iOS/Android remain. Published desktop installers still use WebView during the migration; each release also attaches a [GPUI preview](docs/gpui-desktop.md#preview-downloads) archive for macOS, Windows and Linux.

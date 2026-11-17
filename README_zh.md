@@ -219,4 +219,4 @@ Windows 安装包使用 [SSL.com](https://www.ssl.com/) Personal ID（IV）代�
 }
 ```
 
-桌面端正在统一迁移到 [GPUI 前端](docs/gpui-desktop.md)。独立的 SwiftUI、WinUI 桌面客户端已移除，iOS/Android 保留；迁移期间发布的桌面安装包仍使用 WebView。
+桌面端正在统一迁移到 [GPUI 前端](docs/gpui-desktop.md)。独立的 SwiftUI、WinUI 桌面客户端已移除，iOS/Android 保留；迁移期间发布的桌面安装包仍使用 WebView；每个版本的发布页同时附带 macOS、Windows、Linux 的 [GPUI 预览版](docs/gpui-desktop.md#preview-downloads)压缩包。

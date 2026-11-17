@@ -8,6 +8,7 @@ commits/events/diffs conservatively select all groups.
 | Change | Selected jobs |
 | --- | --- |
 | `apps/gpui/**`, `gpui.yml` | GPUI checks and offline state tests on macOS/Windows/Linux |
+| `release-gpui.yml`, `scripts/package_gpui.py`, GPUI manifest/build script/resource lookup, `crates/wisp-paths/**` | GPUI Preview Release's own filters: unsigned release build and package on macOS (both architectures), Windows and Linux, kept as workflow artifacts |
 | `apps/ios/**`, `ios.yml` | iOS protocol tests, app compilation and unit tests |
 | `apps/android/**` | Independent Android workflow filters |
 | Shared DTO/sync, Tauri, contracts, root Cargo/config | Rust, headless, desktop, WebView, GPUI, iOS |
@@ -25,7 +26,8 @@ app unit tests and result artifacts. Android remains independent.
 GPUI has its own Cargo workspace/lockfile and stays outside the root
 `cargo test --workspace` dependency graph. Its matrix compiles the frontend and
 runs state tests without opening a window or requiring model credentials.
-Release workflows still publish WebView installers during migration.
+Release workflows still publish WebView installers during migration; GPUI
+Preview Release attaches the GPUI preview archives beside them.
 
 When changing routing, update `scripts/test_ci_scope.py`. Local execution needs
 permission under `AGENTS.md`. Cover iOS-only, GPUI-only, mixed backend,
