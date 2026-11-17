@@ -764,7 +764,12 @@ impl Workspace {
         detail.child(
             surfaces::markdown(
                 SharedString::from(format!("favorite-{}", item.id)),
-                favorites::as_markdown(&item.kind, item.language.as_deref(), &item.code),
+                crate::present::answer_markdown(&favorites::as_markdown(
+                    &item.kind,
+                    item.language.as_deref(),
+                    &item.code,
+                ))
+                .into_owned(),
                 window,
                 cx,
             )

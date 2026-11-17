@@ -58,6 +58,13 @@ pub fn title_line(text: &str) -> String {
     out.trim().to_owned()
 }
 
+/// An answer's text as it is drawn: Codex's file citations
+/// (`:codex-file-citation{path=…}`) become links named after the file, as
+/// the WebView and the exports draw them (`wisp_server::citations`).
+pub fn answer_markdown(text: &str) -> std::borrow::Cow<'_, str> {
+    wisp_server::citations::file_citations_as_links(text)
+}
+
 /// Whether a row is an answer the user reads: Wisp's text, or a turn's
 /// answer delivered through `attempt_completion` that came back with text.
 /// A completion that failed or still runs, and every other tool, is a
@@ -218,13 +225,6 @@ pub fn entry_number(rows: &[Item], index: usize, earlier: usize) -> Option<usize
                 .filter(|row| row.role == "user")
                 .count(),
     )
-}
-
-/// The number the next entry will have, written in the gutter beside the
-/// composer: one more than the user's messages so far, counted as
-/// `entry_number` counts them. None where nothing can be written.
-pub fn next_entry_number(rows: &[Item], earlier: usize, writable: bool) -> Option<usize> {
-    writable.then(|| earlier + rows.iter().filter(|row| row.role == "user").count() + 1)
 }
 
 /// The row of the latest entry: the last of the user's messages.
@@ -837,21 +837,13 @@ mod tests {
     }
 
     #[test]
-    fn the_next_entry_follows_the_last_one_numbered() {
-        let user = |text: &str| item(json!({"role": "user", "text": text}));
-        let rows = [
-            user("one"),
-            item(json!({"role": "assistant", "text": "a"})),
-            user("two"),
-            item(json!({"tool_name": "shell", "text": "ok"})),
-        ];
-        assert_eq!(next_entry_number(&rows, 0, true), Some(3));
-        // As `entry_number` counts: earlier pages count too.
-        assert_eq!(entry_number(&rows, 2, 5), Some(7));
-        assert_eq!(next_entry_number(&rows, 5, true), Some(8));
-        assert_eq!(next_entry_number(&[], 0, true), Some(1));
-        // Nothing where the conversation cannot be written to.
-        assert_eq!(next_entry_number(&rows, 0, false), None);
+    fn an_answers_file_citations_are_drawn_as_links() {
+        let text = r#"See :codex-file-citation{path="E:\r\a b.csv" purpose="output"}."#;
+        assert_eq!(
+            answer_markdown(text),
+            "See [a b.csv](<file:///E:/r/a%20b.csv>)."
+        );
+        assert_eq!(answer_markdown("plain"), "plain");
     }
 
     #[test]

@@ -62,8 +62,7 @@ impl Workspace {
         }
         let mark = cx.theme().primary;
         let current = self.find.current() == Some(index);
-        // A tint only, so the record line and the gutter stay where they
-        // are in every row.
+        // A tint only, so the row's edges stay where they are.
         div()
             .w_full()
             .bg(mark.opacity(if current { 0.12 } else { 0.07 }))
