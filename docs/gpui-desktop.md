@@ -1205,13 +1205,20 @@ Limits of this slice:
   offers its tasks only those two models and one native executor, and
   runs every task's turn natively on one of the two, so the editor does
   not offer them and Bring over still leaves such WebView templates
-  behind; tool-call and cost budgets, dragging tasks about on the map,
+  behind; tool-call and cost budgets,
   skills that bring scripts of their own as conversion sources, and literature and web research
   capabilities.
   A task can only need tasks listed before it; besides the numbered
   After task buttons, the form shows the workflow as a map, each task in
-  the column of its stage with an edge to each task that needs it, where
-  clicking a task and then another makes the later one need the earlier
+  the column of its stage with an edge to each task that needs it. As on
+  the WebView's graph editor, dragging a task onto another makes that one
+  need it, with a line from the task to the pointer while it is dragged;
+  when the task dropped on is listed first, it moves after the dragged
+  one with whatever needs it, the others keeping their order, and a drop
+  that would make the tasks need each other in a circle joins nothing and
+  says so. The map is laid out from the dependencies, as the WebView's is,
+  so nothing else is kept: the template holds only which tasks each needs.
+  Clicking a task and then another makes the later one need the earlier
   one (or no longer need it). A workflow can also carry a context
   (scope, conventions, how results are reported) that every task is
   told. From skills follows the WebView's `plan_skill_portfolio`: the
@@ -1865,10 +1872,16 @@ Limits of this slice:
   passed as its most recent exchange (about 12,000 bytes), and a skill as its
   instructions. The add-context box also lists, each under its own heading
   and filtered by what is typed, the project's artifacts (this
-  conversation's first, then the newest), where work can run (this computer
-  and the saved SSH hosts; found by "server" too), the runtimes (Python on
-  this computer, and R once the conversation has one; found by "runtime"),
-  the workflow library and the memos. These are told to the model the way
+  conversation's first, then the newest, then a few of other projects'
+  whose file name holds what is typed, each saying its project, as the
+  WebView's `@` searches every project), where work can run (this computer
+  and the saved SSH hosts; found by "server" too), the runtimes (found by
+  "runtime"; by the WebView's rule, Python and R on this computer and on
+  each saved SSH host whose interpreter is known, either a path kept on it
+  or one its check found, Python always on this computer and R there until
+  a check finds none, plus any the conversation already has; a WSL
+  distro's are not offered, as this host starts Python and R only on this
+  computer and SSH hosts), the workflow library and the memos. These are told to the model the way
   the WebView tells them: an artifact as its name and where its file is
   now, an environment as its context id and kind (a saved host is also
   attached to the conversation, so its runs may go there), a runtime as the
@@ -1880,16 +1893,22 @@ Limits of this slice:
   only: none is saved with the message, so the chips a message shows for
   them last while the window that sent it is open, as in the WebView. A
   runtime named on a saved SSH host is told the same way and attaches that
-  host (the picker itself offers this computer's); a conversation is not read by the WebView's
+  host. Another project's artifact is found through the store when the
+  message is sent, as in the WebView; with project databases kept in the
+  project folders (decentralized storage) both refuse it as unavailable,
+  since the store looks for it in the open project's database. Inside an
+  exploration no other project's artifacts are offered, where the WebView
+  refuses the search. A conversation is not read by the WebView's
   reader agent, and `#project` is not offered. Paste,
   drag and drop work, and typing `@` or `#` where a word starts opens the
   add-context picker (the character is taken back out). A slash command
   runs when it is the whole message. Typing `/` where a word starts opens
   the composer's `/` menu, as the WebView's `/` opens its skill picker:
-  the commands and the project's skills that begin with what follows the
-  `/`, narrowing as you type. A command picked there runs, or is written
-  out when it needs words after it (`/btw`, `/timer`); a skill is attached
-  to the message; either way the typed word goes. A word with another `/`
+  the commands that begin with what follows the `/`, the workflows of the
+  library whose name or goal holds it, and the project's skills that match
+  it, narrowing as you type. A command picked there runs, or is written
+  out when it needs words after it (`/btw`, `/timer`); a workflow or a
+  skill is attached to the message; either way the typed word goes. A word with another `/`
   in it is a path and opens nothing. Escape shuts the menu until that word
   is gone. The `/` button opens the same menu.
 - Runs can be cancelled, moved to the background from their card in the
@@ -2048,7 +2067,14 @@ files with no text. Type `@`, then `server`: this computer and the saved hosts
 are listed under Environments; pick one with the arrows and Return, add an
 artifact, the Python runtime and a workflow with the pointer, send, and
 confirm each shows as a chip on the message and What the model is sent lists
-them for that turn. Pick a memo: its text is put into the message box and no
+them for that turn. With a second project that has an artifact, type `@`
+and part of its file name: it is listed under Artifacts after this
+project's, with that project's name; add it and send: What the model is
+sent gives its path in the other project. With a saved SSH host whose check
+found Python (or with a Python path kept on it), type `@runtime`: Python on
+that host is listed; add it and send: the host is attached to the
+conversation. Type `/` and part of a workflow's name: it is listed under
+Workflows; pick it: a workflow chip is added and the typed word goes. Pick a memo: its text is put into the message box and no
 chip is added. Press Escape with the box open: only the box closes.
 Type a word that occurs only in a message, and one that matches nothing. Press
 Escape with the palette over Settings and over the Files panel: only the
@@ -2575,7 +2601,14 @@ has them.
 In Settings, Workflows, two are listed with their tasks and stages. Press
 New workflow, give a name and a goal, add a second and a third task and
 mark the third as after tasks 1 and 2: saved, it reads "3 tasks · 2
-stages · up to 2 independent". Change it and remove the first task:
+stages · up to 2 independent". Change it, add a fourth task, and on the
+map drag the fourth onto the first: while dragging a line follows the
+pointer and the first is highlighted under it; dropped, the first moves
+after the fourth (the numbers change) and needs it. Drag the last task
+onto one of the tasks it needs: it is refused as a circle and nothing
+changes. Press a task
+without moving: it is picked as before; click another to join them.
+Cancel. Change it and remove the first task:
 the remaining dependency follows the task it pointed at. Leave a title
 empty: it is refused and the form stays. Press Escape with the form
 open: only the form closes. With a project open press Run: Settings

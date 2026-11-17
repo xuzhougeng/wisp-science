@@ -4760,19 +4760,92 @@ impl Server {
             .into_iter()
             .filter(|artifact| session.is_none_or(|session| artifact.session_id == session))
             .take(limit)
-            .map(|artifact| ArtifactRow {
-                id: artifact.id,
-                name: artifact.name,
-                kind: artifact.kind,
-                path: artifact.logical_path,
-                created_at: artifact.ts,
-                size_bytes: artifact
-                    .size_bytes
-                    .and_then(|size| u64::try_from(size).ok()),
-                session_id: artifact.session_id,
-                session_title: artifact.session_title,
+            .map(ArtifactRow::from)
+            .collect())
+    }
+
+    /// Artifacts of the other projects that a message in `session` can
+    /// carry, as the WebView's `@` picker offers them (`search_artifacts`
+    /// with `allProjects`): those whose file name holds `query`, newest
+    /// first. The reference is the artifact id, resolved through the store
+    /// when the message is sent, as for one of this project. None inside an
+    /// exploration, where the WebView refuses a search across projects.
+    pub async fn artifacts_elsewhere(
+        &self,
+        project: &str,
+        session: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<OtherArtifact>> {
+        self.own_conversation(project, session).await?;
+        let store = &self.0.store;
+        if matches!(
+            store.frame_state_scope(session).await?,
+            Some(wisp_store::StateScope::Exploration { .. })
+        ) {
+            return Ok(Vec::new());
+        }
+        let found = store
+            .search_artifacts(None, query.trim(), 100, None)
+            .await?;
+        Ok(found
+            .into_iter()
+            .filter(|artifact| artifact.project_id != project)
+            .take(limit)
+            .map(|artifact| OtherArtifact {
+                project_id: artifact.project_id.clone(),
+                project_name: artifact.project_name.clone(),
+                artifact: ArtifactRow::from(artifact),
             })
             .collect())
+    }
+
+    /// The interpreters a message can name, as the WebView's `@` picker
+    /// offers them: Python and R on each place work can run whose
+    /// interpreter is known (a path kept on it or found by its check;
+    /// Python always on this computer, and R there until a check finds
+    /// none), by the rule shared with the WebView
+    /// (`wisp_dto::native_conversations::runtime_reference_available`).
+    /// Only this computer and saved SSH hosts: this host starts Python and
+    /// R nowhere else, so a WSL distro's are not offered.
+    pub async fn runtime_references(&self) -> Result<Vec<ReferenceOption>> {
+        use wisp_store::ExecutionContextKind;
+        let mut options = Vec::new();
+        for context in self.0.store.list_execution_contexts().await? {
+            if !matches!(
+                context.kind,
+                ExecutionContextKind::Local | ExecutionContextKind::Ssh
+            ) {
+                continue;
+            }
+            let shared = wisp_dto::ExecutionContext {
+                id: context.id.clone(),
+                kind: context.kind.as_str().to_owned(),
+                label: context.label.clone(),
+                config_json: context.config_json.clone(),
+                capabilities_json: context.capabilities_json.clone(),
+                last_probe_status: context.last_probe_status.clone(),
+                last_probe_error: context.last_probe_error.clone(),
+            };
+            let label = if context.label.trim().is_empty() {
+                context.id.clone()
+            } else {
+                context.label.clone()
+            };
+            for language in ["python", "r"] {
+                if wisp_dto::native_conversations::runtime_reference_available(&shared, language) {
+                    options.push(ReferenceOption {
+                        reference: wisp_dto::ComposerReferenceArg::Runtime {
+                            context_id: context.id.clone(),
+                            language: language.to_owned(),
+                        },
+                        label: label.clone(),
+                        detail: context.id.clone(),
+                    });
+                }
+            }
+        }
+        Ok(options)
     }
 
     /// The files each turn of a conversation recorded as artifacts, oldest
@@ -7126,6 +7199,32 @@ pub struct ArtifactRow {
     pub size_bytes: Option<u64>,
     pub session_id: String,
     pub session_title: String,
+}
+
+impl From<wisp_store::ArtifactSearchResult> for ArtifactRow {
+    fn from(artifact: wisp_store::ArtifactSearchResult) -> Self {
+        Self {
+            id: artifact.id,
+            name: artifact.name,
+            kind: artifact.kind,
+            path: artifact.logical_path,
+            created_at: artifact.ts,
+            size_bytes: artifact
+                .size_bytes
+                .and_then(|size| u64::try_from(size).ok()),
+            session_id: artifact.session_id,
+            session_title: artifact.session_title,
+        }
+    }
+}
+
+/// An artifact of another project, which a message can carry as the
+/// WebView's `@` lets it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OtherArtifact {
+    pub project_id: String,
+    pub project_name: String,
+    pub artifact: ArtifactRow,
 }
 
 /// A file one turn of a conversation recorded as an artifact, for the

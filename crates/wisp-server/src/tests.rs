@@ -19985,3 +19985,200 @@ async fn the_model_saves_a_hosts_interpreter_and_its_running_one_restarts_but_no
     assert_eq!(started.lock().unwrap().len(), 2);
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_message_can_carry_an_artifact_of_another_project_as_the_webview_offers_it() {
+    use wisp_dto::ComposerReferenceArg as Reference;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let folder = |name: &str| {
+        let folder = temp.path().join(name);
+        std::fs::create_dir_all(folder.join("data")).unwrap();
+        std::fs::write(folder.join("data/counts.csv"), "gene,count\n").unwrap();
+        folder
+    };
+    let lab = server.register_local_project(&folder("lab")).await.unwrap();
+    let field = server
+        .register_local_project(&folder("field"))
+        .await
+        .unwrap();
+    let conversation = |project: String| {
+        let server = &server;
+        async move {
+            call(server, "native_conversation_create", &project, json!({}))
+                .await
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_owned()
+        }
+    };
+    let here = conversation(lab.clone()).await;
+    let there = conversation(field.clone()).await;
+    let store = &server.0.store;
+    store
+        .save_artifact(
+            "art-here",
+            &lab,
+            &here,
+            "here.csv",
+            "text/csv",
+            "data/counts.csv",
+        )
+        .await
+        .unwrap();
+    store
+        .save_artifact(
+            "art-there",
+            &field,
+            &there,
+            "field-counts.csv",
+            "text/csv",
+            "data/counts.csv",
+        )
+        .await
+        .unwrap();
+
+    // Only the other project's, named by it, and narrowed by the name.
+    let found = server
+        .artifacts_elsewhere(&lab, &here, "", 40)
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].artifact.id, "art-there");
+    assert_eq!(found[0].project_id, field);
+    assert_eq!(found[0].project_name, "field");
+    assert!(server
+        .artifacts_elsewhere(&lab, &here, "nothing", 40)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        server
+            .artifacts_elsewhere(&lab, &here, "FIELD", 40)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    // A conversation is asked about only in its own project.
+    assert!(server
+        .artifacts_elsewhere(&lab, &there, "", 40)
+        .await
+        .is_err());
+
+    // Sent with a message here, it is found through the store and told
+    // by its file in its own project, as the WebView tells it.
+    let skills = wisp_skills::SkillIndex::load_scoped(&[]);
+    let told = crate::runtime::reference_context(
+        store,
+        &skills,
+        &[Reference::Artifact {
+            id: "art-there".into(),
+        }],
+        &here,
+        &temp.path().join("lab"),
+    )
+    .await
+    .unwrap();
+    let expected = std::fs::canonicalize(temp.path().join("field/data/counts.csv")).unwrap();
+    assert_eq!(told.len(), 1);
+    assert!(
+        told[0].contains(&format!("- field-counts.csv: {}", expected.display())),
+        "{}",
+        told[0]
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_runtimes_a_message_can_name_are_the_webviews_on_this_computer_and_ssh_hosts() {
+    use wisp_dto::ComposerReferenceArg as Reference;
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::open_with_models(config(temp.path()), models(Arc::default(), false))
+        .await
+        .unwrap();
+    let store = &server.0.store;
+    let save = |id: &str, config: Value, capabilities: Value| {
+        let mut context =
+            wisp_store::ExecutionContext::new(id, id.split(':').nth(1).unwrap()).unwrap();
+        context.config_json = config.to_string();
+        context.capabilities_json = capabilities.to_string();
+        context.last_probe_status = Some("ok".into());
+        context
+    };
+    // A host whose check found both, one with a Python path kept and an R
+    // without jsonlite, one never checked, and a WSL distro with both.
+    for context in [
+        save(
+            "ssh:gpu",
+            json!({}),
+            json!({"python_executable": "/usr/bin/python3",
+                   "rscript_executable": "/usr/bin/Rscript", "r_jsonlite": true}),
+        ),
+        save(
+            "ssh:kept",
+            json!({"python_executable": "/opt/conda/bin/python"}),
+            json!({"rscript_executable": "/usr/bin/Rscript", "r_jsonlite": false}),
+        ),
+        wisp_store::ExecutionContext::new("ssh:unchecked", "unchecked").unwrap(),
+        save(
+            "wsl:Ubuntu",
+            json!({}),
+            json!({"python_executable": "/usr/bin/python3",
+                   "rscript_executable": "/usr/bin/Rscript"}),
+        ),
+    ] {
+        store.upsert_execution_context(&context).await.unwrap();
+    }
+    // This computer, once checked, has R only where the check found it.
+    let mut local = store.get_execution_context("local").await.unwrap().unwrap();
+    local.capabilities_json = json!({"rscript_executable": null}).to_string();
+    local.last_probe_status = Some("ok".into());
+    store.upsert_execution_context(&local).await.unwrap();
+
+    let offered: Vec<(String, String, String)> = server
+        .runtime_references()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|option| match option.reference {
+            Reference::Runtime {
+                context_id,
+                language,
+            } => (context_id, language, option.label),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    let named = |context: &str, language: &str, label: &str| {
+        (context.to_owned(), language.to_owned(), label.to_owned())
+    };
+    assert_eq!(
+        offered,
+        [
+            named("local", "python", &local.label),
+            named("ssh:gpu", "python", "gpu"),
+            named("ssh:gpu", "r", "gpu"),
+            named("ssh:kept", "python", "kept"),
+        ]
+    );
+    // Never checked, this computer offers R as the WebView does.
+    local.capabilities_json = "{}".into();
+    local.last_probe_status = None;
+    store.upsert_execution_context(&local).await.unwrap();
+    assert!(server
+        .runtime_references()
+        .await
+        .unwrap()
+        .iter()
+        .any(|option| {
+            option.reference
+                == Reference::Runtime {
+                    context_id: "local".into(),
+                    language: "r".into(),
+                }
+        }));
+    server.shutdown().await;
+}

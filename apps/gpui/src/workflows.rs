@@ -174,6 +174,92 @@ pub fn map_click(picked: Option<usize>, clicked: usize) -> (Option<usize>, Optio
     }
 }
 
+/// Why dropping one task on another on the map joined nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropRefused {
+    /// The task dragged already needs the one it was dropped on, directly
+    /// or through others: joining them would make a circle.
+    Circle,
+}
+
+/// The tasks once task `from` is dragged onto task `to` on the map, as the
+/// WebView's graph editor joins two tasks dragged from one to the other:
+/// `to` comes to need `from`. A task here only needs tasks listed before
+/// it, so when `to` is listed first it moves after `from`, with whatever
+/// needs it; the others keep their order. The answer is the new order
+/// (each place holds the task's place before) and every task's needs in
+/// it. Nothing changes (`Ok(None)`) when `to` needs `from` already, a task
+/// is dropped on itself, or either is not in the list; a drop that would
+/// make a circle is refused, as the WebView refuses it.
+#[allow(clippy::type_complexity)]
+pub fn dropped(
+    after: &[Vec<usize>],
+    from: usize,
+    to: usize,
+) -> Result<Option<(Vec<usize>, Vec<Vec<usize>>)>, DropRefused> {
+    let count = after.len();
+    if from == to || from >= count || to >= count || after[to].contains(&from) {
+        return Ok(None);
+    }
+    if needs_through(after, from, to) {
+        return Err(DropRefused::Circle);
+    }
+    let mut needs = after.to_vec();
+    needs[to].push(from);
+    // Earliest listed first, each once all it needs is placed.
+    let mut order = Vec::with_capacity(count);
+    let mut placed = vec![false; count];
+    while order.len() < count {
+        let next = (0..count).find(|&task| {
+            !placed[task]
+                && needs[task]
+                    .iter()
+                    .all(|&needed| needed >= count || placed[needed])
+        });
+        let Some(task) = next else {
+            return Err(DropRefused::Circle);
+        };
+        placed[task] = true;
+        order.push(task);
+    }
+    let mut place = vec![0; count];
+    for (new, &old) in order.iter().enumerate() {
+        place[old] = new;
+    }
+    let after = order
+        .iter()
+        .map(|&old| {
+            let mut moved: Vec<usize> = needs[old]
+                .iter()
+                .filter(|&&needed| needed < count)
+                .map(|&needed| place[needed])
+                .collect();
+            moved.sort_unstable();
+            moved.dedup();
+            moved
+        })
+        .collect();
+    Ok(Some((order, after)))
+}
+
+/// Whether task `task` needs task `needed`, directly or through others.
+fn needs_through(after: &[Vec<usize>], task: usize, needed: usize) -> bool {
+    let mut seen = vec![false; after.len()];
+    let mut open = vec![task];
+    while let Some(next) = open.pop() {
+        for &earlier in after.get(next).map_or(&[][..], Vec::as_slice) {
+            if earlier == needed {
+                return true;
+            }
+            if earlier < seen.len() && !seen[earlier] {
+                seen[earlier] = true;
+                open.push(earlier);
+            }
+        }
+    }
+    false
+}
+
 /// The dependencies of every task once the task at `removed` is taken
 /// out: nobody needs it any more, and later tasks move up one place.
 pub fn without(after: &[Vec<usize>], removed: usize) -> Vec<Vec<usize>> {
@@ -295,6 +381,50 @@ mod tests {
             shape_line(&workflow),
             "3 tasks · 2 stages · up to 2 independent"
         );
+    }
+
+    #[test]
+    fn dropping_a_task_on_another_makes_that_one_need_it() {
+        // 0; 1 after 0; 2 alone; 3 after 1.
+        let after = vec![vec![], vec![0], vec![], vec![1]];
+        // Onto a later task: it needs the dragged one, nothing moves.
+        assert_eq!(
+            dropped(&after, 2, 3),
+            Ok(Some((
+                vec![0, 1, 2, 3],
+                vec![vec![], vec![0], vec![], vec![1, 2]]
+            )))
+        );
+        // Onto an earlier task: it moves after the dragged one, and so does
+        // what needs it; the rest keep their order and their needs.
+        assert_eq!(
+            dropped(&after, 2, 1),
+            Ok(Some((
+                vec![0, 2, 1, 3],
+                vec![vec![], vec![], vec![0, 1], vec![2]]
+            )))
+        );
+        // Onto a task listed first, from the last one alone.
+        let lone = vec![vec![], vec![], vec![]];
+        assert_eq!(
+            dropped(&lone, 2, 0),
+            Ok(Some((vec![1, 2, 0], vec![vec![], vec![], vec![1]])))
+        );
+        // Already needed, on itself, or not in the list: nothing changes.
+        assert_eq!(dropped(&after, 0, 1), Ok(None));
+        assert_eq!(dropped(&after, 2, 2), Ok(None));
+        assert_eq!(dropped(&after, 9, 1), Ok(None));
+        assert_eq!(dropped(&after, 1, 9), Ok(None));
+        // A circle is refused, whether direct or through another task.
+        assert_eq!(dropped(&after, 1, 0), Err(DropRefused::Circle));
+        assert_eq!(dropped(&after, 3, 0), Err(DropRefused::Circle));
+        // What the map shows afterwards: the earlier task, now after the
+        // dragged one, is in a later stage.
+        let (_, moved) = dropped(&after, 2, 1).unwrap().unwrap();
+        let (nodes, edges) = map(&moved);
+        let stages: Vec<usize> = nodes.iter().map(|node| node.column).collect();
+        assert_eq!(stages, [0, 0, 1, 2]);
+        assert_eq!(edges, [(0, 2), (1, 2), (2, 3)]);
     }
 
     #[test]

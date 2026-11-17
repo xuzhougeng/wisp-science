@@ -663,6 +663,9 @@ pub struct Workspace {
     /// The task picked on the workflow's map, to join to the next one
     /// clicked.
     workflow_pick: Option<usize>,
+    /// While a task is dragged on the workflow's map: that task, and where
+    /// the pointer is on the map, for the line drawn to it.
+    workflow_drag: Option<(usize, Point<Pixels>)>,
     /// Remote web access as the host has it; `None` until it answered.
     remote_access: Option<wisp_server::desktop::RemoteAccess>,
     /// The web access link is shown as a QR code.
@@ -1968,6 +1971,7 @@ impl Workspace {
             workflow_tasks: Vec::new(),
             workflow_approval: Default::default(),
             workflow_pick: None,
+            workflow_drag: None,
             remote_access: None,
             remote_qr_shown: false,
             remote_fields,

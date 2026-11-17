@@ -21,6 +21,24 @@ use crate::{
     workflows,
 };
 
+/// A task dragged on the workflow's map, from the form open when the drag
+/// began, to be dropped on the task that is to need it.
+#[derive(Clone)]
+struct MapLink {
+    task: usize,
+    form: Option<String>,
+}
+
+/// What follows the pointer while a task is dragged on the map: nothing,
+/// as the map draws the line from the task to the pointer itself.
+struct MapLinkGhost;
+
+impl Render for MapLinkGhost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+
 /// One task while it is in the form.
 pub(super) struct TaskDraft {
     title: Entity<InputState>,
@@ -460,8 +478,10 @@ impl Workspace {
     }
 
     /// The workflow as a map: each task in the column of its stage, with
-    /// an edge to each task that needs it. Clicking a task and then another
-    /// makes the one listed later need the other, or no longer need it.
+    /// an edge to each task that needs it. Dragging a task onto another
+    /// makes that one need it, as on the WebView's graph editor; clicking a
+    /// task and then another makes the one listed later need the other, or
+    /// no longer need it.
     fn workflow_map(&self, cx: &mut Context<Self>) -> Div {
         const WIDTH: f32 = 150.;
         const HEIGHT: f32 = 36.;
@@ -489,26 +509,43 @@ impl Workspace {
             .collect();
         let lines_at = places.clone();
         let edge = muted.opacity(0.8);
+        let primary = cx.theme().primary;
+        // While a task is dragged: a line from it to the pointer.
+        let dragging = self
+            .workflow_drag
+            .filter(|(task, _)| cx.has_active_drag() && *task < places.len());
         let lines = canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
+                let curve = |path: &mut PathBuilder, start: Point<Pixels>, end: Point<Pixels>| {
+                    let middle = (start.x + end.x) / 2.;
+                    path.move_to(start);
+                    path.cubic_bezier_to(end, point(middle, start.y), point(middle, end.y));
+                };
+                let out = |(x, y): (f32, f32)| {
+                    point(
+                        bounds.origin.x + px(x + WIDTH),
+                        bounds.origin.y + px(y + HEIGHT / 2.),
+                    )
+                };
                 let mut path = PathBuilder::stroke(px(1.5));
                 for &(from, to) in &edges {
-                    let ((fx, fy), (tx, ty)) = (lines_at[from], lines_at[to]);
-                    let start = point(
-                        bounds.origin.x + px(fx + WIDTH),
-                        bounds.origin.y + px(fy + HEIGHT / 2.),
-                    );
+                    let (tx, ty) = lines_at[to];
                     let end = point(
                         bounds.origin.x + px(tx),
                         bounds.origin.y + px(ty + HEIGHT / 2.),
                     );
-                    let middle = (start.x + end.x) / 2.;
-                    path.move_to(start);
-                    path.cubic_bezier_to(end, point(middle, start.y), point(middle, end.y));
+                    curve(&mut path, out(lines_at[from]), end);
                 }
                 if let Ok(path) = path.build() {
                     window.paint_path(path, edge);
+                }
+                if let Some((task, at)) = dragging {
+                    let mut path = PathBuilder::stroke(px(1.5));
+                    curve(&mut path, out(lines_at[task]), bounds.origin + at);
+                    if let Ok(path) = path.build() {
+                        window.paint_path(path, primary);
+                    }
                 }
             },
         )
@@ -525,6 +562,20 @@ impl Workspace {
             .h(px(
                 MARGIN * 2. + rows * (HEIGHT + DOWN) - DOWN.min(rows * DOWN)
             ))
+            .on_drag_move(cx.listener(|this, moved: &DragMoveEvent<MapLink>, _, cx| {
+                let task = moved.drag(cx).task;
+                this.workflow_drag = Some((task, moved.event.position - moved.bounds.origin));
+                cx.notify();
+            }))
+            // A drag let go anywhere but on a task leaves no line behind.
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.end_map_drag(cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.end_map_drag(cx)),
+            )
             .child(lines);
         for node in &nodes {
             let task = node.task;
@@ -541,7 +592,11 @@ impl Workspace {
                 format!("{}. {title}", task + 1)
             };
             let picked = self.workflow_pick == Some(task);
-            let primary = cx.theme().primary;
+            let link = MapLink {
+                task,
+                form: self.workflow_editing.clone(),
+            };
+            let target = primary.opacity(0.2);
             board = board.child(
                 div()
                     .id(("workflow-map-node", task))
@@ -564,14 +619,27 @@ impl Workspace {
                     .text_xs()
                     .cursor_pointer()
                     .child(div().truncate().child(text))
-                    .on_click(cx.listener(move |this, _, _, cx| this.click_map(task, cx))),
+                    .on_click(cx.listener(move |this, _, _, cx| this.click_map(task, cx)))
+                    // Dragged onto another task, that one comes to need it;
+                    // a press that does not move is still a click.
+                    .on_drag(link, |_, _, _, cx| cx.new(|_| MapLinkGhost))
+                    .drag_over::<MapLink>(move |style, link, _, _| {
+                        if link.task == task {
+                            style
+                        } else {
+                            style.border_color(primary).bg(target)
+                        }
+                    })
+                    .on_drop(cx.listener(move |this, link: &MapLink, _, cx| {
+                        this.drop_on_map(link, task, cx)
+                    })),
             );
         }
         div()
             .v_flex()
             .gap_1()
             .child(div().text_xs().text_color(muted).child(tr(
-                "Map: click a task, then another, to make the later one need the earlier one, or no longer need it.",
+                "Map: drag a task onto another to make that one need it. Or click a task, then another, to make the later one need the earlier one, or no longer need it.",
             )))
             .child(
                 div()
@@ -580,6 +648,50 @@ impl Workspace {
                     .overflow_x_scroll()
                     .child(board),
             )
+    }
+
+    /// A task dragged on the map was dropped on task `task`, which comes to
+    /// need it; the tasks are put back in an order where each needs only
+    /// tasks before it. A drop that would make a circle joins nothing and
+    /// says why.
+    fn drop_on_map(&mut self, link: &MapLink, task: usize, cx: &mut Context<Self>) {
+        self.workflow_drag = None;
+        if link.form != self.workflow_editing {
+            return cx.notify();
+        }
+        let after: Vec<Vec<usize>> = self
+            .workflow_tasks
+            .iter()
+            .map(|draft| draft.after.clone())
+            .collect();
+        match workflows::dropped(&after, link.task, task) {
+            Ok(Some((order, needs))) => {
+                let mut drafts: Vec<Option<TaskDraft>> =
+                    self.workflow_tasks.drain(..).map(Some).collect();
+                self.workflow_tasks = order
+                    .iter()
+                    .filter_map(|&old| drafts.get_mut(old).and_then(Option::take))
+                    .collect();
+                for (draft, needs) in self.workflow_tasks.iter_mut().zip(needs) {
+                    draft.after = needs;
+                }
+                // Places may have moved, so a pick may now be another task.
+                self.workflow_pick = None;
+                self.settings_error = None;
+            }
+            Ok(None) => {}
+            Err(workflows::DropRefused::Circle) => {
+                self.settings_error =
+                    Some(tr("Not joined: the tasks would need each other in a circle.").to_owned());
+            }
+        }
+        cx.notify();
+    }
+
+    fn end_map_drag(&mut self, cx: &mut Context<Self>) {
+        if self.workflow_drag.take().is_some() {
+            cx.notify();
+        }
     }
 
     fn click_map(&mut self, task: usize, cx: &mut Context<Self>) {

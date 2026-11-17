@@ -5,8 +5,8 @@
 use crate::i18n::tr;
 use wisp_dto::{ProjectSummary, SessionSearchInfo};
 use wisp_server::desktop::{
-    ArtifactRow, FileMatch, ProjectMemo, ReferenceOption, RuntimeLanguage, RuntimeRow, SshHostRow,
-    Workflow,
+    ArtifactRow, FileMatch, OtherArtifact, ProjectMemo, ReferenceOption, RuntimeLanguage,
+    RuntimeRow, SshHostRow, Workflow,
 };
 
 use crate::{compose::Chip, home::Screen};
@@ -17,6 +17,8 @@ const FILES: usize = 6;
 const CONVERSATIONS: usize = 8;
 const SKILLS: usize = 8;
 const ARTIFACTS: usize = 8;
+/// Artifacts of the other projects, listed after the open project's.
+const ARTIFACTS_ELSEWHERE: usize = 4;
 const ENVIRONMENTS: usize = 6;
 const RUNTIMES: usize = 4;
 const WORKFLOWS: usize = 6;
@@ -427,11 +429,13 @@ pub enum Entry {
         name: String,
         description: String,
     },
-    /// A file the project recorded, to attach by its artifact id.
+    /// A file a project recorded, to attach by its artifact id: the open
+    /// project's, or another's (`project` names it).
     Artifact {
         id: String,
         name: String,
         detail: String,
+        project: Option<String>,
     },
     /// This computer or a saved host, for the turn's work to run on.
     Environment {
@@ -611,18 +615,35 @@ pub fn artifact_entries(rows: &[ArtifactRow], session: Option<&str>) -> Vec<Entr
         )
     });
     rows.into_iter()
-        .map(|row| {
-            let place = row.path.clone().unwrap_or_else(|| row.kind.clone());
-            Entry::Artifact {
-                id: row.id.clone(),
-                name: row.name.clone(),
-                detail: match crate::present::one_line(&row.session_title) {
-                    title if title.is_empty() => place,
-                    title => format!("{title} · {place}"),
-                },
-            }
+        .map(|row| Entry::Artifact {
+            id: row.id.clone(),
+            name: row.name.clone(),
+            detail: artifact_detail(row),
+            project: None,
         })
         .collect()
+}
+
+/// Artifacts of other projects to attach, as the host found them (newest
+/// first), each saying which project and conversation it is from.
+pub fn elsewhere_entries(rows: &[OtherArtifact]) -> Vec<Entry> {
+    rows.iter()
+        .map(|row| Entry::Artifact {
+            id: row.artifact.id.clone(),
+            name: row.artifact.name.clone(),
+            detail: format!("{} · {}", row.project_name, artifact_detail(&row.artifact)),
+            project: Some(row.project_id.clone()),
+        })
+        .collect()
+}
+
+/// The line under an artifact: its conversation, then where it is.
+fn artifact_detail(row: &ArtifactRow) -> String {
+    let place = row.path.clone().unwrap_or_else(|| row.kind.clone());
+    match crate::present::one_line(&row.session_title) {
+        title if title.is_empty() => place,
+        title => format!("{title} · {place}"),
+    }
 }
 
 /// Where work can run: this computer, then the saved SSH hosts, each by
@@ -641,36 +662,68 @@ pub fn environment_entries(hosts: &[SshHostRow]) -> Vec<Entry> {
     entries
 }
 
-/// The interpreters a turn can be pointed at: they run on this computer,
-/// Python always (as the WebView offers it there) and R once the
-/// conversation has one, each with how the one above the composer is.
-/// One on an SSH host is not this computer's.
-pub fn runtime_entries(rows: &[RuntimeRow]) -> Vec<Entry> {
-    let row_of = |language: RuntimeLanguage| {
-        rows.iter()
-            .rev()
-            .find(|row| row.language == language && row.context == "local")
+/// The interpreters a turn can be pointed at, as the WebView's `@` offers
+/// them: those the host says can run (`offers`: Python and R on this
+/// computer and on the saved SSH hosts whose interpreter is known), then
+/// any the conversation already has; this computer's Python always. Each
+/// says where it runs, and how the conversation's own is when it has one.
+pub fn runtime_entries(offers: &[ReferenceOption], rows: &[RuntimeRow]) -> Vec<Entry> {
+    let here = || tr("This computer").to_owned();
+    let mut places: Vec<(String, String, String)> = Vec::new();
+    let mut add = |context: &str, language: &str, place: String| {
+        if !places
+            .iter()
+            .any(|(known, spoken, _)| known == context && spoken == language)
+        {
+            places.push((context.to_owned(), language.to_owned(), place));
+        }
     };
-    [
-        ("python", RuntimeLanguage::Python),
-        ("r", RuntimeLanguage::R),
-    ]
-    .into_iter()
-    .filter(|(_, language)| *language == RuntimeLanguage::Python || row_of(*language).is_some())
-    .map(|(id, language)| Entry::Runtime {
-        context_id: "local".into(),
-        language: id.into(),
-        title: crate::i18n::fill(tr("{} runtime"), &[&crate::compose::language_name(id)]),
-        detail: match row_of(language) {
-            Some(row) => format!(
-                "{} · {}",
-                tr("This computer"),
-                crate::controls::runtime_label(row)
-            ),
-            None => tr("This computer").to_owned(),
-        },
-    })
-    .collect()
+    add("local", "python", here());
+    for offer in offers {
+        if let wisp_dto::ComposerReferenceArg::Runtime {
+            context_id,
+            language,
+        } = &offer.reference
+        {
+            let place = match context_id.as_str() {
+                "local" => here(),
+                _ => offer.label.clone(),
+            };
+            add(context_id, language, place);
+        }
+    }
+    let spoken = |language: RuntimeLanguage| match language {
+        RuntimeLanguage::Python => "python",
+        RuntimeLanguage::R => "r",
+    };
+    for row in rows {
+        add(
+            &row.context,
+            spoken(row.language),
+            crate::compose::environment_name(&row.context),
+        );
+    }
+    places
+        .into_iter()
+        .map(|(context_id, language, place)| {
+            let running = rows
+                .iter()
+                .rev()
+                .find(|row| row.context == context_id && spoken(row.language) == language);
+            Entry::Runtime {
+                title: crate::i18n::fill(
+                    tr("{} runtime"),
+                    &[&crate::compose::language_name(&language)],
+                ),
+                detail: match running {
+                    Some(row) => format!("{place} · {}", crate::controls::runtime_label(row)),
+                    None => place,
+                },
+                context_id,
+                language,
+            }
+        })
+        .collect()
 }
 
 pub fn workflow_entries(workflows: &[Workflow]) -> Vec<Entry> {
@@ -709,6 +762,8 @@ pub struct PaletteState {
     conversations: Vec<SessionSearchInfo>,
     files: Vec<FileMatch>,
     skills: Vec<ReferenceOption>,
+    /// Artifacts of other projects found for what is typed.
+    elsewhere: Vec<Entry>,
     /// Artifacts, environments, runtimes, workflows and memos to attach,
     /// filtered here as the query changes.
     offered: Vec<Entry>,
@@ -785,10 +840,12 @@ impl PaletteState {
             self.files.retain(|file| matches(&file.path, &query));
             self.conversations.retain(|row| matches(&row.title, &query));
         }
-        // Skills are listed even with nothing typed, so they are filtered
-        // rather than cleared.
+        // Skills and other projects' artifacts are listed even with nothing
+        // typed, so they are filtered rather than cleared.
         self.skills
             .retain(|skill| matches(&format!("{} {}", skill.label, skill.detail), &query));
+        self.elsewhere
+            .retain(|entry| matches(&entry.search_text(), &query));
         Ticket(self.generation)
     }
 
@@ -816,6 +873,27 @@ impl PaletteState {
         let current = self.current(ticket);
         if current {
             self.skills = skills;
+        }
+        current
+    }
+
+    /// Takes the other projects' artifacts the host found for the text
+    /// `ticket` was given for; only rows of that kind are kept.
+    pub fn accept_elsewhere(&mut self, ticket: Ticket, entries: Vec<Entry>) -> bool {
+        let current = self.current(ticket);
+        if current {
+            self.elsewhere = entries
+                .into_iter()
+                .filter(|entry| {
+                    matches!(
+                        entry,
+                        Entry::Artifact {
+                            project: Some(_),
+                            ..
+                        }
+                    )
+                })
+                .collect();
         }
         current
     }
@@ -858,7 +936,17 @@ impl PaletteState {
             .collect();
         entries.extend(self.files.iter().take(FILES).cloned().map(Entry::File));
         if attach {
-            for section in [Section::Artifacts, Section::Environments, Section::Runtimes] {
+            // The open project's artifacts, then other projects', as the
+            // WebView ranks them.
+            entries.extend(self.offered_in(Section::Artifacts));
+            entries.extend(
+                self.elsewhere
+                    .iter()
+                    .filter(|entry| matches(&entry.search_text(), query))
+                    .take(ARTIFACTS_ELSEWHERE)
+                    .cloned(),
+            );
+            for section in [Section::Environments, Section::Runtimes] {
                 entries.extend(self.offered_in(section));
             }
         }
@@ -1355,8 +1443,8 @@ mod tests {
                 }),
             ]
         );
-        // Python always; R once the conversation has one.
-        let runtimes = runtime_entries(&[]);
+        // This computer's Python always, before the host says more.
+        let runtimes = runtime_entries(&[], &[]);
         assert_eq!(runtimes.len(), 1);
         assert_eq!(
             runtimes[0].chip(),
@@ -1366,15 +1454,71 @@ mod tests {
                 label: "Python · This computer".into(),
             })
         );
-        let with_r = runtime_entries(&[interpreter(RuntimeLanguage::R)]);
+        // Those the host can start, on this computer and on saved hosts,
+        // in its order and once each; then any the conversation has.
+        let offer = |context: &str, language: &str, label: &str| ReferenceOption {
+            reference: wisp_dto::ComposerReferenceArg::Runtime {
+                context_id: context.into(),
+                language: language.into(),
+            },
+            label: label.into(),
+            detail: context.into(),
+        };
+        let offers = [
+            offer("local", "python", "Local"),
+            offer("local", "r", "Local"),
+            offer("ssh:gpu", "python", "gpu"),
+            offer("ssh:gpu", "r", "gpu"),
+            // Not a runtime: ignored.
+            ReferenceOption {
+                reference: wisp_dto::ComposerReferenceArg::Context {
+                    id: "ssh:gpu".into(),
+                },
+                label: "gpu".into(),
+                detail: String::new(),
+            },
+        ];
+        let mut remote = interpreter(RuntimeLanguage::R);
+        remote.context = "ssh:gpu".into();
+        let mut elsewhere = interpreter(RuntimeLanguage::Python);
+        elsewhere.context = "ssh:cluster".into();
+        let listed = runtime_entries(&offers, &[remote, elsewhere]);
+        let places: Vec<(&str, &str, &str)> = listed
+            .iter()
+            .map(|entry| match entry {
+                Entry::Runtime {
+                    context_id,
+                    language,
+                    detail,
+                    ..
+                } => (context_id.as_str(), language.as_str(), detail.as_str()),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            places,
+            [
+                ("local", "python", "This computer"),
+                ("local", "r", "This computer"),
+                ("ssh:gpu", "python", "gpu"),
+                ("ssh:gpu", "r", "gpu · R 4.4 · ready"),
+                ("ssh:cluster", "python", "cluster · Python 4.4 · ready"),
+            ]
+        );
+        assert_eq!(
+            listed[3].chip(),
+            Some(Chip::Runtime {
+                context_id: "ssh:gpu".into(),
+                language: "r".into(),
+                label: "R · gpu".into(),
+            })
+        );
+        // The conversation's own R here is offered with how it is.
+        let with_r = runtime_entries(&[], &[interpreter(RuntimeLanguage::R)]);
         assert!(
             matches!(&with_r[1], Entry::Runtime { language, title, detail, .. }
             if language == "r" && title == "R runtime" && detail.contains("R 4.4"))
         );
-        // An R on a host is not offered as this computer's.
-        let mut remote = interpreter(RuntimeLanguage::R);
-        remote.context = "ssh:gpu".into();
-        assert_eq!(runtime_entries(&[remote]).len(), 1);
         // Pinned memos first; an empty one has nothing to put in.
         let memo = |title: &str, body: &str, pinned: bool| ProjectMemo {
             title: title.into(),
@@ -1435,7 +1579,7 @@ mod tests {
         };
         assert!(state.offer(opening, Section::Memos, memo_entries(&[memo])));
         assert!(state.offer(opening, Section::Workflows, workflow_entries(&[workflow])));
-        assert!(state.offer(opening, Section::Runtimes, runtime_entries(&[])));
+        assert!(state.offer(opening, Section::Runtimes, runtime_entries(&[], &[])));
         assert!(state.offer(opening, Section::Environments, environment_entries(&hosts)));
         assert!(state.offer(
             opening,
@@ -1496,7 +1640,7 @@ mod tests {
         );
         // Nor is any of it when looking for somewhere to go.
         let opening = state.opening();
-        state.offer(opening, Section::Runtimes, runtime_entries(&[]));
+        state.offer(opening, Section::Runtimes, runtime_entries(&[], &[]));
         state.mode = Mode::Open;
         assert!(
             state
@@ -1504,6 +1648,64 @@ mod tests {
                 .iter()
                 .all(|entry| entry.section() != Section::Runtimes)
         );
+    }
+
+    #[test]
+    fn other_projects_artifacts_follow_the_open_projects_and_answer_what_is_typed() {
+        let other = |id: &str, project: &str| OtherArtifact {
+            project_id: project.into(),
+            project_name: format!("Project {project}"),
+            artifact: artifact(id, "t", 1),
+        };
+        let found = elsewhere_entries(&[other("far", "q")]);
+        assert!(
+            matches!(&found[0], Entry::Artifact { detail, project: Some(project), .. }
+            if project == "q" && detail.starts_with("Project q · Talk t"))
+        );
+        // Picked, it is attached by its id like one of this project.
+        assert_eq!(
+            found[0].chip(),
+            Some(Chip::Artifact {
+                id: "far".into(),
+                name: "far.png".into()
+            })
+        );
+        let mut state = PaletteState::default();
+        state.reset(Mode::Attach);
+        let opening = state.opening();
+        state.offer(
+            opening,
+            Section::Artifacts,
+            artifact_entries(&[artifact("near", "s", 1)], Some("s")),
+        );
+        let ticket = state.begin("");
+        // Only artifacts of another project are taken from the host.
+        let mut mixed = elsewhere_entries(&[other("far", "q"), other("away", "r")]);
+        mixed.extend(artifact_entries(&[artifact("stray", "s", 1)], None));
+        mixed.extend(environment_entries(&[]));
+        assert!(state.accept_elsewhere(ticket, mixed));
+        let ids = |state: &PaletteState| -> Vec<String> {
+            state
+                .entries(&[], &[], Screen::Project)
+                .into_iter()
+                .filter_map(|entry| match entry {
+                    Entry::Artifact { id, .. } => Some(id),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(ids(&state), ["near", "far", "away"]);
+        // Typing narrows them at once; an answer for earlier text is not
+        // taken; at most a few are listed.
+        let typed = state.begin("away");
+        assert_eq!(ids(&state), ["away"]);
+        assert!(!state.accept_elsewhere(ticket, elsewhere_entries(&[other("far", "q")])));
+        let many: Vec<OtherArtifact> = (0..10).map(|i| other(&format!("away{i}"), "q")).collect();
+        assert!(state.accept_elsewhere(typed, elsewhere_entries(&many)));
+        assert_eq!(ids(&state).len(), ARTIFACTS_ELSEWHERE);
+        // Never listed when looking for somewhere to go.
+        state.mode = Mode::Open;
+        assert!(ids(&state).is_empty());
     }
 
     #[test]

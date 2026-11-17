@@ -204,6 +204,27 @@ impl Backend {
         self.local(move |host| async move { host.skill_options(&project, &query, limit).await })
     }
 
+    /// Artifacts of the other projects whose file name holds `query`, for
+    /// a message in `session` to carry.
+    pub fn artifacts_elsewhere(
+        &self,
+        project: String,
+        session: String,
+        query: String,
+        limit: usize,
+    ) -> Reply<Vec<wisp_server::desktop::OtherArtifact>> {
+        self.local(move |host| async move {
+            host.artifacts_elsewhere(&project, &session, &query, limit)
+                .await
+        })
+    }
+
+    /// The Python and R a message can name, on this computer and the saved
+    /// SSH hosts whose interpreter is known.
+    pub fn runtime_references(&self) -> Reply<Vec<ReferenceOption>> {
+        self.local(|host| async move { host.runtime_references().await })
+    }
+
     /// Copies files picked outside the project into it and returns the
     /// project-relative path of each.
     pub fn import_attachments(&self, project: String, files: Vec<PathBuf>) -> Reply<Vec<String>> {

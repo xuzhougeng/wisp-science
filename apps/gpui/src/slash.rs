@@ -127,6 +127,25 @@ pub fn matching(word: &str) -> Vec<(&'static str, Slash, &'static str)> {
         .collect()
 }
 
+/// The workflows the `/` menu lists for what was typed after `/`, as the
+/// WebView's `/` lists its workflow templates: those whose name or goal
+/// holds it, ignoring case, by name.
+pub fn matching_workflows<'a>(
+    workflows: &'a [wisp_server::desktop::Workflow],
+    word: &str,
+) -> Vec<&'a wisp_server::desktop::Workflow> {
+    let word = word.to_lowercase();
+    let mut found: Vec<_> = workflows
+        .iter()
+        .filter(|workflow| {
+            workflow.name.to_lowercase().contains(&word)
+                || workflow.goal.to_lowercase().contains(&word)
+        })
+        .collect();
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    found
+}
+
 /// Whether a command is written out to be finished rather than run when
 /// it is picked: it needs words after it.
 pub fn takes_words(command: Slash) -> bool {
@@ -153,6 +172,33 @@ pub fn writes(command: Slash) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_menu_lists_workflows_whose_name_or_goal_holds_the_word() {
+        let workflow = |id: &str, name: &str, goal: &str| wisp_server::desktop::Workflow {
+            id: id.into(),
+            name: name.into(),
+            goal: goal.into(),
+            ..Default::default()
+        };
+        let library = [
+            workflow("w2", "Screen", "Find the hits"),
+            workflow("w1", "Align reads", "Map RNA-seq reads"),
+            workflow("w3", "Plot", "Draw figures"),
+        ];
+        let ids = |word: &str| -> Vec<String> {
+            matching_workflows(&library, word)
+                .into_iter()
+                .map(|workflow| workflow.id.clone())
+                .collect()
+        };
+        // Nothing typed lists them all, by name.
+        assert_eq!(ids(""), ["w1", "w3", "w2"]);
+        // Anywhere in the name or the goal, ignoring case.
+        assert_eq!(ids("READS"), ["w1"]);
+        assert_eq!(ids("hit"), ["w2"]);
+        assert!(ids("nothing").is_empty());
+    }
 
     #[test]
     fn a_read_only_conversation_still_runs_the_commands_that_only_open_something() {

@@ -99,6 +99,10 @@ impl Workspace {
                 Entry::Project { id, .. } => id.as_str(),
                 Entry::File(found) => found.project_id.as_str(),
                 Entry::Conversation { project, .. } => project.as_str(),
+                Entry::Artifact {
+                    project: Some(project),
+                    ..
+                } => project.as_str(),
                 // The rest belongs to the project that is open.
                 Entry::Skill { .. }
                 | Entry::Artifact { .. }
@@ -124,8 +128,9 @@ impl Workspace {
     /// reads for its own tabs: what it has now at once, then what the same
     /// loaders read fresh. The project's artifacts (the Artifacts tab's list
     /// for the whole project), where work can run (the Environments tab's
-    /// hosts), the interpreters above the composer, the workflow library and
-    /// the memos.
+    /// hosts), the interpreters (the conversation's at once, then those the
+    /// host can start, on this computer and the saved SSH hosts), the
+    /// workflow library and the memos.
     fn offer_mentions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let selection = self.state.selection();
         let Some(project) = selection.project.clone() else {
@@ -137,7 +142,10 @@ impl Workspace {
             .as_ref()
             .map_or(&[][..], |status| status.runtimes.as_slice());
         let now = [
-            (Section::Runtimes, Some(palette::runtime_entries(runtimes))),
+            (
+                Section::Runtimes,
+                Some(palette::runtime_entries(&[], runtimes)),
+            ),
             (
                 Section::Environments,
                 Some(palette::environment_entries(
@@ -165,6 +173,7 @@ impl Workspace {
             .backend
             .artifacts(project.clone(), None, String::new(), 200);
         let environments = self.backend.environments();
+        let runtimes = self.backend.runtime_references();
         let workflows = self.backend.workflows();
         let memos = self.backend.memos(project);
         // Each arrives on its own; one that fails leaves its section as it was.
@@ -188,6 +197,18 @@ impl Workspace {
                         Section::Environments,
                         palette::environment_entries(&view.hosts),
                     );
+                }
+                cx.notify();
+            });
+            let runtimes = receive(runtimes).await;
+            let _ = this.update(cx, |this, cx| {
+                if let Ok(offers) = runtimes {
+                    let rows = this
+                        .status
+                        .as_ref()
+                        .map_or(&[][..], |status| status.runtimes.as_slice());
+                    let entries = palette::runtime_entries(&offers, rows);
+                    offer(this, Section::Runtimes, entries);
                 }
                 cx.notify();
             });
@@ -284,6 +305,8 @@ impl Workspace {
         // To attach, files and skills are this project's; skills are listed
         // even before anything is typed.
         let project = self.state.project.clone().filter(|_| attach);
+        // Other projects' artifacts, for a message in this conversation.
+        let session = self.state.session.clone().filter(|_| attach);
         if query.is_empty() && project.is_none() {
             return;
         }
@@ -299,7 +322,8 @@ impl Workspace {
                 return;
             }
             if let Some(project) = project.clone() {
-                let skills = receive(backend.skill_options(project, query.clone(), 8)).await;
+                let skills =
+                    receive(backend.skill_options(project.clone(), query.clone(), 8)).await;
                 let _ = this.update(cx, |this, cx| {
                     match skills {
                         Ok(skills) => {
@@ -312,6 +336,20 @@ impl Workspace {
                     }
                     cx.notify();
                 });
+                if let Some(session) = session {
+                    let found = backend.artifacts_elsewhere(project, session, query.clone(), 40);
+                    let found = receive(found).await;
+                    let _ = this.update(cx, |this, cx| {
+                        // One that cannot be read leaves the list as it was.
+                        if let Ok(rows) = found {
+                            let entries = palette::elsewhere_entries(&rows);
+                            this.accept_palette_results(|palette| {
+                                palette.accept_elsewhere(ticket, entries)
+                            });
+                        }
+                        cx.notify();
+                    });
+                }
             }
             if query.is_empty() {
                 return;

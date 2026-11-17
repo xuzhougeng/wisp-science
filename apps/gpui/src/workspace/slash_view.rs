@@ -319,6 +319,7 @@ impl Workspace {
                 self.layers.close(other);
             }
             self.layers.open(Layer::SlashMenu);
+            self.load_slash_workflows(window, cx);
         }
         if self.slash_typed.as_deref() != Some(word.as_str()) {
             self.slash_typed = Some(word.clone());
@@ -341,6 +342,22 @@ impl Workspace {
                     cx.notify();
                 }
             });
+        })
+        .detach();
+    }
+
+    /// The workflow library, read again for the `/` menu, which lists it
+    /// as the WebView's `/` lists its templates. One that cannot be read
+    /// leaves the list as it was.
+    fn load_slash_workflows(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let reply = self.backend.workflows();
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(workflows) = crate::backend::receive(reply).await {
+                let _ = this.update(cx, |this, cx| {
+                    this.workflows = workflows;
+                    cx.notify();
+                });
+            }
         })
         .detach();
     }
@@ -391,6 +408,27 @@ impl Workspace {
         self.focus_composer(window, cx);
     }
 
+    /// Attaches a workflow picked from the `/` menu to the message, as the
+    /// WebView's `/` attaches a workflow template: it is told to the model
+    /// as its goal and staged tasks, for that turn.
+    fn pick_slash_workflow(
+        &mut self,
+        id: String,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let typed = self.slash_typed.is_some();
+        let rest = self.slash_rest(cx);
+        self.layers.close(Layer::SlashMenu);
+        if typed {
+            self.state.save_draft(rest.clone());
+            self.fill_composer(rest, window, cx);
+        }
+        self.attach(crate::compose::Chip::Workflow { id, name }, cx);
+        self.focus_composer(window, cx);
+    }
+
     /// The "/" button of the composer, with the list of commands above it
     /// while that is open.
     pub(super) fn slash_button(&self, cx: &mut Context<Self>) -> Div {
@@ -401,12 +439,15 @@ impl Workspace {
                 .small()
                 .ghost()
                 .selected(open)
-                .tooltip(tr("Commands and skills: type / or pick one here"))
+                .tooltip(tr(
+                    "Commands, workflows and skills: type / or pick one here",
+                ))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.slash_typed = None;
                     this.toggle_composer_menu(Layer::SlashMenu, window, cx);
                     if this.layers.contains(Layer::SlashMenu) {
                         this.load_slash_skills(String::new(), window, cx);
+                        this.load_slash_workflows(window, cx);
                     }
                 })),
         );
@@ -487,7 +528,45 @@ impl Workspace {
                 ),
             );
         }
-        // The WebView's `/` lists skills: picking one attaches it.
+        // Then, as in the WebView's `/`, the workflow library and the
+        // skills: picking one attaches it.
+        let workflows: Vec<(String, String, String)> =
+            slash::matching_workflows(&self.workflows, &word)
+                .into_iter()
+                .map(|workflow| {
+                    (
+                        workflow.id.clone(),
+                        workflow.name.clone(),
+                        crate::present::one_line(&workflow.goal),
+                    )
+                })
+                .collect();
+        if !workflows.is_empty() {
+            rows = rows.child(
+                div()
+                    .px_2()
+                    .pt_2()
+                    .pb_1()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(tr("Workflows, to attach")),
+            );
+        }
+        for (id, name, goal) in &workflows {
+            let (picked, named) = (id.clone(), name.clone());
+            rows = rows.child(
+                Self::menu_row(
+                    SharedString::from(format!("slash-workflow-{id}")),
+                    name.clone(),
+                    goal.clone(),
+                    false,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.pick_slash_workflow(picked.clone(), named.clone(), window, cx)
+                })),
+            );
+        }
         let skills: Vec<_> = self
             .slash_skills
             .iter()
@@ -524,9 +603,9 @@ impl Workspace {
                 })),
             );
         }
-        if commands.is_empty() && skills.is_empty() {
+        if commands.is_empty() && workflows.is_empty() && skills.is_empty() {
             rows = rows.child(div().px_2().py_1().text_xs().text_color(muted).child(
-                crate::i18n::fill(tr("No command or skill begins with /{}"), &[&word]),
+                crate::i18n::fill(tr("No command, workflow or skill matches /{}"), &[&word]),
             ));
         }
         button.child(deferred(menu.child(rows)))

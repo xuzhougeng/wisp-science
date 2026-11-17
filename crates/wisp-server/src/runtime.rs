@@ -967,7 +967,7 @@ async fn artifact_line(store: &Store, id: &str, frame: &str, root: &Path) -> Res
 /// What each kind tells the model is the WebView's; an environment or a
 /// runtime named here is also attached to the conversation, so its work may
 /// run there, as the WebView does.
-async fn reference_context(
+pub(crate) async fn reference_context(
     store: &Store,
     skills: &SkillIndex,
     references: &[wisp_dto::ComposerReferenceArg],
