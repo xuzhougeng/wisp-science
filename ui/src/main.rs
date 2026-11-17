@@ -15517,7 +15517,7 @@ fn App() -> impl IntoView {
             <div class="composer"
                 class:center-hidden=move || center_file_open.get() && !center_split.get()
                 class:demo-read-only=move || demo_mode.get()>
-                <database_recovery::DatabaseRecoveryNotice locale=locale project_info=project_info/>
+                <database_recovery::DatabaseRecoveryNotice locale=locale project_info=project_info show_projects=show_projects/>
                 <swarm::SwarmDock state=swarm_state session=active_session locale=locale/>
                 {move || browser_extension_status.get().map(|status| {
                     let loc = locale.get();

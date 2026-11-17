@@ -29,10 +29,19 @@ pub(crate) fn recovery_guide_url(locale: Locale) -> String {
 pub(crate) fn DatabaseRecoveryNotice(
     locale: RwSignal<Locale>,
     project_info: RwSignal<Option<ProjectInfo>>,
+    /// The Projects screen is showing; a project is entered once it is left.
+    show_projects: RwSignal<bool>,
 ) -> impl IntoView {
     let pending = create_rw_signal(Vec::<ProjectDatabaseRecovery>::new());
-    // Changes only when a project is entered or left, not on a rename.
-    let project_id = create_memo(move |_| project_info.with(|p| p.as_ref().map(|p| p.id.clone())));
+    // Changes only when a project is entered or left, not on a rename. The
+    // window keeps its project while the Projects screen is up, so that screen
+    // counts as having left it.
+    let project_id = create_memo(move |_| {
+        if show_projects.get() {
+            return None;
+        }
+        project_info.with(|p| p.as_ref().map(|p| p.id.clone()))
+    });
     create_effect(move |_| {
         let Some(project) = project_id.get() else {
             pending.set(Vec::new());

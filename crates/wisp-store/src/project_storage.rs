@@ -2644,6 +2644,18 @@ mod tests {
         Store::close_pool(&store.pool).await;
     }
 
+    /// A path with its parent's links resolved, so `/var` and `/private/var`
+    /// on macOS (and a verbatim prefix on Windows) compare equal. The last
+    /// component need not exist.
+    fn resolved(path: impl AsRef<Path>) -> std::path::PathBuf {
+        let path = path.as_ref();
+        match (path.parent(), path.file_name()) {
+            (Some(parent), Some(name)) => std::fs::canonicalize(parent)
+                .map_or_else(|_| path.to_path_buf(), |parent| parent.join(name)),
+            _ => path.to_path_buf(),
+        }
+    }
+
     fn damaged_files(database: &Path) -> Vec<String> {
         std::fs::read_dir(database.parent().unwrap())
             .unwrap()
@@ -2746,8 +2758,8 @@ mod tests {
             database.with_file_name(&damaged[0])
         );
         assert_eq!(
-            outcome.backup_dir.as_deref().map(Path::new),
-            Some(backups.as_path())
+            outcome.backup_dir.as_deref().map(resolved),
+            Some(resolved(&backups))
         );
         assert!(outcome.occurred_at > 0);
         // The outcome is in the application database, not the replaced one.
@@ -2827,8 +2839,8 @@ mod tests {
         );
         // Where copies would have been, though there were none.
         assert_eq!(
-            pending[0].backup_dir.as_deref().map(Path::new),
-            Some(backups.as_path())
+            pending[0].backup_dir.as_deref().map(resolved),
+            Some(resolved(&backups))
         );
         close_everything(store).await;
         let store = Store::open_application(&path).await.unwrap();
