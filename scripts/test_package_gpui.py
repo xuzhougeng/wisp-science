@@ -57,11 +57,13 @@ class PackageGpuiTests(unittest.TestCase):
     def test_names_cannot_be_taken_for_webview_installers(self):
         names = [archive_name("1.26.0", system, arch) for system, arch in
                  [("macos", "aarch64"), ("macos", "x64"), ("windows", "x64"), ("linux", "x64")]]
+        # The WebView installers' pattern with `gpui` added to the product:
+        # wisp-science_1.26.0_aarch64.dmg, _x64-setup.exe, _amd64.deb.
         self.assertEqual(names, [
-            "Wisp-Science-GPUI-Preview_1.26.0_macos-aarch64.zip",
-            "Wisp-Science-GPUI-Preview_1.26.0_macos-x64.zip",
-            "Wisp-Science-GPUI-Preview_1.26.0_windows-x64.zip",
-            "Wisp-Science-GPUI-Preview_1.26.0_linux-x64.tar.gz",
+            "wisp-science-gpui_1.26.0_aarch64.app.zip",
+            "wisp-science-gpui_1.26.0_x64.app.zip",
+            "wisp-science-gpui_1.26.0_x64.zip",
+            "wisp-science-gpui_1.26.0_amd64.tar.gz",
         ])
         self.assertEqual(len(set(names)), len(names))
         # The download picker and the updater select `wisp-science_<version>_*`
@@ -75,7 +77,7 @@ class PackageGpuiTests(unittest.TestCase):
         for system, executable in [("windows", "wisp-gpui.exe"), ("linux", "wisp-gpui")]:
             with self.subTest(system=system):
                 staged = stage(self.repo, self.binary, system, self.out)
-                self.assertEqual(staged, self.out / "Wisp-Science-GPUI-Preview")
+                self.assertEqual(staged, self.out / "wisp-science-gpui")
                 self.assertEqual((staged / executable).read_bytes(), b"binary")
                 for name in RESOURCES:
                     self.assertTrue((staged / "resources" / name / "kept.txt").is_file())
@@ -85,7 +87,7 @@ class PackageGpuiTests(unittest.TestCase):
 
     def test_macos_bundle_layout_and_identity(self):
         staged = stage(self.repo, self.binary, "macos", self.out)
-        self.assertEqual(staged.name, "Wisp Science GPUI Preview.app")
+        self.assertEqual(staged.name, "wisp-science-gpui.app")
         contents = staged / "Contents"
         self.assertTrue((contents / "MacOS" / "wisp-gpui").is_file())
         self.assertTrue((contents / "Resources" / "skills" / "example" / "SKILL.md").is_file())
@@ -93,9 +95,10 @@ class PackageGpuiTests(unittest.TestCase):
         with open(contents / "Info.plist", "rb") as file:
             plist = plistlib.load(file)
         self.assertEqual(plist["CFBundleExecutable"], "wisp-gpui")
+        self.assertEqual(plist["CFBundleName"], "wisp-science-gpui")
         self.assertEqual(plist["CFBundleShortVersionString"], "9.8.7")
         # Not the WebView desktop's `science.wisp-science`: both can be installed.
-        self.assertEqual(plist["CFBundleIdentifier"], "science.wisp-science.gpui-preview")
+        self.assertEqual(plist["CFBundleIdentifier"], "science.wisp-science.gpui")
 
     def test_staging_again_replaces_the_previous_tree(self):
         staged = stage(self.repo, self.binary, "linux", self.out)
@@ -116,20 +119,20 @@ class PackageGpuiTests(unittest.TestCase):
     def test_windows_zip_and_linux_tarball_unpack_to_one_folder(self):
         stage(self.repo, self.binary, "windows", self.out)
         path = archive(self.repo, "windows", "x64", self.out)
-        self.assertEqual(path.name, "Wisp-Science-GPUI-Preview_9.8.7_windows-x64.zip")
+        self.assertEqual(path.name, "wisp-science-gpui_9.8.7_x64.zip")
         with zipfile.ZipFile(path) as bundle:
             names = bundle.namelist()
-        self.assertIn("Wisp-Science-GPUI-Preview/wisp-gpui.exe", names)
-        self.assertIn("Wisp-Science-GPUI-Preview/resources/skills/example/SKILL.md", names)
-        self.assertTrue(all(name.startswith("Wisp-Science-GPUI-Preview/") for name in names))
+        self.assertIn("wisp-science-gpui/wisp-gpui.exe", names)
+        self.assertIn("wisp-science-gpui/resources/skills/example/SKILL.md", names)
+        self.assertTrue(all(name.startswith("wisp-science-gpui/") for name in names))
 
         stage(self.repo, self.binary, "linux", self.out)
         path = archive(self.repo, "linux", "x64", self.out)
-        self.assertEqual(path.name, "Wisp-Science-GPUI-Preview_9.8.7_linux-x64.tar.gz")
+        self.assertEqual(path.name, "wisp-science-gpui_9.8.7_amd64.tar.gz")
         with tarfile.open(path) as bundle:
             names = bundle.getnames()
-            binary = bundle.getmember("Wisp-Science-GPUI-Preview/wisp-gpui")
-        self.assertIn("Wisp-Science-GPUI-Preview/resources/r/kept.txt", names)
+            binary = bundle.getmember("wisp-science-gpui/wisp-gpui")
+        self.assertIn("wisp-science-gpui/resources/r/kept.txt", names)
         if sys.platform != "win32":  # Windows has no executable bit to keep.
             self.assertTrue(binary.mode & 0o111)
 
@@ -143,8 +146,8 @@ class PackageGpuiTests(unittest.TestCase):
             package_gpui.main(["archive", "--os", "linux", "--arch", "x64", "--repo", str(self.repo),
                                "--out", str(self.out)])
         staged, packed = printed.getvalue().split("\n")[:2]
-        self.assertTrue(staged.endswith("dist/Wisp-Science-GPUI-Preview"))
-        self.assertTrue(packed.endswith("dist/Wisp-Science-GPUI-Preview_9.8.7_linux-x64.tar.gz"))
+        self.assertTrue(staged.endswith("dist/wisp-science-gpui"))
+        self.assertTrue(packed.endswith("dist/wisp-science-gpui_9.8.7_amd64.tar.gz"))
         self.assertNotIn("\\", packed)
 
 

@@ -24,10 +24,14 @@ archive of this desktop per platform beside the WebView installers:
 
 | Platform | File | Inside |
 | --- | --- | --- |
-| macOS, Apple Silicon | `Wisp-Science-GPUI-Preview_<version>_macos-aarch64.zip` | `Wisp Science GPUI Preview.app` |
-| macOS, Intel | `Wisp-Science-GPUI-Preview_<version>_macos-x64.zip` | `Wisp Science GPUI Preview.app` |
-| Windows, x64 | `Wisp-Science-GPUI-Preview_<version>_windows-x64.zip` | a folder with `wisp-gpui.exe` and `resources` |
-| Linux, x64 | `Wisp-Science-GPUI-Preview_<version>_linux-x64.tar.gz` | a folder with `wisp-gpui` and `resources` |
+| macOS, Apple Silicon | `wisp-science-gpui_<version>_aarch64.app.zip` | `wisp-science-gpui.app` |
+| macOS, Intel | `wisp-science-gpui_<version>_x64.app.zip` | `wisp-science-gpui.app` |
+| Windows, x64 | `wisp-science-gpui_<version>_x64.zip` | a `wisp-science-gpui` folder with `wisp-gpui.exe` and `resources` |
+| Linux, x64 | `wisp-science-gpui_<version>_amd64.tar.gz` | a `wisp-science-gpui` folder with `wisp-gpui` and `resources` |
+
+The names follow the WebView installers' `wisp-science_<version>_<suffix>`
+(`aarch64`/`x64` on macOS and Windows, `amd64` on Linux) with `gpui` added to
+the product name.
 
 Unpack the archive and start the program; nothing is installed. On macOS move
 the app to Applications or run it where it is. On Windows and Linux keep the
@@ -43,7 +47,7 @@ What to expect:
   yet. The WebView installers (`wisp-science_<version>_*`) remain the supported
   desktop, and the website's download picker offers only those.
 - It can be installed beside the WebView desktop: it has its own name, its own
-  macOS bundle identifier (`science.wisp-science.gpui-preview`) and its own
+  macOS bundle identifier (`science.wisp-science.gpui`) and its own
   data folder (`wisp-science-gpui`, see below). Bring over on its home page
   copies projects from the WebView desktop.
 - It does not update itself. Its update check opens the release page, where
@@ -55,14 +59,14 @@ What to expect:
 - There is no Linux arm64 archive, no `.dmg`, no Windows installer and no
   `.deb` or AppImage yet.
 
-The archives are built by `.github/workflows/release-gpui.yml` (GPUI Preview
+The archives are built by `.github/workflows/release-gpui.yml` (GPUI
 Release) with `scripts/package_gpui.py`. Like the other platform workflows it
 runs on the release tag, waits for the GitHub release and only attaches files.
 To rebuild one tag, dispatch it from `main`; `publish=false` is a dry run that
 still signs and keeps the archives as workflow artifacts:
 
 ```bash
-gh workflow run "GPUI Preview Release" --ref main -f tag=vX.Y.Z -f publish=true
+gh workflow run "GPUI Release" --ref main -f tag=vX.Y.Z -f publish=true
 ```
 
 A tag older than the first preview release builds, but its executable does

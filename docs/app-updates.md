@@ -72,9 +72,10 @@ The workflows are two steps so platform builds cannot overwrite the notes.
    attaches `wisp-science_<version>_android.apk` the same way once
    `ANDROID_RELEASE_ENABLED` is set (see `apps/android/README.md`); the APK has
    no in-app updater, and users install new versions over the old one.
-   **GPUI Preview Release** attaches the GPUI desktop preview the same way:
-   `Wisp-Science-GPUI-Preview_<version>_macos-aarch64.zip`, `_macos-x64.zip`,
-   `_windows-x64.zip` and `_linux-x64.tar.gz`. These are not update targets:
+   **GPUI Release** attaches the GPUI desktop preview the same way, named like
+   the WebView installers with `gpui` added to the product name:
+   `wisp-science-gpui_<version>_aarch64.app.zip` and `_x64.app.zip` (macOS),
+   `_x64.zip` (Windows) and `_amd64.tar.gz` (Linux). These are not update targets:
    `latest.json` is written by the macOS WebView build from its own
    `.app.tar.gz` files, and the website's download manifest selects files by
    their exact `wisp-science_<version>_<suffix>` names, so neither can pick a

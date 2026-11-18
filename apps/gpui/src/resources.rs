@@ -59,7 +59,7 @@ mod tests {
     #[test]
     fn a_macos_bundle_reads_contents_resources() {
         let root = scratch("bundle");
-        let app = root.join("Wisp Science GPUI Preview.app/Contents");
+        let app = root.join("wisp-science-gpui.app/Contents");
         std::fs::create_dir_all(app.join("MacOS")).unwrap();
         std::fs::create_dir_all(app.join("Resources/skills")).unwrap();
         let executable = app.join("MacOS/wisp-gpui");

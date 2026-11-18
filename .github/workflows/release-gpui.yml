@@ -1,8 +1,9 @@
-name: GPUI Preview Release
+name: GPUI Release
 
 # Attaches the GPUI desktop preview (apps/gpui, `wisp-gpui`) to an existing
-# GitHub release: one archive per platform, named
-# Wisp-Science-GPUI-Preview_<version>_<os>-<arch>. Like the other platform
+# GitHub release: one archive per platform, named like the WebView installers
+# with `gpui` added to the product name (wisp-science-gpui_<version>_<suffix>:
+# aarch64.app.zip, x64.app.zip, x64.zip, amd64.tar.gz). Like the other platform
 # workflows it waits for the release and uploads files only; it never sets
 # the release title or body. The WebView installers stay the release channel:
 # the download picker and the updater manifest do not select these files.
@@ -197,7 +198,7 @@ jobs:
         if: runner.os == 'macOS' && env.SIGN == 'true'
         run: |
           set -euo pipefail
-          APP="dist/Wisp Science GPUI Preview.app"
+          APP="dist/wisp-science-gpui.app"
           codesign --force --options runtime --timestamp \
             --keychain "${CODESIGN_KEYCHAIN}" --sign "${APPLE_SIGNING_IDENTITY}" "${APP}"
           codesign --verify --deep --strict --verbose=2 "${APP}"
@@ -220,7 +221,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          APP="dist/Wisp Science GPUI Preview.app"
+          APP="dist/wisp-science-gpui.app"
           xcrun notarytool submit "${ARCHIVE}" \
             --apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${APPLE_TEAM_ID}" \
             --wait --timeout 45m --output-format json > "${RUNNER_TEMP}/notary.json"
@@ -253,7 +254,7 @@ jobs:
         if: env.PUBLISH != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: gpui-preview-${{ matrix.system }}-${{ matrix.arch }}
+          name: gpui-${{ matrix.system }}-${{ matrix.arch }}
           path: ${{ env.ARCHIVE }}
           if-no-files-found: error
           retention-days: 7
@@ -272,15 +273,17 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
-      - name: Verify every platform attached its preview archive
+      - name: Verify every platform attached its GPUI archive
         run: |
           set -euo pipefail
           gh release view "$RELEASE_TAG" -R "${{ github.repository }}" --json assets --jq '.assets[].name' > assets.txt
           cat assets.txt
-          for suffix in macos-aarch64.zip macos-x64.zip windows-x64.zip linux-x64.tar.gz; do
-            count=$(grep -c "^Wisp-Science-GPUI-Preview_.*_${suffix}\$" assets.txt || true)
+          version="${RELEASE_TAG#v}"
+          for suffix in aarch64.app.zip x64.app.zip x64.zip amd64.tar.gz; do
+            name="wisp-science-gpui_${version}_${suffix}"
+            count=$(grep -cxF "$name" assets.txt || true)
             if [ "$count" -ne 1 ]; then
-              echo "::error::Expected one Wisp-Science-GPUI-Preview_*_${suffix} asset, found $count"
+              echo "::error::Expected one ${name} asset, found $count"
               exit 1
             fi
           done
