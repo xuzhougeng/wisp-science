@@ -8,16 +8,18 @@ Two steps, so a platform's signing can happen between them:
 `stage` lays out what the executable needs beside it; `archive` packs that
 into the one file a release offers and prints its path.
 
-    macOS    dist/Wisp Science GPUI Preview.app             -> ..._macos-<arch>.zip
-    Windows  dist/Wisp-Science-GPUI-Preview/wisp-gpui.exe   -> ..._windows-<arch>.zip
-    Linux    dist/Wisp-Science-GPUI-Preview/wisp-gpui       -> ..._linux-<arch>.tar.gz
+    macOS    dist/wisp-science-gpui.app             -> wisp-science-gpui_<version>_<arch>.app.zip
+    Windows  dist/wisp-science-gpui/wisp-gpui.exe   -> wisp-science-gpui_<version>_x64.zip
+    Linux    dist/wisp-science-gpui/wisp-gpui       -> wisp-science-gpui_<version>_amd64.tar.gz
 
 The executable finds the copied folders through `apps/gpui/src/resources.rs`:
 `Contents/Resources` in the macOS bundle, `resources/` beside it elsewhere.
 
-File names start with `Wisp-Science-GPUI-Preview_`, never `wisp-science_`:
-the download picker and the updater manifest select the WebView installers by
-that exact prefix and must not pick these up.
+File names follow the WebView installers' `wisp-science_<version>_<arch>.<ext>`
+pattern (Tauri's: `x64`/`aarch64` on macOS and Windows, `amd64` on Linux) with
+the product name `wisp-science-gpui` in place of `wisp-science`. The download
+picker and the updater manifest build exact `wisp-science_<version>_<suffix>`
+names, so they cannot pick these up.
 
 Standard library only; runs on the macOS, Windows and Linux runners.
 """
@@ -35,9 +37,10 @@ import tarfile
 import zipfile
 
 
-PREFIX = "Wisp-Science-GPUI-Preview"
-APP_NAME = "Wisp Science GPUI Preview"
-BUNDLE_ID = "science.wisp-science.gpui-preview"
+# The WebView desktop is `wisp-science` / `science.wisp-science`
+# (src-tauri/tauri.conf.json); the GPUI desktop adds `gpui` to both.
+PRODUCT = "wisp-science-gpui"
+BUNDLE_ID = "science.wisp-science.gpui"
 # Oldest macOS the release build targets (MACOSX_DEPLOYMENT_TARGET in
 # .github/workflows/release-gpui.yml).
 MACOS_MINIMUM = "11.0"
@@ -47,8 +50,10 @@ RESOURCES = ("skills", "python", "r", "browser-extension", "seed")
 IGNORED = shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store", "Thumbs.db")
 SYSTEMS = ("macos", "windows", "linux")
 ARCHITECTURES = ("aarch64", "x64")
+# Linux packages name architectures the Debian way (`wisp-science_<v>_amd64.deb`).
+LINUX_ARCH = {"x64": "amd64", "aarch64": "arm64"}
 
-README = """Wisp Science GPUI Preview {version}
+README = """wisp-science-gpui {version} (preview)
 
 This is a preview of Wisp Science's new desktop. It does not yet do everything
 the regular Wisp Science desktop does, and it does not update itself: download
@@ -83,12 +88,19 @@ def workspace_version(repo):
 
 
 def archive_name(version, system, arch):
-    extension = "tar.gz" if system == "linux" else "zip"
-    return f"{PREFIX}_{version}_{system}-{arch}.{extension}"
+    """`wisp-science-gpui_<version>_<suffix>`, the suffix spelled as Tauri spells
+    the WebView installers' on the same system."""
+    if system == "macos":
+        suffix = f"{arch}.app.zip"
+    elif system == "windows":
+        suffix = f"{arch}.zip"
+    else:
+        suffix = f"{LINUX_ARCH.get(arch, arch)}.tar.gz"
+    return f"{PRODUCT}_{version}_{suffix}"
 
 
 def staged_path(out, system):
-    return Path(out) / (f"{APP_NAME}.app" if system == "macos" else PREFIX)
+    return Path(out) / (f"{PRODUCT}.app" if system == "macos" else PRODUCT)
 
 
 def executable_name(system):
@@ -106,8 +118,8 @@ def executable_path(staged, system):
 
 def info_plist(version):
     return {
-        "CFBundleName": APP_NAME,
-        "CFBundleDisplayName": APP_NAME,
+        "CFBundleName": PRODUCT,
+        "CFBundleDisplayName": PRODUCT,
         "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleExecutable": executable_name("macos"),
         "CFBundleIconFile": "icon.icns",
