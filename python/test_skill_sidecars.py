@@ -355,7 +355,8 @@ need_ggplot <- function() {
     def test_loading_is_silent_and_check_render_rejects_missing_or_empty(self):
         out = self.run_r(r"""
 fails_with(check_render("figures/none.png"), "was not written")
-file.create("empty.png")
+# file.create() returns TRUE visibly; Rscript would print it.
+invisible(file.create("empty.png"))
 fails_with(check_render("empty.png"), "empty \\(0 bytes\\)")
 writeLines("x", "note.pdf")
 stopifnot(identical(check_render("note.pdf")$path, "note.pdf"))
