@@ -1,6 +1,6 @@
 ---
 name: figure-style
-description: "Correctness and legibility checklist for publication figures, plus a matplotlib sidecar. Load before plotting anything and call `apply_figure_style()` (role-mapped font ladder, outward ticks, frameless legends, 300-dpi saves, CJK-safe fonts). Covers data fidelity, label budgets, axis/colour/type rules, chart choice by data shape, composition, and a mandatory render-then-inspect QA pass (bbox collisions + per-panel visual crops). Helpers: focal_palette, bar_with_points, strip_with_median, end_of_line_labels, panel_letter, set_frame, panel_crops, save_panel_crops (QA crops go to .cache/, never into the output figures directory). Multi-panel assembly lives in figure-composer; whole-paper figure ordering in paper-narrative."
+description: "Correctness and legibility checklist for publication figures in Python or R. Load before plotting anything in either language. Covers data fidelity, label budgets, axis/colour/type rules, chart choice, composition, and a mandatory render-then-inspect QA pass (text-collision scan + per-panel crops for view_image) with sidecars for both: matplotlib (apply_figure_style, panel_crops, save_panel_crops, plotting helpers) and ggplot2/grid (save_checked_figure, check_render, text_collisions, panel_crops, save_panel_crops). QA crops go to .cache/, never the figures directory. Multi-panel assembly: figure-composer; paper figure order: paper-narrative."
 license: Apache-2.0
 ---
 
@@ -12,10 +12,14 @@ house aesthetic — frame, font family, and sizes are all parameters of
 Multi-panel assembly is `figure-composer`'s job; deciding what each figure in
 a paper should argue is `paper-narrative`'s.
 
+Every rule below applies to R plots as well as Python ones; only the code
+snippets are language-specific. *Prove the render* has a matching R procedure.
+
 Loading the Python helpers only defines them; it does not select a matplotlib
 backend or apply a style. Call `apply_figure_style(...)` explicitly for plotting.
 The optional `figure_style_self_check()` applies the defaults and checks font
-wiring when called; it is not a load-time check.
+wiring when called; it is not a load-time check. Loading the R helpers likewise
+only defines functions: no package is attached, no device opened, no option set.
 
 Two tiers of rule live below. **Hard rules** — everything under *Tell the
 truth*, *Never do*, and *Prove the render*, plus any rule stating a
@@ -203,7 +207,8 @@ Each of these is a correctness failure:
 
 ## Prove the render
 
-Run both checks after `fig.savefig(...)` and before presenting the file.
+Run both checks after saving and before presenting the file. Python
+(matplotlib) is steps 1–2; R is step 3, which is the same two checks.
 
 **1. Collision scan.** Assert no visible text box overlaps another or a
 spine (a tick label touching its own spine doesn't count), and every text
@@ -248,11 +253,42 @@ by hand, write to the same place. Delete it once the figure passes
 (`shutil.rmtree(".cache/figure-style", ignore_errors=True)`), and never
 report a crop as an output.
 
-**3. R output.** Prefer explicit `ggsave(filename, plot = p, dpi = 300,
-bg = "white", ...)` over the active device; for base graphics open
-`png(..., bg = "white", res = 300)`, draw, and always `dev.off()`. Then
-assert the file exists and is non-empty and inspect it — a "successful" R
-call with a missing, zero-byte, or blank file is a failed render.
+**3. R (ggplot2, patchwork, grid).** Same two checks, run by the R
+sidecar. Save through `save_checked_figure()` instead of a bare `ggsave()`:
+
+```r
+p <- ggplot(df, aes(x, y)) + geom_point()  # plus the rules above
+qa <- save_checked_figure(p, "figures/fig1.png", width = 180, height = 120,
+                          units = "mm", dpi = 300)
+qa$crops  # per-panel crops → .cache/figure-style/
+```
+
+It saves with `ggsave(..., bg = "white")`, then stops with the offending
+labels if the file is missing, zero-byte, or one flat colour (blank check
+needs the `png` package), if any visible text box overlaps another, or if
+text runs past the figure edge. Text is measured at the saved size on the
+same PNG device `ggsave()` uses, rotated tick labels included; labels that
+`check_overlap = TRUE` hides are skipped. Fix and call it again until it
+returns. `text_collisions(p, width, height, units)` returns the same scan as
+data, and `panel_crops()` / `save_panel_crops()` are the crop steps alone.
+The scan does not test text against axis lines or panel borders; the visual
+pass must.
+
+Then leave R and `view_image` the saved figure (titles, legends, and
+captions live outside the panel crops) and every path in `qa$crops`, asking
+the same questions as the Python visual pass. Treat these R warnings as
+failed renders, not noise: `Removed n rows containing missing values` you
+did not intend, ggrepel's `unlabeled data points (too many overlaps)`,
+`font family not found`, and `conversion failure on ... in 'mbcsToSbcs'`
+(CJK text on a device without the font — save PNG through `ragg` or set a
+CJK-capable `family`).
+
+Base graphics have no grob tree to scan: open `png(..., bg = "white",
+res = 300)`, draw, always `dev.off()`, then `check_render(path)` and
+`view_image` the file. A "successful" R call with a missing, zero-byte, or
+blank file is a failed render. The crops follow the same rules as Python's:
+`.cache/figure-style/` only, wiped on each call, deleted once the figure
+passes (`unlink(".cache/figure-style", recursive = TRUE)`).
 
 ---
 *Defaults when unsure: fewer hues, direct labels over legends, raw data over

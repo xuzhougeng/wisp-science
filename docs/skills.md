@@ -293,7 +293,13 @@ helpers raise on failed or malformed retrieval instead of reporting an empty
 search or citation graph; DOI checks retain an explicit unverified state.
 Loading `figure-style` helpers leaves the current matplotlib backend and style
 alone. Apply the style explicitly with `apply_figure_style(...)`; the optional
-`figure_style_self_check()` runs only when called.
+`figure_style_self_check()` runs only when called. `figure-style` also ships an
+R sidecar (`runtime.r`) for ggplot2, patchwork, and grid figures:
+`save_checked_figure(p, "figures/fig.png", width, height)` saves with `ggsave`,
+fails on a missing, empty, or blank file, overlapping text, or text past the
+figure edge, and writes per-panel crops to `.cache/figure-style/` for the same
+`view_image` pass Python figures get. Loading it attaches no package and opens
+no device.
 
 The built-in execution guidance and analysis skills describe the available
 execution methods without assigning task categories to a default method.

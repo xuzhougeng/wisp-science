@@ -5,6 +5,10 @@ import copy
 import inspect
 import io
 import json
+import os
+import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import traceback
@@ -263,6 +267,158 @@ class SavePanelCropsTests(unittest.TestCase):
         paths, _ = self.save({"a": (0, 0, 5, 5)})
         self.assertFalse(stale.exists())
         self.assertEqual(list(paths), ["a"])
+
+
+
+R_SIDECAR = SKILLS / "figure-style" / "runtime.r"
+RSCRIPT = shutil.which("Rscript")
+
+
+class FigureStyleRSidecarSourceTests(unittest.TestCase):
+    """Static contract for the R sidecar; needs no R installation."""
+
+    def setUp(self):
+        self.source = R_SIDECAR.read_text(encoding="utf-8")
+
+    def test_top_level_only_defines_functions(self):
+        # render_skill sources the file into the live runtime, so loading must
+        # not attach packages, open devices, or run checks.
+        for number, line in enumerate(self.source.splitlines(), 1):
+            if not line or line[0] in " \t#}" or line.startswith(")"):
+                continue
+            self.assertRegex(line, r"^[.A-Za-z][\w.]* <- function\(",
+                             f"runtime.r:{number} runs at load time: {line}")
+        self.assertNotRegex(self.source, r"\b(library|require|options|setwd)\(")
+
+    def test_skill_documents_every_public_r_helper(self):
+        public = set(re.findall(r"^([A-Za-z][\w.]*) <- function\(", self.source, re.M))
+        self.assertEqual(public, {"check_render", "text_collisions", "panel_crops",
+                                  "save_panel_crops", "save_checked_figure"})
+        skill = (SKILLS / "figure-style" / "SKILL.md").read_text(encoding="utf-8")
+        r_section = skill[skill.index("**3. R (ggplot2"):]
+        for name in public:
+            self.assertIn(f"{name}(", r_section, name)
+        description = re.search(r'^description: "(.*)"$', skill, re.M).group(1)
+        # Skill search truncates descriptions at 512 characters; the R support
+        # must survive the cut or R tasks will not load the skill.
+        self.assertIn("Python or R", description[:512])
+        self.assertIn("save_checked_figure", description[:512])
+
+    def test_crop_default_stays_out_of_the_figures_directory(self):
+        self.assertEqual(
+            re.findall(r'out_dir = "([^"]+)"', self.source),
+            [".cache/figure-style", ".cache/figure-style"],
+        )
+
+
+@unittest.skipUnless(RSCRIPT, "Rscript is not installed")
+class FigureStyleRSidecarRuntimeTests(unittest.TestCase):
+    """Executes the R sidecar; ggplot2 cases skip when it is not installed."""
+
+    PRELUDE = r"""
+before_search <- search()
+before_devices <- grDevices::dev.list()
+loaded <- utils::capture.output(
+  source(Sys.getenv("WISP_FIGURE_STYLE_R"), local = TRUE, encoding = "UTF-8"))
+stopifnot(length(loaded) == 0L)
+stopifnot(identical(search(), before_search))
+stopifnot(identical(grDevices::dev.list(), before_devices))
+fails_with <- function(expr, pattern) {
+  message <- tryCatch({ force(expr); "<no error>" },
+    error = function(e) conditionMessage(e))
+  if (!grepl(pattern, message)) stop("expected /", pattern, "/, got: ", message)
+}
+need_ggplot <- function() {
+  if (!requireNamespace("ggplot2", quietly = TRUE)) {
+    cat("SKIP: ggplot2 is not installed\n")
+    quit(save = "no", status = 0)
+  }
+  suppressPackageStartupMessages(library(ggplot2))
+}
+"""
+
+    def run_r(self, body):
+        with tempfile.TemporaryDirectory() as tmp:
+            # A script file, not -e: Windows mangles multi-line -e arguments.
+            script = Path(tmp) / "check.R"
+            script.write_text(self.PRELUDE + body, encoding="utf-8")
+            env = dict(os.environ, WISP_FIGURE_STYLE_R=str(R_SIDECAR))
+            done = subprocess.run(
+                [RSCRIPT, "--no-init-file", str(script)],
+                cwd=tmp, env=env, capture_output=True, text=True, timeout=180,
+            )
+        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+        if done.stdout.startswith("SKIP:"):
+            self.skipTest(done.stdout.strip())
+        return done.stdout
+
+    def test_loading_is_silent_and_check_render_rejects_missing_or_empty(self):
+        out = self.run_r(r"""
+fails_with(check_render("figures/none.png"), "was not written")
+# file.create() returns TRUE visibly; Rscript would print it.
+invisible(file.create("empty.png"))
+fails_with(check_render("empty.png"), "empty \\(0 bytes\\)")
+writeLines("x", "note.pdf")
+stopifnot(identical(check_render("note.pdf")$path, "note.pdf"))
+cat("ok\n")
+""")
+        self.assertEqual(out, "ok\n")
+
+    def test_collision_scan_finds_overlaps_and_ignores_clean_layouts(self):
+        out = self.run_r(r"""
+need_ggplot()
+base <- ggplot(data.frame(x = 1:3, y = 1:3), aes(x, y)) + geom_point()
+clean <- text_collisions(base + labs(title = "A clean title"), 80, 60)
+stopifnot(nrow(clean$overlaps) == 0L, nrow(clean$outside) == 0L, clean$n_labels > 0L)
+
+stacked <- base + annotate("text", x = 2, y = 2, label = "AAAA") +
+  annotate("text", x = 2, y = 2, label = "BBBB")
+hits <- text_collisions(stacked, 80, 60)$overlaps
+stopifnot(any(hits$a == "AAAA" & hits$b == "BBBB"))
+
+hidden <- base + geom_text(data = data.frame(x = c(2, 2), y = c(2, 2), l = c("AAAA", "BBBB")),
+  aes(label = l), check_overlap = TRUE)
+stopifnot(nrow(text_collisions(hidden, 80, 60)$overlaps) == 0L)
+
+tilted <- ggplot(data.frame(g = c("alpha", "beta", "gamma"), y = 1:3), aes(g, y)) +
+  geom_col() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+stopifnot(nrow(text_collisions(tilted, 80, 60)$overlaps) == 0L)
+
+edge <- base + coord_cartesian(clip = "off") +
+  annotate("text", x = 3, y = 2, label = strrep("W", 60), hjust = 0)
+stopifnot(nrow(text_collisions(edge, 80, 60)$outside) >= 1L)
+cat("ok\n")
+""")
+        self.assertEqual(out, "ok\n")
+
+    def test_save_checked_figure_stops_on_collisions_and_crops_to_cache(self):
+        out = self.run_r(r"""
+need_ggplot()
+base <- ggplot(data.frame(x = 1:4, y = 1:4, g = rep(c("a", "b"), 2)), aes(x, y)) +
+  geom_point() + facet_wrap(~g)
+dir.create(".cache/figure-style", recursive = TRUE)
+writeLines("old", ".cache/figure-style/stale.png")
+qa <- save_checked_figure(base, "figures/fig.png", width = 120, height = 60)
+stopifnot(file.exists("figures/fig.png"), file.info("figures/fig.png")$size > 0)
+stopifnot(identical(list.files("figures"), "fig.png"))
+stopifnot(length(qa$crops) == 2L, all(file.exists(qa$crops)))
+stopifnot(all(dirname(qa$crops) == ".cache/figure-style"))
+stopifnot(!file.exists(".cache/figure-style/stale.png"))
+
+boxes <- panel_crops(base, 120, 60)
+stopifnot(nrow(boxes) == 2L, all(boxes$x0 >= 0), all(boxes$y0 >= 0))
+stopifnot(all(boxes$x1 <= 120 / 25.4 + 1e-9), all(boxes$y1 <= 60 / 25.4 + 1e-9))
+left_to_right <- order(boxes$x0)
+stopifnot(boxes$x1[[left_to_right[[1L]]]] <= boxes$x0[[left_to_right[[2L]]]] + 0.2)
+
+stacked <- base + annotate("text", x = 2, y = 2, label = "AAAA") +
+  annotate("text", x = 2, y = 2, label = "BBBB")
+fails_with(save_checked_figure(stacked, "figures/bad.png", 120, 60),
+  "text collision scan failed[\\s\\S]*AAAA")
+stopifnot(identical(grDevices::dev.list(), before_devices))
+cat("ok\n")
+""")
+        self.assertEqual(out, "ok\n")
 
 
 if __name__ == "__main__":
