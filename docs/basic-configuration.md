@@ -414,6 +414,8 @@ https://mcp.notion.com/mcp
 
 需要数据库、部署或存储等后端时，可再添加一个远程 URL：`https://cohesivity.ai/mcp`，认证方式选 **无**。Cohesivity MCP 让 Agent 直接创建后端并开通所需服务，开始使用无需账号或 API Key；后端 72 小时后过期，认领后可保留。
 
+需要把 Agent 生成的结果发布成公开网页时，可再添加一个远程 URL：`https://deed.page/mcp`，认证方式选 **无**。deed.page MCP 用 `publish_site` 把文件发布到 `https://{slug}.deed.page/`，无需账号或 API Key；发布前先让 Agent 展示内容并等你确认，返回的 token 请像密码一样保管；发布的页面公开可见。
+
 ### 用户级 MCP 文件 `~/.wisp/mcp.json`
 
 除了在设置页添加连接，也可以把 MCP 服务器写进 `~/.wisp/mcp.json`（Windows 为 `%USERPROFILE%\.wisp\mcp.json`）。格式与常见的 `mcpServers` 配置相同，可手写，也可由 Magpie 的 Library 等工具合并写入：
