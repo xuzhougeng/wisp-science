@@ -17,6 +17,7 @@ use wisp_dto::native_conversations::TerminalInfo;
 use super::{
     Workspace,
     shell::{glyph, icon_button},
+    surfaces,
 };
 use crate::{
     backend::receive,
