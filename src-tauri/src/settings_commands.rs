@@ -33,7 +33,10 @@ async fn validate_provider_config(
     use_for_image_generation: bool,
 ) -> Result<(), String> {
     let proxy = cfg.proxy.clone();
-    if use_for_image_generation || models::is_image_generation_model(&cfg.model) {
+    if use_for_image_generation
+        || models::is_image_generation_model(&cfg.model)
+        || models::is_gemini_provider(provider_name)
+    {
         if !models::supports_image_generation(provider_name, &cfg.model) {
             return Err(models::IMAGE_GENERATION_UNSUPPORTED.into());
         }
@@ -44,6 +47,7 @@ async fn validate_provider_config(
             cfg.proxy,
         )
         .with_options(models::ImageGenerationOptions {
+            provider: provider_name.to_string(),
             user_agent: cfg.user_agent,
             send_user_agent: cfg.send_user_agent,
             send_session_id: cfg.send_session_id,
@@ -736,6 +740,70 @@ pub(super) async fn validate_settings(
         }
     };
     let api_key = effective_api_key(key, stored_key);
+    if models::is_gemini_provider(&provider_name) {
+        let api_url = settings.api_url.trim();
+        let api_key = api_key.trim();
+        let model = settings.model.trim();
+        if api_url.is_empty() {
+            return Err("API URL is required.".into());
+        }
+        if model.is_empty() {
+            return Err("Model is required.".into());
+        }
+        if api_key.is_empty() {
+            return Err("No API key set. Open Settings and paste your provider API key.".into());
+        }
+        let user_agent = wisp_llm::provider::normalize_user_agent(&settings.user_agent)?;
+        let session_header_name =
+            wisp_llm::provider::normalize_session_header_name(&settings.session_header_name)?;
+        let mut proxy = crate::network::model_proxy(&provider_name, api_url);
+        if let Some(proxy_url) = proxy_url {
+            let proxy_url = crate::network::normalize_proxy("Model API proxy", &proxy_url)?;
+            let route =
+                crate::network::resolve_route(&proxy_url, &crate::llm_proxy().unwrap_or_default());
+            proxy = (!route.is_empty()).then_some(route);
+        }
+        tracing::info!(
+            target: "wisp",
+            provider = %provider_name,
+            api_url = %api_url,
+            model = %model,
+            "validating settings"
+        );
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            super::image_generation_tool::GenerateImageTool::new(
+                api_url.to_string(),
+                api_key.to_string(),
+                model.to_string(),
+                proxy.clone(),
+            )
+            .with_options(models::ImageGenerationOptions {
+                provider: provider_name.clone(),
+                user_agent,
+                send_user_agent: settings.send_user_agent,
+                send_session_id: settings.send_session_id,
+                session_header_name,
+                ..Default::default()
+            })
+            .validate_model_access(),
+        )
+        .await
+        .map_err(|_| {
+            tracing::warn!(target: "wisp", "settings validation timed out");
+            "Validation timed out after 30s".to_string()
+        })?;
+        if let Err(e) = result {
+            let e = annotate_provider_error(e, proxy.as_deref());
+            tracing::warn!(target: "wisp", error = %e, "settings validation failed");
+            return Err(e);
+        }
+        tracing::info!(target: "wisp", "settings validation succeeded");
+        return Ok(format!(
+            "Validated {} with {}",
+            provider_name, settings.model
+        ));
+    }
     let mut cfg = build_stored_provider_config(
         &settings.provider,
         &settings.api_url,

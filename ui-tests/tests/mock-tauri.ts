@@ -4991,7 +4991,21 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               use_for_vision: useForVision,
               use_for_image_generation: useForImageGeneration,
               image_generation_capable: useForImageGeneration
-                || ["gpt-image-2", "grok-imagine-image-2.0"].includes(String(profile.model).split("/").pop()!.toLowerCase())
+                || ["gemini", "google", "google_gemini", "google-gemini"].includes(String(profile.provider ?? "").toLowerCase())
+                || [
+                  "gpt-image-2",
+                  "grok-imagine-image-2.0",
+                  "gemini-2.0-flash-preview-image-generation",
+                  "gemini-2.5-flash-image",
+                  "gemini-2.5-flash-image-preview",
+                  "gemini-3-pro-image",
+                  "gemini-3-pro-image-preview",
+                  "gemini-3.0-pro-image-preview",
+                  "gemini-3.1-flash-image",
+                  "gemini-3.1-flash-image-preview",
+                  "gemini-3.1-flash-lite-image",
+                  "gemini-3.1-flash-lite-image-preview",
+                ].includes(String(profile.model).split("/").pop()!.toLowerCase())
                 || (!arg("restoreChatModel") && m.model === profile.model && Boolean(m.image_generation_capable)),
               use_for_video_generation: useForVideoGeneration,
             } : {

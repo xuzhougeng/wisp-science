@@ -96,7 +96,7 @@ for (const locale of ["en", "zh"]) {
     await expect(page.getByText("My ChatGPT", { exact: true })).toHaveCount(0);
     await expect(page.getByText("My Grok", { exact: true })).toHaveCount(0);
     await page.locator(".settings-list-row").first().click();
-    await expect(page.getByTestId("settings-provider").locator("option")).toHaveCount(3);
+    await expect(page.getByTestId("settings-provider").locator("option")).toHaveCount(4);
     await page.keyboard.press("Escape");
     await subscriptions(page);
     await expect(page.getByTestId("models-category-subscriptions")).toHaveAttribute("aria-selected", "true");

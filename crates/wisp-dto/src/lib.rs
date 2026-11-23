@@ -3545,13 +3545,43 @@ pub struct ModelProfile {
 pub fn is_image_generation_model(model: &str) -> bool {
     let model = model.trim();
     let tail = model.rsplit('/').next().unwrap_or(model);
-    tail.eq_ignore_ascii_case("gpt-image-2") || tail.eq_ignore_ascii_case("grok-imagine-image-2.0")
+    tail.eq_ignore_ascii_case("gpt-image-2")
+        || is_grok_imagine_model(model)
+        || is_gemini_image_model(model)
 }
 
 pub fn is_grok_imagine_model(model: &str) -> bool {
     let model = model.trim();
     let tail = model.rsplit('/').next().unwrap_or(model);
     tail.eq_ignore_ascii_case("grok-imagine-image-2.0")
+}
+
+/// Native Google Gemini image-generation protocol identifier.
+pub fn is_gemini_provider(provider: &str) -> bool {
+    matches!(
+        provider.trim().to_ascii_lowercase().as_str(),
+        "gemini" | "google" | "google_gemini" | "google-gemini"
+    )
+}
+
+/// Known Gemini native image-generation model IDs (exact tail-segment match).
+/// Used for automatic UI hints and option defaults, never as an allowlist.
+pub fn is_gemini_image_model(model: &str) -> bool {
+    let model = model.trim();
+    let tail = model.rsplit('/').next().unwrap_or(model);
+    matches!(
+        tail.to_ascii_lowercase().as_str(),
+        "gemini-2.0-flash-preview-image-generation"
+            | "gemini-2.5-flash-image"
+            | "gemini-2.5-flash-image-preview"
+            | "gemini-3-pro-image"
+            | "gemini-3-pro-image-preview"
+            | "gemini-3.0-pro-image-preview"
+            | "gemini-3.1-flash-image"
+            | "gemini-3.1-flash-image-preview"
+            | "gemini-3.1-flash-lite-image"
+            | "gemini-3.1-flash-lite-image-preview"
+    )
 }
 
 pub const OPENAI_IMAGE_SIZES: &[&str] = &["auto", "1024x1024", "1536x1024", "1024x1536"];
@@ -3562,6 +3592,11 @@ pub const GROK_IMAGE_ASPECT_RATIOS: &[&str] = &[
 ];
 pub const GROK_IMAGE_RESOLUTIONS: &[&str] = &["1k", "2k"];
 pub const GROK_IMAGE_QUALITIES: &[&str] = &["medium", "low"];
+pub const GEMINI_IMAGE_ASPECT_RATIOS: &[&str] = &[
+    "auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "4:5", "5:4", "21:9", "1:4", "4:1",
+    "1:8", "8:1",
+];
+pub const GEMINI_IMAGE_RESOLUTIONS: &[&str] = &["auto", "1K", "2K", "4K"];
 
 /// Video-generation model IDs. Gateway `vendor/model` ids match on the last
 /// path segment. Exact IDs only — `grok-imagine-video` must not absorb
@@ -3584,6 +3619,7 @@ impl ModelProfile {
     pub fn is_chat_model(&self) -> bool {
         !(self.image_generation_capable
             || self.use_for_image_generation
+            || is_gemini_provider(&self.provider)
             || is_image_generation_model(&self.model))
             && !is_video_generation_model(&self.model)
     }
@@ -4057,7 +4093,9 @@ pub struct ModelFormEntry {
 
 impl ModelFormEntry {
     pub fn is_image_model(&self) -> bool {
-        self.use_for_image_generation || is_image_generation_model(&self.model)
+        self.use_for_image_generation
+            || is_gemini_provider(&self.provider)
+            || is_image_generation_model(&self.model)
     }
 
     pub fn is_video_model(&self) -> bool {
@@ -4067,7 +4105,10 @@ impl ModelFormEntry {
 
 #[cfg(test)]
 mod image_generation_model_tests {
-    use super::{is_image_generation_model, ModelFormEntry, ModelProfile};
+    use super::{
+        is_gemini_image_model, is_gemini_provider, is_image_generation_model, ModelFormEntry,
+        ModelProfile,
+    };
 
     fn profile(model: &str) -> ModelProfile {
         ModelProfile {
@@ -4128,17 +4169,44 @@ mod image_generation_model_tests {
             "GPT-IMAGE-2",
             "grok-imagine-image-2.0",
             "xai/grok-imagine-image-2.0",
+            "gemini-2.5-flash-image",
+            "google/gemini-2.5-flash-image",
+            "gemini-3-pro-image",
+            "gemini-3-pro-image-preview",
+            "gemini-3.1-flash-image",
+            "gemini-3.1-flash-image-preview",
+            "gemini-3.1-flash-lite-image",
+            "gemini-2.0-flash-preview-image-generation",
         ] {
             assert!(is_image_generation_model(model), "{model}");
             assert!(!profile(model).is_chat_model(), "{model}");
         }
+        assert!(is_gemini_image_model(
+            "google/gemini-3.1-flash-image-preview"
+        ));
+        assert!(!is_gemini_image_model("gemini-2.5-flash"));
+        assert!(!is_gemini_image_model("gemini-3-pro-preview"));
         assert!(!is_image_generation_model("grok-imagine-image"));
         assert!(!is_image_generation_model("gpt-5.5"));
+        assert!(!is_image_generation_model("gemini-2.5-flash"));
+        assert!(profile("gemini-2.5-flash").is_chat_model());
         assert!(ModelFormEntry {
             model: "grok-imagine-image-2.0".into(),
             ..ModelFormEntry::default()
         }
         .is_image_model());
+        assert!(ModelFormEntry {
+            provider: "gemini".into(),
+            model: "custom-gemini-image".into(),
+            ..ModelFormEntry::default()
+        }
+        .is_image_model());
+        assert!(is_gemini_provider("gemini"));
+        assert!(is_gemini_provider("google_gemini"));
+        assert!(!is_gemini_provider("openai"));
+        let mut gemini_custom = profile("custom-gemini-image");
+        gemini_custom.provider = "gemini".into();
+        assert!(!gemini_custom.is_chat_model());
     }
 }
 
@@ -4267,6 +4335,7 @@ impl ModelForm {
     pub fn is_image_model(&self) -> bool {
         self.image_generation_capable
             || self.use_for_image_generation
+            || is_gemini_provider(&self.provider)
             || is_image_generation_model(&self.model)
     }
 }

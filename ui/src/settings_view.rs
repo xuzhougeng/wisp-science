@@ -711,6 +711,7 @@ fn valid_sha256(value: &str) -> bool {
 fn settings_provider_value(provider: &str) -> &'static str {
     match provider.trim() {
         "anthropic" => "anthropic",
+        "gemini" | "google" | "google_gemini" | "google-gemini" => "gemini",
         "openai_responses" | "openai-responses" | "responses" => "openai_responses",
         "openai_codex" | "openai-codex" | "codex" => "openai_codex",
         "openai_chatgpt" | "openai-chatgpt" | "chatgpt" => "openai_chatgpt",
@@ -4617,6 +4618,14 @@ pub(super) fn SettingsView(
                                                     let p = dom_value(&ev);
                                                     model_form.update(|o| if let Some(o)=o {
                                                         o.provider = settings_provider_value(&p).into();
+                                                        if is_gemini_provider(&o.provider) {
+                                                            o.restore_chat_model = false;
+                                                            o.supports_vision = false;
+                                                            o.use_for_vision = false;
+                                                            o.image_generation_capable = true;
+                                                            o.use_for_image_generation = true;
+                                                            o.use_for_video_generation = false;
+                                                        }
                                                     });
                                                     apply_catalog_limits(model_form, model_catalog_limits);
                                                 }
@@ -4633,6 +4642,10 @@ pub(super) fn SettingsView(
                                                     prop:selected=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) == "anthropic")>
                                                     {move || t(locale.get(), "settings.provider.anthropic")}
                                                 </option>
+                                                <option value="gemini"
+                                                    prop:selected=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) == "gemini")>
+                                                    {move || t(locale.get(), "settings.provider.gemini")}
+                                                </option>
                                             </select>
                                         </label>
                                         </Show>
@@ -4642,8 +4655,8 @@ pub(super) fn SettingsView(
                                                 on:input=move |ev| {
                                                     model_form.update(|o| if let Some(o)=o {
                                                         o.model = event_target_input(&ev).value();
-                                                        o.image_generation_capable = false;
-                                                        if is_image_generation_model(&o.model) {
+                                                        o.image_generation_capable = is_gemini_provider(&o.provider);
+                                                        if is_gemini_provider(&o.provider) || is_image_generation_model(&o.model) {
                                                             o.restore_chat_model = false;
                                                             o.supports_vision = false;
                                                             o.use_for_vision = false;
@@ -4731,6 +4744,9 @@ pub(super) fn SettingsView(
                                                 view! {
                                                     {move || {
                                                         let grok = model_form.get().is_some_and(|f| is_grok_imagine_model(&f.model));
+                                                        let gemini = !grok && model_form.get().is_some_and(|f| {
+                                                            is_gemini_provider(&f.provider) || is_gemini_image_model(&f.model)
+                                                        });
                                                         if grok {
                                                             view! {
                                                                 <label>{move || t(locale.get(), "settings.image_aspect_ratio")}
@@ -4776,6 +4792,37 @@ pub(super) fn SettingsView(
                                                                     </select>
                                                                 </label>
                                                             }.into_view()
+                                                        } else if gemini {
+                                                            view! {
+                                                                <label>{move || t(locale.get(), "settings.image_aspect_ratio")}
+                                                                    <select data-testid="image-aspect-ratio"
+                                                                        on:change=move|ev| model_form.update(|o| if let Some(o)=o {
+                                                                            o.image_aspect_ratio = dom_value(&ev);
+                                                                        })>
+                                                                        {GEMINI_IMAGE_ASPECT_RATIOS.iter().map(|value| {
+                                                                            let selected = model_form.get().is_some_and(|f| {
+                                                                                f.image_aspect_ratio == *value
+                                                                                    || (f.image_aspect_ratio.is_empty() && *value == "auto")
+                                                                            });
+                                                                            view! { <option value=*value selected=selected>{*value}</option> }
+                                                                        }).collect_view()}
+                                                                    </select>
+                                                                </label>
+                                                                <label>{move || t(locale.get(), "settings.image_resolution")}
+                                                                    <select data-testid="image-resolution"
+                                                                        on:change=move|ev| model_form.update(|o| if let Some(o)=o {
+                                                                            o.image_resolution = dom_value(&ev);
+                                                                        })>
+                                                                        {GEMINI_IMAGE_RESOLUTIONS.iter().map(|value| {
+                                                                            let selected = model_form.get().is_some_and(|f| {
+                                                                                f.image_resolution.eq_ignore_ascii_case(value)
+                                                                                    || (f.image_resolution.is_empty() && *value == "auto")
+                                                                            });
+                                                                            view! { <option value=*value selected=selected>{*value}</option> }
+                                                                        }).collect_view()}
+                                                                    </select>
+                                                                </label>
+                                                            }.into_view()
                                                         } else {
                                                             view! {
                                                                 <label>{move || t(locale.get(), "settings.image_size")}
@@ -4812,7 +4859,7 @@ pub(super) fn SettingsView(
                                                     <span class="hint span-2">{move || t(locale.get(), "settings.image_defaults_hint")}</span>
                                                     <div class="span-2">
                                                         <p class="hint" data-testid="image-role-hint">{move || t(locale.get(), "settings.image_role_hint")}</p>
-                                                        <Show when=move || model_form.get().is_some_and(|f| !is_image_generation_model(&f.model) && !is_video_generation_model(&f.model))>
+                                                        <Show when=move || model_form.get().is_some_and(|f| !is_gemini_provider(&f.provider) && !is_image_generation_model(&f.model) && !is_video_generation_model(&f.model))>
                                                             <button type="button" data-testid="restore-chat-model" disabled=move || settings_busy.get()
                                                                 on:click=move |_| {
                                                                     model_form.update(|form| if let Some(form) = form {
@@ -5104,6 +5151,12 @@ pub(super) fn SettingsView(
                                                                         model_form.update(|o| if let Some(o)=o {
                                                                             if let Some(e) = o.entries.iter_mut().find(|e| e.row_id == row_id) {
                                                                                 e.provider = settings_provider_value(&value).into();
+                                                                                if is_gemini_provider(&e.provider) {
+                                                                                    e.supports_vision = false;
+                                                                                    e.use_for_vision = false;
+                                                                                    e.use_for_image_generation = true;
+                                                                                    e.use_for_video_generation = false;
+                                                                                }
                                                                             }
                                                                         });
                                                                     }>
@@ -5124,6 +5177,12 @@ pub(super) fn SettingsView(
                                                                             .and_then(|f| f.entries.into_iter().find(|e| e.row_id == row_id))
                                                                             .is_some_and(|e| settings_provider_value(&e.provider) == "anthropic")>
                                                                         {move || t(locale.get(), "settings.provider.anthropic")}
+                                                                    </option>
+                                                                    <option value="gemini"
+                                                                        prop:selected=move || model_form.get()
+                                                                            .and_then(|f| f.entries.into_iter().find(|e| e.row_id == row_id))
+                                                                            .is_some_and(|e| settings_provider_value(&e.provider) == "gemini")>
+                                                                        {move || t(locale.get(), "settings.provider.gemini")}
                                                                     </option>
                                                                 </select>
                                                             </label>
@@ -5765,7 +5824,7 @@ pub(super) fn SettingsView(
                                                                 {m.label.clone()}
                                                                 {m.use_for_vision.then(|| view! { <span class="settings-cap-badge">{move || t(locale.get(), "models.capability.vision")}</span> })}
                                                                 {m.use_for_expert.then(|| view! { <span class="settings-cap-badge" data-testid="expert-role-badge">{move || t(locale.get(), "models.capability.expert")}</span> })}
-                                                                {(m.image_generation_capable || m.use_for_image_generation || is_image_generation_model(&m.model)).then(|| view! {
+                                                                {(m.image_generation_capable || m.use_for_image_generation || is_gemini_provider(&m.provider) || is_image_generation_model(&m.model)).then(|| view! {
                                                                     <span class="settings-cap-badge" data-testid="image-role-badge">{move || t(locale.get(), "models.capability.image_only")}</span>
                                                                 })}
                                                                 {m.use_for_image_generation.then(|| view! {

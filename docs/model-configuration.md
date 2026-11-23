@@ -418,38 +418,52 @@ does not delete or rewrite the saved conversation. A new image attached after
 the switch is analyzed through the assigned vision model. Without an assigned
 vision model, Wisp rejects that new image before starting the main model turn.
 
-Image generation is a separate model role. Create an OpenAI-compatible profile
-with the exact model ID supplied by your provider, then enable **Use for
-image generation**. Custom IDs and gateway aliases (for example `gpt-image-2.5`
-or `vendor/custom-image-v3`) are accepted without a Wisp model-name allowlist;
-availability and supported parameters remain the provider's responsibility.
-Known model names are only auto-selection hints, not acceptance gates.
-The edit form for image profiles hides chat-only fields
-(max output tokens, context window, reasoning effort, and vision) and shows
-image defaults instead: size and quality for OpenAI-compatible models, or aspect ratio,
-resolution, and quality for `grok-imagine-image-2.0`. `generate_image` uses
+Image generation is a separate model role. Create an OpenAI-compatible or
+**Gemini (Image generation)** profile with the exact model ID supplied by your
+provider, then enable **Use for image generation**. Custom IDs and gateway
+aliases (for example `gpt-image-2.5`, `vendor/custom-image-v3`, or a future
+Gemini image ID) are accepted without a Wisp model-name allowlist; availability
+and supported parameters remain the provider's responsibility. Known model names
+are only auto-selection hints, not acceptance gates. The edit form for image
+profiles hides chat-only fields (max output tokens, context window, reasoning
+effort, and vision) and shows image defaults instead: size and quality for
+OpenAI-compatible models, aspect ratio, resolution, and quality for
+`grok-imagine-image-2.0`, or aspect ratio and resolution (`auto`, `1K`, `2K`,
+`4K`) for Gemini image models (`gemini-2.5-flash-image`,
+`gemini-3-pro-image-preview`, `gemini-3.1-flash-image-preview`, etc., or any
+profile using the **Gemini (Image generation)** protocol). `generate_image` uses
 those defaults when a request does not specify size or quality. Custom IDs use
-a minimal Images API request by default; GPT-Image-specific `output_format`
-and automatic size/quality values are not forced onto unknown models.
-For xAI, use
-Base URL `https://api.x.ai` and the OpenAI Chat Completions protocol. The built-in **Scientific Illustrator** calls the
-provider's Image API (`/images/generations`) and saves a PNG under `figures/`
-when that role is assigned and PNG or image-model generation is requested. An
-explicit SVG/vector/editable request always uses the specialist's direct-SVG
-path, even when an image model is configured: it writes SVG, renders that
-exact SVG to a PNG preview, inspects the preview, and iterates on the SVG.
-An explicit PNG request requires the configured image-generation model; it is
-not silently replaced with SVG. The configured generation tool is also
-available in ordinary built-in-agent
-conversations, so a direct request for the Scientific Illustrator, `gpt-image-2`,
-or `grok-imagine-image-2.0` can generate the image without preselecting the
-specialist. While the request runs, the conversation shows an image placeholder
-and replaces it with the generated PNG. When the user does not specify a
-format, the specialist uses the assigned image-generation profile to create
-PNG if present. Otherwise it uses the same SVG -> PNG preview -> SVG
-correction workflow and delivers SVG under `figures/`. Image-only profiles do
-not appear in chat, Reviewer, specialist, delegation, or side-chat model
-pickers.
+a minimal Images API request by default; GPT-Image-specific `output_format` and
+automatic size/quality values are not forced onto unknown models. For xAI, use
+Base URL `https://api.x.ai` and the OpenAI Chat Completions protocol. For Google
+AI Studio or a Gemini-native proxy, use Base URL
+`https://generativelanguage.googleapis.com` and the **Gemini (Image generation)**
+protocol: Wisp sends `x-goog-api-key` to
+`/v1beta/models/{model}:generateContent` with `responseModalities` and optional
+`imageConfig` (`aspectRatio`, `imageSize`), and validates via `GET
+/v1beta/models/{model}` without generating a billable image. For Gemini image
+models accessed through an OpenAI-compatible gateway (such as Google's
+`/v1beta/openai` endpoint or OpenRouter), use the OpenAI Chat Completions
+protocol: Wisp calls `/images/generations` with `response_format: "b64_json"`
+and automatically falls back to `/chat/completions` with
+`modalities: ["image", "text"]` and `image_config` when the gateway does not
+expose `/images/generations`. The built-in **Scientific Illustrator** calls the
+configured image-generation API and saves a PNG under `figures/` when that role
+is assigned and PNG or image-model generation is requested. An explicit
+SVG/vector/editable request always uses the specialist's direct-SVG path, even
+when an image model is configured: it writes SVG, renders that exact SVG to a
+PNG preview, inspects the preview, and iterates on the SVG. An explicit PNG
+request requires the configured image-generation model; it is not silently
+replaced with SVG. The configured generation tool is also available in ordinary
+built-in-agent conversations, so a direct request for the Scientific
+Illustrator, `gpt-image-2`, `grok-imagine-image-2.0`, or `gemini-2.5-flash-image`
+can generate the image without preselecting the specialist. While the request
+runs, the conversation shows an image placeholder and replaces it with the
+generated PNG. When the user does not specify a format, the specialist uses the
+assigned image-generation profile to create PNG if present. Otherwise it uses
+the same SVG -> PNG preview -> SVG correction workflow and delivers SVG under
+`figures/`. Image-only profiles do not appear in chat, Reviewer, specialist,
+delegation, or side-chat model pickers.
 
 The persistent `image_generation_capable` role is separate from the currently
 assigned image profile: deselecting an image profile does not accidentally make
@@ -523,6 +537,7 @@ metadata endpoint as image models — no billable video is generated.
 | OpenAI Chat Completions | DeepSeek, GLM, local gateways, or any `/chat/completions` compatible endpoint | Protocol, Model ID, optional endpoint suffix, optional Fast default |
 | OpenAI Responses | Reasoning/tool-call models through `/v1/responses` | Protocol, Model ID, optional endpoint suffix, optional Fast default |
 | Anthropic | Claude-compatible models through `/v1/messages` | Protocol, Model ID, optional endpoint suffix |
+| Gemini (Image generation) | Google AI Studio or Gemini-native relays through `/v1beta/models/{model}:generateContent` | Protocol, Model ID, optional endpoint suffix, aspect ratio & resolution defaults |
 
 Enter the API root as the shared Base URL. Do not append `/v1`,
 `/chat/completions`, `/responses`, or `/v1/messages`; Wisp adds the matching

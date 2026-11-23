@@ -109,6 +109,7 @@ pub struct ModelProfile {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ImageGenerationOptions {
+    pub provider: String,
     pub user_agent: String,
     pub send_user_agent: bool,
     pub send_session_id: Option<bool>,
@@ -122,6 +123,7 @@ pub(crate) struct ImageGenerationOptions {
 impl Default for ImageGenerationOptions {
     fn default() -> Self {
         Self {
+            provider: String::new(),
             user_agent: String::new(),
             send_user_agent: true,
             send_session_id: None,
@@ -251,6 +253,8 @@ pub(crate) fn normalize_endpoint(url: &str) -> String {
             "/v1/chat/completions",
             "/chat/completions",
             "/responses",
+            "/v1beta/openai",
+            "/v1beta",
             "/v1",
         ]
         .into_iter()
@@ -1416,7 +1420,7 @@ pub async fn active_config(store: &wisp_store::Store) -> (String, String, String
 }
 
 pub(crate) const IMAGE_GENERATION_UNSUPPORTED: &str =
-    "Image generation requires an OpenAI-compatible Images API protocol and a non-empty model ID.";
+    "Image generation requires an OpenAI-compatible Images API or Gemini protocol and a non-empty model ID.";
 
 pub(crate) fn model_id_tail(model: &str) -> &str {
     let model = model.trim();
@@ -1425,7 +1429,8 @@ pub(crate) fn model_id_tail(model: &str) -> &str {
 
 // Shared with the UI so both sides classify model IDs identically.
 pub(crate) use wisp_dto::{
-    is_grok_imagine_model, is_image_generation_model, is_video_generation_model,
+    is_gemini_image_model, is_gemini_provider, is_grok_imagine_model, is_image_generation_model,
+    is_video_generation_model, GEMINI_IMAGE_ASPECT_RATIOS, GEMINI_IMAGE_RESOLUTIONS,
     VIDEO_ASPECT_RATIOS, VIDEO_DURATION_MAX_SECS, VIDEO_DURATION_MIN_SECS, VIDEO_RESOLUTIONS,
 };
 
@@ -1434,6 +1439,7 @@ pub(crate) const VIDEO_GENERATION_UNSUPPORTED: &str = "Video generation currentl
 fn profile_is_image_model(profile: &ModelProfile) -> bool {
     profile.image_generation_capable
         || profile.use_for_image_generation
+        || is_gemini_provider(&profile.provider)
         || is_image_generation_model(&profile.model)
 }
 
@@ -1445,6 +1451,7 @@ fn normalize_image_role(
     if restore_chat_model {
         if profile.use_for_image_generation
             || profile.use_for_video_generation
+            || is_gemini_provider(&profile.provider)
             || is_image_generation_model(&profile.model)
             || is_video_generation_model(&profile.model)
         {
@@ -1456,6 +1463,7 @@ fn normalize_image_role(
         return Ok(());
     }
     profile.image_generation_capable = profile.use_for_image_generation
+        || is_gemini_provider(&profile.provider)
         || is_image_generation_model(&profile.model)
         || existing.is_some_and(|old| {
             old.model.trim() == profile.model.trim() && profile_is_image_model(old)
@@ -1505,6 +1513,23 @@ fn normalize_image_options(profile: &mut ModelProfile) -> Result<(), String> {
         profile.image_aspect_ratio = aspect.to_string();
         profile.image_resolution = resolution.to_string();
         profile.image_quality = quality.to_string();
+    } else if is_gemini_provider(&profile.provider) || is_gemini_image_model(&profile.model) {
+        if !aspect.is_empty() && !GEMINI_IMAGE_ASPECT_RATIOS.contains(&aspect) {
+            return Err("Unsupported image aspect ratio.".into());
+        }
+        let normalized_resolution = if resolution.is_empty() {
+            ""
+        } else {
+            GEMINI_IMAGE_RESOLUTIONS
+                .iter()
+                .copied()
+                .find(|candidate| candidate.eq_ignore_ascii_case(resolution))
+                .ok_or_else(|| "Unsupported image resolution.".to_string())?
+        };
+        profile.image_size.clear();
+        profile.image_quality.clear();
+        profile.image_aspect_ratio = aspect.to_string();
+        profile.image_resolution = normalized_resolution.to_string();
     } else {
         if !matches!(size, "" | "auto" | "1024x1024" | "1536x1024" | "1024x1536") {
             return Err("Unsupported image size.".into());
@@ -1521,10 +1546,11 @@ fn normalize_image_options(profile: &mut ModelProfile) -> Result<(), String> {
 }
 
 pub(crate) fn supports_image_generation(provider: &str, model: &str) -> bool {
-    matches!(
+    (matches!(
         provider.trim(),
         "openai" | "openai_compatible" | "openai_responses" | "openai-responses" | "responses"
-    ) && !model.trim().is_empty()
+    ) || is_gemini_provider(provider))
+        && !model.trim().is_empty()
 }
 
 /// Out-of-range or unknown video options are dropped back to the tool
@@ -1681,6 +1707,7 @@ pub async fn image_generation_config(
         p.model.clone(),
         key_for(&p.id),
         ImageGenerationOptions {
+            provider: p.provider.clone(),
             user_agent: p.user_agent.clone(),
             send_user_agent: p.send_user_agent,
             send_session_id: p.send_session_id,
@@ -3700,6 +3727,40 @@ mod tests {
         normalize_image_options(&mut openai).unwrap();
         assert_eq!(openai.image_size, "1536x1024");
         assert!(openai.image_aspect_ratio.is_empty());
+
+        let mut gemini = test_profile("gemini-img", "gemini-img", "gemini-2.5-flash-image");
+        gemini.provider = "gemini".into();
+        gemini.image_aspect_ratio = "16:9".into();
+        gemini.image_resolution = "2k".into();
+        gemini.image_size = "1024x1024".into();
+        gemini.image_quality = "high".into();
+        normalize_image_options(&mut gemini).unwrap();
+        assert!(gemini.image_size.is_empty());
+        assert!(gemini.image_quality.is_empty());
+        assert_eq!(gemini.image_aspect_ratio, "16:9");
+        assert_eq!(gemini.image_resolution, "2K");
+        assert!(can_generate_images(&gemini));
+        assert!(!is_chat_model(&gemini));
+        assert!(normalize_image_role(&mut gemini, None, true).is_err());
+
+        gemini.image_resolution = "8k".into();
+        assert!(normalize_image_options(&mut gemini).is_err());
+        gemini.image_resolution = "auto".into();
+        gemini.image_aspect_ratio = "wide".into();
+        assert!(normalize_image_options(&mut gemini).is_err());
+
+        let mut gemini_custom = test_profile("gemini-custom", "gemini-custom", "gemini-4-image");
+        gemini_custom.provider = "gemini".into();
+        assert!(can_generate_images(&gemini_custom));
+        assert!(!is_chat_model(&gemini_custom));
+        let mut gemini_openai = test_profile(
+            "gemini-or",
+            "gemini-or",
+            "google/gemini-3.1-flash-image-preview",
+        );
+        gemini_openai.provider = "openai".into();
+        assert!(can_generate_images(&gemini_openai));
+        assert!(!is_chat_model(&gemini_openai));
     }
 
     #[tokio::test]
@@ -3718,7 +3779,13 @@ mod tests {
             .await
             .unwrap();
         let (url, model, _key, options) = image_generation_config(&store).await.unwrap();
-        assert_eq!(options, ImageGenerationOptions::default());
+        assert_eq!(
+            options,
+            ImageGenerationOptions {
+                provider: "openai_responses".into(),
+                ..Default::default()
+            }
+        );
         assert_eq!(url, "u");
         assert_eq!(model, "gpt-image-2");
 
@@ -4141,6 +4208,14 @@ mod tests {
             normalize_endpoint("https://api.kimi.com/coding/v1"),
             "https://api.kimi.com/coding"
         );
+        assert_eq!(
+            normalize_endpoint("https://generativelanguage.googleapis.com/v1beta/openai"),
+            "https://generativelanguage.googleapis.com"
+        );
+        assert!(same_endpoint(
+            "https://generativelanguage.googleapis.com/v1beta",
+            "https://generativelanguage.googleapis.com/v1beta/openai"
+        ));
         assert!(same_endpoint(
             "https://api.openai.com",
             "https://api.openai.com/v1"

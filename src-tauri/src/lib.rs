@@ -4061,6 +4061,7 @@ fn env_or(key: &str, default: &str) -> String {
 fn normalized_provider(provider: &str) -> String {
     match provider.trim() {
         "anthropic" => "anthropic".into(),
+        "gemini" | "google" | "google_gemini" | "google-gemini" => "gemini".into(),
         "openai" | "openai_compatible" => "openai".into(),
         "openai_responses" | "openai-responses" | "responses" => "openai_responses".into(),
         "openai_codex" | "openai-codex" | "codex" => "openai_codex".into(),
@@ -5653,6 +5654,7 @@ async fn connect_mcp(conn: &McpConnection) -> anyhow::Result<wisp_mcp::McpClient
 fn default_api_url(provider: &str) -> &'static str {
     match normalized_provider(provider).as_str() {
         "anthropic" => "https://api.anthropic.com",
+        "gemini" => "https://generativelanguage.googleapis.com",
         "openai_responses" => "https://api.openai.com/v1",
         "openai_codex" => "https://chatgpt.com/backend-api",
         "openai_chatgpt" => wisp_llm::chatgpt_auth::DEFAULT_BASE_URL,
@@ -5664,6 +5666,7 @@ fn default_api_url(provider: &str) -> &'static str {
 fn default_model(provider: &str) -> &'static str {
     match normalized_provider(provider).as_str() {
         "anthropic" => "claude-sonnet-5",
+        "gemini" => "gemini-2.5-flash-image",
         "openai_responses" => "gpt-5.5",
         "openai_codex" => wisp_llm::codex_auth::DEFAULT_MODEL,
         "openai_chatgpt" => wisp_llm::chatgpt_auth::DEFAULT_MODEL,
@@ -5767,6 +5770,9 @@ fn build_stored_provider_config(
     }
     let mut cfg = match provider.as_str() {
         "anthropic" => ProviderConfig::anthropic(api_url, api_key, model),
+        "gemini" => {
+            return Err("Gemini protocol is currently supported for image generation only.".into())
+        }
         "openai_responses" => ProviderConfig::openai_responses(api_url, api_key, model),
         "openai_codex" => ProviderConfig::openai_codex(api_url, api_key, model),
         "openai_chatgpt" => ProviderConfig::openai_chatgpt(api_url, api_key, model),
