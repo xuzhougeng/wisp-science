@@ -138,6 +138,63 @@ mod provider_form_tests {
     }
 
     #[test]
+    fn google_gemini_base_url_suggests_chat_and_native_image_model() {
+        let root_models: Vec<_> =
+            suggested_base_url_models("https://generativelanguage.googleapis.com")
+                .into_iter()
+                .map(|entry| {
+                    (
+                        entry.provider,
+                        entry.model,
+                        entry.endpoint_suffix,
+                        entry.use_for_image_generation,
+                    )
+                })
+                .collect();
+        assert_eq!(
+            root_models,
+            vec![
+                (
+                    "openai".into(),
+                    "gemini-2.5-flash".into(),
+                    "/v1beta/openai".into(),
+                    false
+                ),
+                (
+                    "gemini".into(),
+                    "gemini-2.5-flash-image".into(),
+                    "".into(),
+                    true
+                ),
+            ]
+        );
+        let openai_models: Vec<_> =
+            suggested_base_url_models("https://generativelanguage.googleapis.com/v1beta/openai")
+                .into_iter()
+                .map(|entry| {
+                    (
+                        entry.provider,
+                        entry.model,
+                        entry.endpoint_suffix,
+                        entry.use_for_image_generation,
+                    )
+                })
+                .collect();
+        assert_eq!(
+            openai_models,
+            vec![
+                ("openai".into(), "gemini-2.5-flash".into(), "".into(), false),
+                (
+                    "openai".into(),
+                    "gemini-2.5-flash-image".into(),
+                    "".into(),
+                    true
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn opencode_endpoints_leave_model_selection_to_the_user() {
         for base in [
             "https://opencode.ai/zen/go",
@@ -930,7 +987,9 @@ pub(crate) fn model_form_entry(
     endpoint_suffix: &str,
     image: bool,
 ) -> ModelFormEntry {
-    let image = image || crate::dto::is_image_generation_model(model);
+    let image = image
+        || crate::dto::is_image_generation_model(model)
+        || crate::dto::is_gemini_provider(provider);
     let video = !image && crate::dto::is_video_generation_model(model);
     ModelFormEntry {
         row_id: next_ui_row_id(),
@@ -947,6 +1006,7 @@ pub(crate) fn model_form_entry(
 }
 
 pub(crate) fn suggested_base_url_models(api_url: &str) -> Vec<ModelFormEntry> {
+    let raw = api_url.trim().trim_end_matches('/').to_ascii_lowercase();
     let host = normalize_endpoint(api_url).to_ascii_lowercase();
     match host.as_str() {
         host if host.contains("api.anthropic.com") => {
@@ -960,6 +1020,24 @@ pub(crate) fn suggested_base_url_models(api_url: &str) -> Vec<ModelFormEntry> {
             model_form_entry("openai", "grok-4.6", "", false),
             model_form_entry("openai", "grok-imagine-image-2.0", "", true),
         ],
+        host if host.contains("generativelanguage.googleapis.com") => {
+            if raw.ends_with("/openai") {
+                vec![
+                    model_form_entry("openai", "gemini-2.5-flash", "", false),
+                    model_form_entry("openai", "gemini-2.5-flash-image", "", true),
+                ]
+            } else {
+                let chat_suffix = if raw.ends_with("/v1beta") {
+                    "/openai"
+                } else {
+                    "/v1beta/openai"
+                };
+                vec![
+                    model_form_entry("openai", "gemini-2.5-flash", chat_suffix, false),
+                    model_form_entry("gemini", "gemini-2.5-flash-image", "", true),
+                ]
+            }
+        }
         host if host.contains("deepseek.com") || host.is_empty() => vec![
             model_form_entry("openai", DEEPSEEK_FLASH_MODEL, "", false),
             model_form_entry("openai", DEEPSEEK_PRO_MODEL, "", false),

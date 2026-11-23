@@ -245,6 +245,7 @@ pub fn namespace_candidates<'a>(
         "opencode.ai" if path == "zen/go" || path.starts_with("zen/go/") => &["opencode-go"],
         "opencode.ai" if path == "zen" || path.starts_with("zen/") => &["opencode"],
         "api.anthropic.com" => &["anthropic"],
+        "generativelanguage.googleapis.com" => &["google"],
         "api.openai.com" | "chatgpt.com" => &["openai"],
         "api.x.ai" => &["xai"],
         "api.deepseek.com" => &["deepseek"],
@@ -270,6 +271,7 @@ pub fn namespace_candidates<'a>(
     }
     let by_provider = match provider.trim() {
         "anthropic" => Some("anthropic"),
+        "gemini" => Some("google"),
         "openai" | "openai_responses" | "openai_codex" | "openai_chatgpt" => Some("openai"),
         _ => None,
     };

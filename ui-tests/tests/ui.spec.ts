@@ -11364,6 +11364,54 @@ test("grok-imagine-image-2.0 can be assigned for generation but not selected for
   await expect(page.locator(".model-menu")).toContainText("deepseek-v4-pro");
 });
 
+test("gemini image models can be configured with Gemini protocol and excluded from chat", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Models");
+  const opus = page.locator(".settings-list-row", { hasText: "opus-4.8" });
+  await opus.click();
+
+  await providerSelect(page).selectOption("gemini");
+  await page.getByLabel("Base URL").fill("https://generativelanguage.googleapis.com");
+  await page.getByRole("textbox", { name: "Model ID", exact: true }).fill("gemini-3.1-flash-image-preview");
+  await expect(page.getByLabel("Max output tokens")).toHaveCount(0);
+  await expect(page.getByLabel("Supports image input")).toHaveCount(0);
+  await expect(page.getByTestId("image-aspect-ratio")).toBeVisible();
+  await expect(page.getByTestId("image-resolution")).toBeVisible();
+  await expect(page.getByTestId("image-size")).toHaveCount(0);
+  await expect(page.getByTestId("image-quality")).toHaveCount(0);
+  await expect(page.getByTestId("restore-chat-model")).toHaveCount(0);
+  await page.getByTestId("image-aspect-ratio").selectOption("16:9");
+  await page.getByTestId("image-resolution").selectOption("2K");
+  await expect(page.getByTestId("use-for-image-generation")).toBeChecked();
+  await page.getByRole("button", { name: "Test connection", exact: true }).click();
+  await expect(page.locator(".settings-status")).toHaveText(
+    "Validated gemini with gemini-3.1-flash-image-preview",
+  );
+  await page.getByRole("button", { name: "Save" }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "save_model")).toMatchObject({
+    useForImageGeneration: true,
+    profile: {
+      id: "opus",
+      provider: "gemini",
+      model: "gemini-3.1-flash-image-preview",
+      use_for_image_generation: true,
+      image_aspect_ratio: "16:9",
+      image_resolution: "2K",
+    },
+  });
+
+  const imageModel = page.locator(".settings-list-row", { hasText: "opus-4.8" });
+  await expect(imageModel).toContainText("gemini-3.1-flash-image-preview");
+  await expect(imageModel).toContainText("Image generation");
+  await expect(imageModel.getByRole("button", { name: "Set as default" })).toHaveCount(0);
+
+  await page.locator(".settings-head-close").click();
+  await page.locator(".model-picker-btn").click();
+  await expect(page.locator(".model-menu")).not.toContainText("gemini-3.1-flash-image-preview");
+  await expect(page.locator(".model-menu")).toContainText("deepseek-v4-pro");
+});
+
 test("grok-imagine-video can be assigned for generation but not selected for chat", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Models");

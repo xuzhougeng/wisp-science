@@ -127,6 +127,7 @@ mod composer_input_tests {
 pub(crate) fn provider_value(provider: &str) -> &'static str {
     match provider.trim() {
         "anthropic" => "anthropic",
+        "gemini" | "google" | "google_gemini" | "google-gemini" => "gemini",
         "openai_codex" | "openai-codex" | "codex" => "openai_codex",
         "openai_chatgpt" | "openai-chatgpt" | "chatgpt" => "openai_chatgpt",
         "xai" | "xai_oauth" | "xai-oauth" => "xai_oauth",
@@ -143,6 +144,10 @@ pub(crate) const DEEPSEEK_PRO_MODEL: &str = "deepseek-v4-pro";
 pub(crate) fn provider_defaults(provider: &str) -> (&'static str, &'static str) {
     match provider_value(provider) {
         "anthropic" => ("https://api.anthropic.com", "claude-sonnet-5"),
+        "gemini" => (
+            "https://generativelanguage.googleapis.com",
+            "gemini-2.5-flash-image",
+        ),
         "openai_responses" => ("https://api.openai.com/v1", "gpt-5.5"),
         _ => ("https://api.deepseek.com", DEEPSEEK_FLASH_MODEL),
     }
@@ -180,6 +185,8 @@ pub(crate) fn normalize_endpoint(url: &str) -> String {
             "/v1/chat/completions",
             "/chat/completions",
             "/responses",
+            "/v1beta/openai",
+            "/v1beta",
             "/v1",
         ]
         .into_iter()
@@ -239,6 +246,10 @@ mod endpoint_tests {
         assert!(same_endpoint(
             "https://api.openai.com",
             "https://api.openai.com/v1/responses"
+        ));
+        assert!(same_endpoint(
+            "https://generativelanguage.googleapis.com/v1beta",
+            "https://generativelanguage.googleapis.com/v1beta/openai"
         ));
         assert!(!same_endpoint(
             "https://api.deepseek.com",
