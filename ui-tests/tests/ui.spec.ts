@@ -11658,6 +11658,16 @@ test("stale update card refreshes to the latest release before opening it (#521)
   await modal.getByRole("button", { name: "Later" }).click();
   await expect(page.getByTestId("update-card")).toContainText("v0.24.0");
 
+  // In the compact rail the card keeps only its icon; its two-line label used
+  // to be clipped mid-word inside the 56px column.
+  const fullViewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 800, height: 600 });
+  await expect(page.getByTestId("update-card").locator(".update-card-text")).toBeHidden();
+  await expect(page.getByTestId("update-card").locator(".update-card-icon")).toBeVisible();
+  await expect.poll(() => page.getByTestId("update-card").evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  await page.setViewportSize(fullViewport);
+  await expect(page.getByTestId("update-card").locator(".update-card-text")).toBeVisible();
+
   await setMockUpdateCheck(page, {
     latest_version: "0.25.0",
     release_url: "https://github.com/xuzhougeng/wisp-science/releases/tag/v0.25.0",
@@ -13684,7 +13694,7 @@ test("agent options stay mounted while chat content streams (#678)", async ({ pa
   expect(await menu.evaluate((element) => element === (window as any).__streamingAgentMenu)).toBe(true);
 });
 
-test("recent sessions show only title and status badge", async ({ page }) => {
+test("recent sessions show title, project and age, with a badge only when attention is needed", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 700 });
   await page.goto("/");
   const cards = page.locator('[data-testid="recent-session-card"]');
@@ -13694,24 +13704,35 @@ test("recent sessions show only title and status badge", async ({ page }) => {
   await expect(first.locator(".pc-name")).toHaveText("帮我找一篇单细胞的文章");
   await expect(first.locator(".sess-status-needs-you")).toBeVisible();
   await expect(first.locator(".pc-hint")).toHaveCount(0);
-  await expect(first.locator(".pc-when")).toHaveCount(0);
   await expect(first.locator(".pc-meta-row")).toHaveCount(0);
 
   const second = cards.nth(1);
   await expect(second.locator(".pc-name")).toHaveText("Enumerate MCP bio-tools databases");
-  await expect(second.locator(".sess-status-complete")).toBeVisible();
+  // "Complete" is the resting state of a row, so it carries no badge.
+  await expect(second.locator(".sess-status")).toHaveCount(0);
 
   for (const card of [first, second]) {
-    const badge = card.locator(".sess-status");
-    await expect.poll(() => badge.evaluate((node) => {
-      const style = getComputedStyle(node);
-      return { flexShrink: style.flexShrink, whiteSpace: style.whiteSpace };
-    })).toEqual({ flexShrink: "0", whiteSpace: "nowrap" });
+    // Which project the session belongs to, and how old it is. The mock
+    // timestamps are decades old, so the age is a calendar date, not "20000d".
+    await expect(card.locator(".pc-recent-project")).toHaveText("wisp-science");
+    await expect(card.locator(".pc-when")).toHaveText(/^\d{4}-\d{2}-\d{2}$/);
     await expect.poll(() => card.locator(".pc-name").evaluate((node) => {
       const style = getComputedStyle(node);
       return { overflow: style.overflow, textOverflow: style.textOverflow, whiteSpace: style.whiteSpace };
     })).toEqual({ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" });
+    // The meta never pushes the title out of the row.
+    await expect.poll(() => card.evaluate((node) => {
+      const row = node.getBoundingClientRect();
+      const meta = node.querySelector(".pc-recent-meta")!.getBoundingClientRect();
+      const name = node.querySelector(".pc-name")!.getBoundingClientRect();
+      return meta.right <= row.right && name.right <= meta.left && name.width > 40;
+    })).toBe(true);
   }
+
+  await expect.poll(() => first.locator(".sess-status").evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { flexShrink: style.flexShrink, whiteSpace: style.whiteSpace };
+  })).toEqual({ flexShrink: "0", whiteSpace: "nowrap" });
 });
 
 test("right panel keeps actions and the active tab visible when tabs overflow", async ({ page }) => {
@@ -16793,6 +16814,16 @@ test("general settings switch the notification sound separately and preview the 
   await expect(picker.locator("option")).toHaveText(["Basso", "Glass", "Hero", "Ping"]);
   await expect(picker).toHaveValue("Glass");
   await picker.selectOption("Ping");
+  // Regression: the button had no class and rendered with the browser's
+  // native outset border and font instead of the shared ghost-button chrome.
+  await expect.poll(() => page.getByTestId("notification-sound-preview").evaluate((el) => {
+    const style = getComputedStyle(el);
+    return {
+      rounded: parseFloat(style.borderRadius) > 0,
+      hairline: style.borderTopStyle === "solid" && parseFloat(style.borderTopWidth) === 1,
+      appFont: style.fontFamily === getComputedStyle(el.parentElement!).fontFamily,
+    };
+  })).toEqual({ rounded: true, hairline: true, appFont: true });
   // Preview plays the unsaved choice, even while the sound switch is off.
   await page.getByTestId("notification-sound-preview").click();
   await expect.poll(() => lastInvokeArgs(page, "preview_notification_sound")).toEqual({ sound: "Ping" });

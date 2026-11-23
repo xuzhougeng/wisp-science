@@ -1480,6 +1480,15 @@ pub(crate) fn ProjectsScreen(
                         let (pid, sid) = (s.project_id.clone(), s.id.clone());
                         let transfer_pid = s.project_id.clone();
                         let status = SessionStatusKind::from_str(&s.status);
+                        // Where the session lives and how recent it is. "Complete"
+                        // is the resting state of every row, so only the states
+                        // that ask for attention get a badge.
+                        let project_name = projects.with(|all| {
+                            all.iter()
+                                .find(|project| project.id == s.project_id)
+                                .map(|project| project.name.clone())
+                        });
+                        let when = format_relative_time(s.ts, locale.get());
                         view! {
                             <button type="button" class="proj-card proj-recent" data-testid="recent-session-card"
                                 disabled=move || project_transfer.get().is_some_and(|transfer| transfer.is_exporting_project(&transfer_pid))
@@ -1487,8 +1496,14 @@ pub(crate) fn ProjectsScreen(
                                 <div class="pc-main">
                                     <div class="pc-name-row">
                                         <div class="pc-name">{s.title.clone()}</div>
-                                        <SessionStatusBadge status=status locale=locale />
+                                        {(status != SessionStatusKind::Complete).then(|| view! {
+                                            <SessionStatusBadge status=status locale=locale />
+                                        })}
                                     </div>
+                                </div>
+                                <div class="pc-recent-meta">
+                                    {project_name.map(|name| view! { <span class="pc-recent-project">{name}</span> })}
+                                    {(!when.is_empty()).then(|| view! { <span class="pc-when">{when}</span> })}
                                 </div>
                             </button>
                         }

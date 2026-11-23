@@ -49,6 +49,8 @@ Override these on `:root`. Leave unused tokens alone.
 | `--ui-font-size`, `--code-font-size` | Set by Appearance sliders; do not hard-code px on chat body |
 | `--md-table-font-size` | Markdown tables; default `calc(var(--ui-font-size, 14px) - 1px)` |
 | `--md-lead-bar-width`, `--md-lead-bar-pad` | Bold-at-start emphasis bar; `3px` / `0.55em` |
+| `--md-prose-measure` | Maximum line width of answer prose (paragraphs, lists, headings); tables, code and figures still use the full column. Default `calc(50 * (var(--ui-font-size, 14px) + 1px))`, about 750px; `none` removes the cap |
+| `--toggle-thumb` | Settings switch thumb; light in both themes |
 | `--font-user-ui`, `--font-user-mono` | Optional family names; empty restores the stack |
 | `--radius`, `--radius-sm`, `--radius-xs` | Corners |
 

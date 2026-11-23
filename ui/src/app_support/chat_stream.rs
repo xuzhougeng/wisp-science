@@ -1663,6 +1663,35 @@ pub(crate) fn schedule_delta_flush(
     );
 }
 
+/// How old a timestamp is, in the unit a compact label should use. Beyond
+/// `RELATIVE_TIME_MAX_DAYS` a day count stops being readable ("412d"), so the
+/// caller shows a calendar date instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RelativeAge {
+    JustNow,
+    Minutes(i64),
+    Hours(i64),
+    Days(i64),
+    Older,
+}
+
+pub(crate) const RELATIVE_TIME_MAX_DAYS: i64 = 30;
+
+pub(crate) fn relative_age(secs: i64) -> RelativeAge {
+    let secs = secs.max(0);
+    if secs < 45 {
+        RelativeAge::JustNow
+    } else if secs < 3600 {
+        RelativeAge::Minutes((secs / 60).max(1))
+    } else if secs < 86_400 {
+        RelativeAge::Hours(secs / 3600)
+    } else if secs / 86_400 <= RELATIVE_TIME_MAX_DAYS {
+        RelativeAge::Days(secs / 86_400)
+    } else {
+        RelativeAge::Older
+    }
+}
+
 pub(crate) fn format_relative_time(ts: i64, locale: Locale) -> String {
     if ts <= 0 {
         return String::new();
@@ -1673,21 +1702,56 @@ pub(crate) fn format_relative_time(ts: i64, locale: Locale) -> String {
     } else {
         ts as f64 * 1000.0
     };
-    let secs = ((now_ms - ts_ms) / 1000.0).max(0.0) as i64;
-    if secs < 45 {
-        return t(locale, "time.just_now").into();
+    match relative_age(((now_ms - ts_ms) / 1000.0) as i64) {
+        RelativeAge::JustNow => t(locale, "time.just_now").into(),
+        RelativeAge::Minutes(n) => tf(locale, "time.minutes", &[("n", &n.to_string())]),
+        RelativeAge::Hours(n) => tf(locale, "time.hours", &[("n", &n.to_string())]),
+        RelativeAge::Days(n) => tf(locale, "time.days", &[("n", &n.to_string())]),
+        RelativeAge::Older => {
+            let date = js_sys::Date::new(&JsValue::from_f64(ts_ms));
+            let now = js_sys::Date::new(&JsValue::from_f64(now_ms));
+            if date.get_full_year() == now.get_full_year() {
+                format!("{:02}-{:02}", date.get_month() + 1, date.get_date())
+            } else {
+                format!(
+                    "{:04}-{:02}-{:02}",
+                    date.get_full_year(),
+                    date.get_month() + 1,
+                    date.get_date()
+                )
+            }
+        }
     }
-    if secs < 3600 {
-        return tf(
-            locale,
-            "time.minutes",
-            &[("n", &(secs / 60).max(1).to_string())],
+}
+
+#[cfg(test)]
+mod relative_age_tests {
+    use super::{relative_age, RelativeAge, RELATIVE_TIME_MAX_DAYS};
+
+    #[test]
+    fn recent_ages_keep_their_compact_units() {
+        assert_eq!(relative_age(-5), RelativeAge::JustNow);
+        assert_eq!(relative_age(44), RelativeAge::JustNow);
+        assert_eq!(relative_age(45), RelativeAge::Minutes(1));
+        assert_eq!(relative_age(3599), RelativeAge::Minutes(59));
+        assert_eq!(relative_age(3600), RelativeAge::Hours(1));
+        assert_eq!(relative_age(86_399), RelativeAge::Hours(23));
+        assert_eq!(relative_age(86_400), RelativeAge::Days(1));
+    }
+
+    #[test]
+    fn old_timestamps_switch_to_a_date_instead_of_a_day_count() {
+        let day = 86_400;
+        assert_eq!(
+            relative_age(RELATIVE_TIME_MAX_DAYS * day),
+            RelativeAge::Days(RELATIVE_TIME_MAX_DAYS)
         );
+        assert_eq!(
+            relative_age((RELATIVE_TIME_MAX_DAYS + 1) * day),
+            RelativeAge::Older
+        );
+        assert_eq!(relative_age(400 * day), RelativeAge::Older);
     }
-    if secs < 86_400 {
-        return tf(locale, "time.hours", &[("n", &(secs / 3600).to_string())]);
-    }
-    tf(locale, "time.days", &[("n", &(secs / 86_400).to_string())])
 }
 
 /// Compact local clock for transcript metadata. Today's messages use `HH:mm`;

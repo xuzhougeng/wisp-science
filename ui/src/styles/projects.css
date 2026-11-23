@@ -105,6 +105,11 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
 .proj-card .pc-transfer-lock { flex: 0 0 auto; color: var(--clay); font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 650; }
 .proj-card.proj-recent { align-items: center; }
 .proj-card.proj-recent .pc-name-row { margin-top: 0; }
+/* Project and age sit quietly at the row's right edge; the title keeps the
+   left and ellipsizes first. */
+.proj-card.proj-recent .pc-recent-meta { display: flex; align-items: baseline; gap: 8px; flex: 0 1 auto; min-width: 0; max-width: 45%; padding-left: 12px; color: var(--text-faint); font-size: calc(11.5px * var(--ui-font-scale, 1)); white-space: nowrap; }
+.proj-card.proj-recent .pc-recent-project { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.proj-card.proj-recent .pc-recent-meta .pc-when { margin-left: 0; padding-left: 0; }
 .sess-status { display: inline-flex; align-items: center; flex: 0 0 auto; padding: 2px 8px; border-radius: 999px; font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 600; letter-spacing: .01em; white-space: nowrap; }
 .sess-status-running { color: var(--clay); background: color-mix(in srgb, var(--clay) 12%, transparent); }
 .sess-status-needs-you { color: var(--info); background: var(--info-soft); }
@@ -116,10 +121,20 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
   display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; padding: 0; flex: 0 0 auto;
   opacity: .58; color: var(--text-faint); background: none; border: 0; border-radius: var(--radius-xs); cursor: pointer;
+  transition: opacity .12s ease, color .12s ease, background .12s ease;
 }
+/* Management actions appear when the card is pointed at or focused; a resting
+   list shows names, not five icons per row. The star stays, since it carries
+   state. Pointers that cannot hover keep every action visible. */
+@media (hover: hover) {
+  .proj-card:not(:hover):not(:focus-within) :is(.pc-del, .pc-window, .pc-export, .pc-settings, .pc-sync, .pc-sync-code) { opacity: 0; }
+}
+/* Delete is set apart from the neighbouring actions and warns in its own colour. */
+.proj-card .pc-del { margin-left: 6px; }
 .proj-card .pc-actions button svg { width: 16px; height: 16px; }
 .proj-card:hover .pc-del, .proj-card:hover .pc-window, .proj-card:hover .pc-export, .proj-card:hover .pc-settings, .proj-card:hover .pc-sync, .proj-card:hover .pc-sync-code, .proj-card:focus-within .pc-del, .proj-card:focus-within .pc-window, .proj-card:focus-within .pc-export, .proj-card:focus-within .pc-settings, .proj-card:focus-within .pc-sync, .proj-card:focus-within .pc-sync-code { opacity: 1; }
-.proj-card .pc-window:hover, .proj-card .pc-export:hover, .proj-card .pc-settings:hover, .proj-card .pc-sync:hover, .proj-card .pc-sync-code:hover, .proj-card .pc-del:hover { color: var(--clay); background: var(--surface-hover); }
+.proj-card .pc-window:hover, .proj-card .pc-export:hover, .proj-card .pc-settings:hover, .proj-card .pc-sync:hover, .proj-card .pc-sync-code:hover { color: var(--clay); background: var(--surface-hover); }
+.proj-card .pc-del:hover { color: var(--err); background: color-mix(in srgb, var(--err) 10%, transparent); }
 .proj-card .pc-sync:disabled { cursor: wait; opacity: .45; }
 .proj-card .pc-del:disabled, .proj-card .pc-window:disabled, .proj-card .pc-export:disabled, .proj-card .pc-settings:disabled { cursor: not-allowed; opacity: .35; }
 .projects-sync-notice { position: fixed; right: 24px; bottom: 24px; z-index: 80; max-width: min(440px, calc(100vw - 48px)); padding: 10px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow); font-size: calc(13px * var(--ui-font-scale, 1)); }

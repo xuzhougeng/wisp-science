@@ -507,7 +507,7 @@ body:has(.settings-page) .projects-screen { display: none; }
   border-radius: 999px;
   background: var(--clay-soft);
   color: var(--clay);
-  font-size: calc(9.5px * var(--ui-font-scale, 1));
+  font-size: calc(var(--text-xs) * var(--ui-font-scale, 1));
   font-weight: 700;
 }
 .quick-action-row .settings-list-main > code {
@@ -1332,7 +1332,7 @@ button.workflow-graph-port.output {
   background: var(--clay-soft);
   color: var(--clay-strong);
   font: inherit;
-  font-size: calc(9.5px * var(--ui-font-scale, 1));
+  font-size: calc(var(--text-xs) * var(--ui-font-scale, 1));
   cursor: pointer;
 }
 .dynamic-skill-selected button:hover {
@@ -1357,7 +1357,7 @@ button.workflow-graph-port.output {
 .dynamic-skill-hint {
   padding: 9px;
   color: var(--text-faint);
-  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-size: calc(var(--text-xs) * var(--ui-font-scale, 1));
   line-height: 1.4;
 }
 .dynamic-skill-option {
@@ -1408,7 +1408,7 @@ button.workflow-graph-port.output {
   font-size: calc(12.5px * var(--ui-font-scale, 1));
   font-weight: 400;
 }
-.specialist-skill-picker .dynamic-skill-option small { font-size: calc(10px * var(--ui-font-scale, 1)); }
+.specialist-skill-picker .dynamic-skill-option small { font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); }
 .workflow-studio-actions {
   align-items: center;
   position: sticky;
@@ -1492,7 +1492,7 @@ button.workflow-graph-port.output {
   border-radius: 5px;
   background: var(--bg-sunken);
   color: var(--text-faint);
-  font-size: calc(9px * var(--ui-font-scale, 1));
+  font-size: calc(var(--text-xs) * var(--ui-font-scale, 1));
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -1550,7 +1550,7 @@ button.workflow-graph-port.output {
   gap: 7px;
   margin-left: auto;
   color: var(--text-faint);
-  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-size: calc(var(--text-xs) * var(--ui-font-scale, 1));
   white-space: nowrap;
 }
 .workflow-studio-editor-actions {
@@ -1596,7 +1596,7 @@ button.workflow-graph-port.output {
   gap: 1px;
 }
 .workflow-studio-config-head strong { color: var(--text); font-size: calc(11.5px * var(--ui-font-scale, 1)); }
-.workflow-studio-config-head small { color: var(--text-faint); font-size: calc(9.5px * var(--ui-font-scale, 1)); }
+.workflow-studio-config-head small { color: var(--text-faint); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); }
 .workflow-studio-config-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -3037,7 +3037,8 @@ button.workflow-graph-port.output {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--on-clay);
+  /* Its own token: the thumb stays light in dark themes, where --on-clay is dark ink. */
+  background: var(--toggle-thumb);
   box-shadow: 0 1px 2px var(--shadow-color), inset 0 0 0 1px color-mix(in srgb, var(--text) 8%, transparent);
   transition: transform .15s ease;
 }
@@ -3271,12 +3272,12 @@ body { font-size: var(--ui-font-size, 14px); }
 .usage-workspace-row { width: 100%; min-height: 58px; padding: 5px 0; border-width: 0 0 1px; border-radius: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .usage-workspace-row:hover { background: var(--surface-hover); }
 .usage-workspace-row:focus-visible { z-index: 1; outline: 2px solid var(--clay); outline-offset: 1px; }
-.usage-workspace-path { overflow: hidden; color: var(--text-faint); font-family: var(--font-mono); font-size: calc(9.5px * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
+.usage-workspace-path { overflow: hidden; color: var(--text-faint); font-family: var(--font-mono); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
 .usage-detail-head { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
 .usage-detail-head > button { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .usage-detail-title { display: flex; min-width: 0; flex-direction: column; }
 .usage-detail-title strong, .usage-detail-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.usage-detail-title span { color: var(--text-faint); font-family: var(--font-mono); font-size: calc(10px * var(--ui-font-scale, 1)); }
+.usage-detail-title span { color: var(--text-faint); font-family: var(--font-mono); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); }
 .usage-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; padding-top: 14px; color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
 
 @media (max-width: 1050px) {
@@ -3317,7 +3318,7 @@ body { font-size: var(--ui-font-size, 14px); }
 .conn-parameters th { color: var(--text-muted); font-weight: 500; }
 .conn-parameters th, .conn-parameters td { padding: 10px 14px 10px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
 .conn-parameters code { font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); overflow-wrap: anywhere; }
-.conn-required { display: block; color: var(--text-muted); font-size: calc(10px * var(--ui-font-scale, 1)); margin-top: 4px; }
+.conn-required { display: block; color: var(--text-muted); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); margin-top: 4px; }
 .conn-schema { margin-top: 14px; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-muted); }
 .conn-schema summary { cursor: pointer; padding: 4px 0; }
 .conn-tool-documentation pre { max-height: 360px; overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-input); color: var(--text); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }

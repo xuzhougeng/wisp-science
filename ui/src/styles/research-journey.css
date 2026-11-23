@@ -62,7 +62,7 @@ body:has(.window-titlebar) .research-journey { top: 38px; }
 .journey-note-text { border: 0; background: transparent; color: var(--text); text-align: left; padding: 0; flex: 1; min-width: 0; }
 .journey-note-text:hover { color: var(--clay-strong); }
 .journey-note-text small { display: block; color: var(--text-faint); font-size: calc(12px * var(--ui-font-scale, 1)); margin-top: 3px; }
-.journey-manual { color: var(--text-faint); font-size: calc(10px * var(--ui-font-scale, 1)); white-space: nowrap; }
+.journey-manual { color: var(--text-faint); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); white-space: nowrap; }
 .journey-session-links { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 18px; }
 .journey-session-links .journey-link { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); }
 .journey-link { display: inline-flex; align-items: center; gap: 7px; border: 0; background: transparent; color: var(--clay-strong); padding: 3px 0; text-align: left; font-size: calc(12px * var(--ui-font-scale, 1)); overflow-wrap: anywhere; }
@@ -83,7 +83,7 @@ body:has(.window-titlebar) .research-journey { top: 38px; }
 .journey-calendar-grid button.has-activity:after { content: ""; position: absolute; bottom: 1px; left: calc(50% - 2px); width: 4px; height: 4px; border-radius: 50%; background: var(--clay); }
 .journey-calendar-grid button.selected:after { background: var(--on-clay); }
 .journey-today { margin-top: 10px; }
-.journey-timezone { color: var(--text-faint); font-size: calc(10px * var(--ui-font-scale, 1)); margin: 6px 0 0; }
+.journey-timezone { color: var(--text-faint); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); margin: 6px 0 0; }
 .journey-source { padding-top: 22px; }
 .journey-source h2 { font-size: calc(16px * var(--ui-font-scale, 1)); margin: 0 0 16px; }
 .journey-source h3 { font-size: calc(14px * var(--ui-font-scale, 1)); margin: 0 0 6px; overflow-wrap: anywhere; }

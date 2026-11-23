@@ -655,6 +655,8 @@ Wisp 不会直接把一轮对话写成长时记忆。任务完成后，点击回
 | `--clay`、`--clay-strong`、`--clay-soft`、`--on-clay` | 强调色 | 随主题和配色 |
 | `--md-table-font-size` | 回答里 Markdown 表格字号 | `calc(var(--ui-font-size) - 1px)` |
 | `--md-lead-bar-width`、`--md-lead-bar-pad` | 段首加粗强调条的线宽和缩进 | `3px`、`0.55em` |
+| `--md-prose-measure` | 回答正文（段落、列表、标题）的最大行宽；表格、代码和图片仍可用满对话栏 | `calc(50 * (var(--ui-font-size) + 1px))`，默认约 750px |
+| `--toggle-thumb` | 设置开关的滑块颜色 | 浅色 `#ffffff`，深色 `#f4fffc` |
 | `--radius`、`--radius-sm`、`--radius-xs` | 圆角 | 随主题 |
 
 需要浅色和深色分别处理时，用 `:root[data-theme="light"]` 和 `:root[data-theme="dark"]` 限定。主题设为“跟随系统”时属性值是 `system`，颜色由 `prefers-color-scheme` 决定，因此这种情况要同时写 `:root[data-theme="system"]`。

@@ -234,7 +234,7 @@
 .side-session-filters svg { width: 13px; height: 13px; flex: 0 0 auto; }
 .ses-status-label {
   flex: 0 0 auto; margin-left: auto; padding: 1px 5px; border-radius: var(--radius-xs);
-  font-size: calc(10px * var(--ui-font-scale, 1)); font-weight: 600; white-space: nowrap;
+  font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); font-weight: 600; white-space: nowrap;
 }
 .ses-status-label.needs-you { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
 .ses-status-label.running { color: var(--clay); background: var(--clay-soft); }
@@ -385,7 +385,7 @@ button.session-select-mark:disabled { cursor: default; opacity: .4; }
 .side-exploration .exploration-kind-icon svg { width: 15px; height: 15px; }
 .side-exploration-copy { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
 .side-exploration-title { overflow: hidden; font-size: calc(13px * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
-.side-exploration-meta { overflow: hidden; color: var(--text-faint); font-size: calc(9.5px * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
+.side-exploration-meta { overflow: hidden; color: var(--text-faint); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
 .side-hint { font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-faint); padding: 6px 10px; }
 .side-load-more { width: 100%; margin-top: 6px; padding: 7px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-muted); font-size: calc(12px * var(--ui-font-scale, 1)); cursor: pointer; }
 .side-load-more:hover { background: var(--surface-hover); color: var(--text); }
@@ -575,6 +575,11 @@ button.session-select-mark:disabled { cursor: default; opacity: .4; }
   .sidebar .side-foot { padding-top: 8px; }
   .sidebar .side-foot-actions { flex-direction: column; gap: 4px; padding: 0; }
   .sidebar .side-foot-actions .side-btn { width: 100%; height: auto; padding: 8px; }
+  /* The update prompt keeps only its icon in the rail; the title stays on the
+     button's tooltip. Without this the two-line label is clipped mid-word. */
+  .sidebar .update-card { justify-content: center; gap: 0; padding: 8px; }
+  .sidebar .update-card-text,
+  .sidebar .update-card-arrow { display: none; }
   .sidebar .nav { gap: 4px; }
   .sidebar .nav-fold-bar { justify-content: center; margin: -2px 0 -2px; }
   .sidebar .nav-fold-bar::before,
