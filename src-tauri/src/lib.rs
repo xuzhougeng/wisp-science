@@ -5751,7 +5751,13 @@ fn build_stored_provider_config(
     if model.is_empty() {
         return Err("Model is required.".into());
     }
-    if api_key.is_empty() {
+    // A local gateway (localhost, 127.0.0.1, [::1]) usually needs no key; the
+    // providers then omit the auth header instead of sending an empty one.
+    let keyless_local = matches!(
+        provider.as_str(),
+        "openai" | "openai_responses" | "anthropic"
+    ) && models::is_loopback_api_url(api_url);
+    if api_key.is_empty() && !keyless_local {
         return Err(if provider == "openai_chatgpt" {
             "Sign in with ChatGPT from Settings → Models, or run `wisp-science login chatgpt`."
                 .into()
@@ -8415,6 +8421,7 @@ pub fn run() {
             model_catalog::model_catalog_lookup,
             magpie::magpie_model_info,
             settings_commands::validate_settings,
+            settings_commands::list_endpoint_models,
             list_dir,
             create_file,
             file_browser::upload_local_files,

@@ -1376,7 +1376,7 @@ pub fn model_label(models: &[ModelProfile], model_id: Option<&str>) -> Option<St
                 .find(|model| model.active && model.is_chat_model())
         })
         .or_else(|| models.iter().find(|model| model.is_chat_model()))
-        .map(|m| m.label.clone())
+        .map(|m| m.display_label())
         .filter(|s| !s.is_empty())
 }
 
@@ -1487,6 +1487,7 @@ mod session_context_window_tests {
             max_tokens: 8_192,
             context_window,
             reasoning_effort: String::new(),
+            endpoint_efforts: Vec::new(),
             service_tier: String::new(),
             user_agent: String::new(),
             send_user_agent: true,
@@ -3499,6 +3500,10 @@ pub struct ModelProfile {
     pub context_window: u64,
     #[serde(default)]
     pub reasoning_effort: String,
+    /// Reasoning levels the endpoint's model list reported for this exact id;
+    /// used only when the catalog has no exact entry.
+    #[serde(default)]
+    pub endpoint_efforts: Vec<String>,
     #[serde(default)]
     pub service_tier: String,
     #[serde(default)]
@@ -3616,6 +3621,27 @@ pub const VIDEO_DURATION_MAX_SECS: u32 = 15;
 pub const VIDEO_DURATION_DEFAULT_SECS: u32 = 5;
 
 impl ModelProfile {
+    /// Name shown in pickers and lists: the display name, falling back to the
+    /// model id when it is empty or still the fresh-install placeholder
+    /// "Default" (which read like a model name).
+    pub fn display_label(&self) -> String {
+        let label = self.label.trim();
+        if label.is_empty() || (self.id == "default" && label == "Default") {
+            self.model.trim().to_string()
+        } else {
+            label.to_string()
+        }
+    }
+
+    /// Nothing to call yet: no model id, or no base URL for an API-key model.
+    pub fn is_unconfigured(&self) -> bool {
+        let subscription = matches!(
+            self.provider.as_str(),
+            "openai_codex" | "openai_chatgpt" | "xai_oauth"
+        );
+        self.model.trim().is_empty() || (!subscription && self.api_url.trim().is_empty())
+    }
+
     pub fn is_chat_model(&self) -> bool {
         !(self.image_generation_capable
             || self.use_for_image_generation
@@ -4123,6 +4149,7 @@ mod image_generation_model_tests {
             max_tokens: 0,
             context_window: 128_000,
             reasoning_effort: String::new(),
+            endpoint_efforts: Vec::new(),
             service_tier: String::new(),
             user_agent: String::new(),
             send_user_agent: true,
@@ -4227,6 +4254,7 @@ mod video_generation_model_tests {
             max_tokens: 0,
             context_window: 128_000,
             reasoning_effort: String::new(),
+            endpoint_efforts: Vec::new(),
             service_tier: String::new(),
             user_agent: String::new(),
             send_user_agent: true,
@@ -4329,6 +4357,20 @@ pub struct ModelForm {
     /// Used only when adding a provider (`id` is `None`): one row per model
     /// that should be created with the shared API URL and key.
     pub entries: Vec<ModelFormEntry>,
+    /// Effort levels the endpoint reported for `model`; saved with the profile.
+    pub endpoint_efforts: Vec<String>,
+    /// The endpoint's `GET /models` reply, offered as Model ID suggestions.
+    pub endpoint_models: Vec<EndpointModelDto>,
+    /// In flight, or the outcome of the last model-list fetch (ok, text).
+    pub endpoint_models_busy: bool,
+    pub endpoint_models_status: Option<(bool, String)>,
+    /// The user typed a token limit in this form; fetched facts never
+    /// overwrite it.
+    pub max_tokens_edited: bool,
+    pub context_window_edited: bool,
+    /// Field ids the last Save / Test connection found missing or invalid
+    /// (`api_url`, `api_key`, `model`, `endpoint_suffix`).
+    pub invalid_fields: Vec<String>,
 }
 
 impl ModelForm {
@@ -4352,6 +4394,20 @@ pub struct CatalogEntryDto {
     pub supports_vision: bool,
     #[allow(dead_code)]
     pub efforts: Vec<String>,
+}
+
+/// `list_endpoint_models`: one model the API endpoint's own `GET /models`
+/// listed, with the facts it reported for that exact id. `None` is "not
+/// reported"; `Some(vec![])` for `reasoning_levels` means no effort control.
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct EndpointModelDto {
+    pub id: String,
+    #[serde(default)]
+    pub context_window: Option<u64>,
+    #[serde(default)]
+    pub max_output_tokens: Option<u64>,
+    #[serde(default)]
+    pub reasoning_levels: Option<Vec<String>>,
 }
 
 /// `magpie_model_info`: the model a Magpie connection runs every HTTP turn on.

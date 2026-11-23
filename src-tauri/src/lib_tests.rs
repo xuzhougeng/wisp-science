@@ -214,6 +214,33 @@ async fn magpie_session_effort_reaches_the_gateway_request() {
 }
 
 #[test]
+fn local_gateways_accept_an_empty_api_key_but_remote_hosts_do_not() {
+    let config = |provider: &str, url: &str| {
+        super::build_stored_provider_config(
+            provider, url, "", "model", 1024, "", "", "", true, None, "", None,
+        )
+    };
+    for url in [
+        "http://127.0.0.1:3425/v1",
+        "http://localhost:11434/v1",
+        "http://[::1]:8080",
+    ] {
+        let cfg = config("openai", url).unwrap();
+        assert!(cfg.api_key.is_empty(), "{url}");
+        assert!(config("anthropic", url).is_ok(), "{url}");
+    }
+    for url in [
+        "https://api.deepseek.com",
+        "http://192.168.1.5:3425/v1",
+        "http://localhost.example.com/v1",
+    ] {
+        assert!(config("openai", url).is_err(), "{url}");
+    }
+    // Subscriptions never fall back to an empty token.
+    assert!(config("openai_codex", "http://127.0.0.1:3425").is_err());
+}
+
+#[test]
 fn model_request_scope_survives_rebuilds_and_standalone_calls_are_isolated() {
     let config = |session_id| {
         super::build_provider_config(
