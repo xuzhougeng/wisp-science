@@ -5,7 +5,6 @@ use crate::dto::{
     PublicationReadinessInfo, PublicationWaiverInfo, PublicationWorkspaceInfo,
 };
 use crate::i18n::{t, tf, Locale};
-use crate::publication_sources::PublicationSourcePicker;
 use crate::text::event_target_value;
 use crate::window_capture_escape;
 use leptos::*;
@@ -13,9 +12,9 @@ use serde_wasm_bindgen::to_value;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
 
-// The exact anchors and the outline order are shared with the GPUI desktop.
+// The evidence source and the outline order are shared with the GPUI desktop.
+use wisp_dto::publication_sources::manuscript_rows;
 pub(super) use wisp_dto::publication_sources::PublicationEvidenceSource;
-use wisp_dto::publication_sources::{manuscript_rows, precise_evidence_source};
 
 fn error_text(error: JsValue) -> String {
     error.as_string().unwrap_or_else(|| format!("{error:?}"))
@@ -219,15 +218,6 @@ pub(super) fn PublicationWorkspacePage(
     let item_title = create_rw_signal(String::new());
     let item_parent = create_rw_signal(String::new());
 
-    let anchor_open = create_rw_signal(false);
-    let anchor_kind = create_rw_signal("message_span".to_string());
-    let anchor_frame = create_rw_signal(String::new());
-    let anchor_message_seq = create_rw_signal(String::new());
-    let anchor_byte_start = create_rw_signal(String::new());
-    let anchor_byte_end = create_rw_signal(String::new());
-    let anchor_tool_call = create_rw_signal(String::new());
-    let anchor_exact_id = create_rw_signal(String::new());
-
     let freeze_visibility = create_rw_signal("private".to_string());
     let freeze_phi_reviewed = create_rw_signal(false);
     let freeze_redistribution_reviewed = create_rw_signal(false);
@@ -246,16 +236,12 @@ pub(super) fn PublicationWorkspacePage(
     let binding_visibility = create_rw_signal("private".to_string());
 
     window_capture_escape(move || {
-        if anchor_open.get_untracked() {
-            anchor_open.set(false);
-        } else if waiver_code.get_untracked().is_some() {
+        if waiver_code.get_untracked().is_some() {
             waiver_code.set(None);
             waiver_reason.set(String::new());
         } else if binding_source.get_untracked().is_some() {
             binding_source.set(None);
             binding_seen.set(String::new());
-        } else if page.get_untracked() == "add" {
-            page.set("evidence");
         } else if item_editor_open.get_untracked() {
             item_editor_open.set(false);
         } else {
@@ -277,7 +263,8 @@ pub(super) fn PublicationWorkspacePage(
         let Some(source) = binding_source.get() else {
             return;
         };
-        page.set("add");
+        // The bind form replaces the evidence page until it is bound or cancelled.
+        page.set("evidence");
         if binding_seen.get_untracked() != source.id {
             binding_seen.set(source.id);
             binding_revision.set(String::new());
@@ -431,7 +418,7 @@ pub(super) fn PublicationWorkspacePage(
                                 <h3>{t(locale.get(), "publication.create")}</h3>
                                 <p class="publication-help">{t(locale.get(), "publication.create_hint")}</p>
                                 <ol class="publication-onboarding">
-                                    <li>{t(locale.get(), "publication.choose_source")}</li>
+                                    <li>{t(locale.get(), "publication.evidence_hint")}</li>
                                     <li>{t(locale.get(), "publication.explain_use")}</li>
                                     <li>{t(locale.get(), "publication.tab_readiness")}</li>
                                 </ol>
@@ -589,13 +576,6 @@ pub(super) fn PublicationWorkspacePage(
                                         }>
                                         {t(locale.get(), "publication.clone")}
                                     </button>
-                                    {draft.then(|| view! {
-                                        <button type="button" class="primary" hidden=move || page.get() == "add"
-                                            data-testid="add-publication-evidence"
-                                            on:click=move |_| { binding_source.set(None); page.set("add"); }>
-                                            {compose_icon("plus")}{t(locale.get(), "publication.add_evidence")}
-                                        </button>
-                                    })}
                                     {capsule_ready.then(|| {
                                         let selected_revision_id = selected_revision_id.clone();
                                         view! {
@@ -632,17 +612,13 @@ pub(super) fn PublicationWorkspacePage(
 
                             <nav class="publication-page-tabs" aria-label=t(locale.get(), "publication.title")>
                                 {[("evidence", "publication.tab_evidence"), ("readiness", "publication.tab_readiness"), ("versions", "publication.tab_versions")].into_iter().map(|(value,key)| {
-                                    // Adding a source is a step of the organize tab, not a fourth tab.
-                                    let current = move || page.get() == value || (value == "evidence" && page.get() == "add");
+                                    let current = move || page.get() == value;
                                     view! {
                                         <button type="button" class:active=current aria-pressed=move || current().to_string() on:click=move |_| { binding_source.set(None); page.set(value); }>{t(locale.get(), key)}</button>
                                     }
                                 }).collect_view()}
                             </nav>
-                            <Show when=move || page.get() == "add" && binding_source.get().is_none()>
-                                <PublicationSourcePicker locale=locale on_select=Callback::new(move |source| binding_source.set(Some(source))) on_advanced=Callback::new(move |_| anchor_open.set(true)) on_cancel=Callback::new(move |_| page.set("evidence")) />
-                            </Show>
-                            <section class="publication-versions" hidden=move || page.get() != "versions">
+                            <section class="publication-versions" hidden=move || page.get() != "versions" || binding_source.get().is_some()>
                                 <h3>{t(locale.get(), "publication.versions_hint")}</h3>
                                 {current.revisions.clone().into_iter().map(|old| {
                                     let id=old.id.clone();
@@ -657,7 +633,7 @@ pub(super) fn PublicationWorkspacePage(
                                     }
                                 }).collect_view()}
                             </section>
-                            <div class="publication-workspace-grid" class:checking=move || page.get() == "readiness" hidden=move || !matches!(page.get(), "evidence" | "readiness")>
+                            <div class="publication-workspace-grid" class:checking=move || page.get() == "readiness" hidden=move || binding_source.get().is_some() || !matches!(page.get(), "evidence" | "readiness")>
                                 <aside class="publication-manuscript" hidden=move || page.get() != "evidence">
                                     <div class="publication-pane-head">
                                         <h3>{t(locale.get(), "publication.manuscript")}</h3>
@@ -782,12 +758,22 @@ pub(super) fn PublicationWorkspacePage(
                                         <h3>{t(locale.get(), "publication.evidence")}</h3>
                                         <span>{evidence.len()}</span>
                                     </div>
+                                    // Evidence arrives from a conversation or from "Use in publication"
+                                    // on an artifact or a run; there is no source browser here.
+                                    {(draft && !evidence.is_empty()).then(|| view! {
+                                        <p class="publication-help publication-evidence-hint" data-testid="publication-evidence-hint">
+                                            {t(locale.get(), "publication.evidence_hint")}
+                                        </p>
+                                    })}
                                     {if evidence.is_empty() {
                                         view! {
                                             <div class="publication-empty">
                                                 <h3>{t(locale.get(), "publication.start_figure")}</h3>
-                                                <p>{t(locale.get(), "publication.start_hint")}</p>
-                                                {draft.then(|| view! { <button type="button" class="primary" on:click=move |_| page.set("add")>{compose_icon("plus")}{t(locale.get(), "publication.add_evidence")}</button> })}
+                                                {if draft {
+                                                    view! { <p data-testid="publication-evidence-hint">{t(locale.get(), "publication.evidence_hint")}</p> }
+                                                } else {
+                                                    view! { <p>{t(locale.get(), "publication.start_hint")}</p> }
+                                                }}
                                             </div>
                                         }.into_view()
                                     } else {
@@ -1227,7 +1213,7 @@ pub(super) fn PublicationWorkspacePage(
                 }}
 
                 // Inside the page section: as a sibling it rendered below the
-                // full-height section, off-screen right after "Explain its use".
+                // full-height section, off-screen right after "Use in publication".
                 {move || binding_source.get().map(|source| {
                     let current = workspace.get();
                     let revisions = current.as_ref().map(|workspace| workspace.revisions.clone()).unwrap_or_default();
@@ -1414,137 +1400,6 @@ pub(super) fn PublicationWorkspacePage(
                     }
                 })}
             </section>
-
-            {move || anchor_open.get().then(|| view! {
-                <div class="overlay publication-nested-overlay" role="presentation"
-                    on:click=move |_| anchor_open.set(false)>
-                    <section class="modal publication-anchor-dialog" role="dialog"
-                        aria-modal="true" aria-labelledby="publication-anchor-title"
-                        data-testid="publication-anchor-dialog"
-                        on:click=|event| event.stop_propagation()>
-                        <header>
-                            <div>
-                                <h3 id="publication-anchor-title">
-                                    {t(locale.get(), "publication.add_precise")}
-                                </h3>
-                                <p>{t(locale.get(), "publication.anchor_hint")}</p>
-                            </div>
-                            <button type="button" class="ps-close"
-                                aria-label=t(locale.get(), "publication.close")
-                                on:click=move |_| anchor_open.set(false)>
-                                {compose_icon("close")}
-                            </button>
-                        </header>
-                        <label>
-                            <span>{t(locale.get(), "publication.anchor_kind")}</span>
-                            <select data-testid="publication-anchor-kind"
-                                prop:value=move || anchor_kind.get()
-                                on:change=move |event| {
-                                    anchor_kind.set(event_target_value(&event));
-                                    error.set(None);
-                                }>
-                                {[
-                                    "message_span",
-                                    "tool_call",
-                                    "execution_log",
-                                    "code_cell",
-                                    "external_resource",
-                                ].into_iter().map(|kind| view! {
-                                    <option value=kind prop:selected=move || anchor_kind.get() == kind>
-                                        {t(locale.get(), &format!("publication.source.{kind}"))}
-                                    </option>
-                                }).collect_view()}
-                            </select>
-                        </label>
-                        {move || match anchor_kind.get().as_str() {
-                            "message_span" => view! {
-                                <div class="publication-form-grid">
-                                    <label>
-                                        <span>{t(locale.get(), "publication.frame_id")}</span>
-                                        <input type="text" data-testid="publication-anchor-frame"
-                                            prop:value=move || anchor_frame.get()
-                                            on:input=move |event| anchor_frame.set(event_target_value(&event)) />
-                                    </label>
-                                    <label>
-                                        <span>{t(locale.get(), "publication.message_seq")}</span>
-                                        <input type="number" min="1"
-                                            prop:value=move || anchor_message_seq.get()
-                                            on:input=move |event| anchor_message_seq.set(event_target_value(&event)) />
-                                    </label>
-                                    <label>
-                                        <span>{t(locale.get(), "publication.byte_start")}</span>
-                                        <input type="number" min="0"
-                                            prop:value=move || anchor_byte_start.get()
-                                            on:input=move |event| anchor_byte_start.set(event_target_value(&event)) />
-                                    </label>
-                                    <label>
-                                        <span>{t(locale.get(), "publication.byte_end")}</span>
-                                        <input type="number" min="1"
-                                            prop:value=move || anchor_byte_end.get()
-                                            on:input=move |event| anchor_byte_end.set(event_target_value(&event)) />
-                                    </label>
-                                </div>
-                            }.into_view(),
-                            "tool_call" => view! {
-                                <div class="publication-form-grid">
-                                    <label>
-                                        <span>{t(locale.get(), "publication.frame_id")}</span>
-                                        <input type="text" prop:value=move || anchor_frame.get()
-                                            on:input=move |event| anchor_frame.set(event_target_value(&event)) />
-                                    </label>
-                                    <label>
-                                        <span>{t(locale.get(), "publication.message_seq")}</span>
-                                        <input type="number" min="1"
-                                            prop:value=move || anchor_message_seq.get()
-                                            on:input=move |event| anchor_message_seq.set(event_target_value(&event)) />
-                                    </label>
-                                    <label class="wide">
-                                        <span>{t(locale.get(), "publication.tool_call_id")}</span>
-                                        <input type="text" prop:value=move || anchor_tool_call.get()
-                                            on:input=move |event| anchor_tool_call.set(event_target_value(&event)) />
-                                    </label>
-                                </div>
-                            }.into_view(),
-                            _ => view! {
-                                <label>
-                                    <span>{t(locale.get(), "publication.exact_source")}</span>
-                                    <input type="text" data-testid="publication-anchor-exact-id"
-                                        prop:value=move || anchor_exact_id.get()
-                                        on:input=move |event| anchor_exact_id.set(event_target_value(&event)) />
-                                </label>
-                            }.into_view(),
-                        }}
-                        <footer>
-                            <button type="button" class="secondary"
-                                on:click=move |_| anchor_open.set(false)>
-                                {t(locale.get(), "publication.cancel")}
-                            </button>
-                            <button type="button" class="primary"
-                                data-testid="publication-anchor-continue"
-                                on:click=move |_| {
-                                    match precise_evidence_source(
-                                        &anchor_kind.get_untracked(),
-                                        &anchor_frame.get_untracked(),
-                                        &anchor_message_seq.get_untracked(),
-                                        &anchor_byte_start.get_untracked(),
-                                        &anchor_byte_end.get_untracked(),
-                                        &anchor_tool_call.get_untracked(),
-                                        &anchor_exact_id.get_untracked(),
-                                    ) {
-                                        Ok(source) => {
-                                            error.set(None);
-                                            anchor_open.set(false);
-                                            binding_source.set(Some(source));
-                                        }
-                                        Err(message) => error.set(Some(message)),
-                                    }
-                                }>
-                                {t(locale.get(), "publication.continue")}
-                            </button>
-                        </footer>
-                    </section>
-                </div>
-            })}
 
             {move || waiver_code.get().map(|code| {
                 let selected_revision = revision_id.get();

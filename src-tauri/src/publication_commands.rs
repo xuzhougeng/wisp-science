@@ -420,22 +420,6 @@ pub(crate) async fn bind_evidence(
 }
 
 #[tauri::command]
-pub(super) async fn list_publication_sources(
-    state: State<'_, AppState>,
-    window: crate::workspace_surface::WorkspaceSurface,
-    kind: String,
-    query: String,
-    offset: u32,
-) -> Result<wisp_dto::PublicationSourcePage, String> {
-    let project = publication_mainline_project(&state, window.label()).await?;
-    state
-        .store
-        .publication_source_page(&project.id, &kind, &query, offset)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
 pub(super) async fn get_publication_workspace(
     state: State<'_, AppState>,
     window: crate::workspace_surface::WorkspaceSurface,

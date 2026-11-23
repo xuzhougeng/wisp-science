@@ -154,11 +154,8 @@ pub enum Layer {
     PaperForm,
     /// The form for a figure, table or claim of a paper.
     PaperItemForm,
-    /// The results and runs to choose evidence from.
+    /// Why a result or a run being set as evidence supports an item.
     PaperSources,
-    /// The advanced dialog inside it that locates evidence by its exact
-    /// source id.
-    PaperAnchor,
     /// Question before a paper is removed.
     ConfirmRemovePaper,
     /// The readiness check of the shown draft version, and finalizing it.
@@ -413,7 +410,6 @@ impl Layer {
             | Layer::ConfirmRemovePaper
             | Layer::PaperFinalize => Some(Layer::Papers),
             Layer::PaperWaiver => Some(Layer::PaperFinalize),
-            Layer::PaperAnchor => Some(Layer::PaperSources),
             Layer::BatchGroupMenu | Layer::ConfirmBatchDelete => Some(Layer::SelectMode),
             Layer::GroupMenu | Layer::TransferMenu => Some(Layer::ConversationMenu),
             Layer::ExampleCopy => Some(Layer::Examples),
@@ -1229,20 +1225,6 @@ mod tests {
         stack.open(Layer::PaperSources);
         assert!(stack.close(Layer::Papers));
         assert!(!stack.contains(Layer::PaperSources));
-        // The exact-anchor dialog sits inside the source list: Escape at
-        // once closes it alone, the list next, and the page stays.
-        stack.open(Layer::Papers);
-        stack.open(Layer::PaperSources);
-        stack.open(Layer::PaperAnchor);
-        assert_eq!(stack.dismiss_top(), Some(Layer::PaperAnchor));
-        assert!(stack.contains(Layer::PaperSources));
-        assert_eq!(stack.dismiss_top(), Some(Layer::PaperSources));
-        assert!(stack.contains(Layer::Papers));
-        stack.open(Layer::PaperSources);
-        stack.open(Layer::PaperAnchor);
-        assert!(stack.close(Layer::PaperSources));
-        assert!(!stack.contains(Layer::PaperAnchor));
-        assert!(stack.close(Layer::Papers));
         // The reason for letting a finding stand is asked inside the
         // finalize panel: Escape takes the reason first, the panel next,
         // and the page stays until a third press.

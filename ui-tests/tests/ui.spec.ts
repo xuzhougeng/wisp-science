@@ -8010,7 +8010,7 @@ test("method-search Run reviews the frozen contract before start and exposes con
   await expect(details).toContainText("Cancelled");
 });
 
-test("publication is an independent project page and source selection binds an exact version", async ({ page }) => {
+test("publication is an independent project page and an artifact tile binds its evidence", async ({ page }) => {
   await enterApp(page, "/?mockPublication=draft");
   await openSidebarEntry(page, "Publication");
   const workspace = page.getByTestId("publication-workspace");
@@ -8019,37 +8019,24 @@ test("publication is an independent project page and source selection binds an e
   await expect(page.locator(".workspace-main")).toBeHidden();
   await page.keyboard.press("Escape");
   await expect(workspace).toBeVisible();
-  await workspace.getByTestId("add-publication-evidence").click();
-  await page.locator(".publication-source-choice", {hasText:"figure2b.png"}).click();
-  await page.getByTestId("publication-source-continue").click();
-  const binding = page.getByTestId("publication-binding-dialog");
-  await binding.locator("textarea").fill("Use the reviewed version for Figure 2B");
-  await binding.getByRole("button", { name: "Bind exact evidence" }).click();
-  await expect.poll(() => lastInvokeArgs(page, "bind_publication_evidence")).toMatchObject({input:{sourceKind:"artifact_version",sourceId:"artifact-version-original-v3",visibility:"private"}});
-  await expect(page.getByTestId("publication-evidence-card")).toContainText("Use the reviewed version");
   await page.locator('[data-session-id="publication-session"]').click();
   await expect(workspace).toHaveCount(0);
   await expect(page.locator(".workspace-main")).toBeVisible();
-});
 
-test("publication conversation picker translates selected Chinese and emoji to UTF-8 bytes", async ({ page }) => {
-  await enterApp(page, "/?mockPublication=draft");
-  await openSidebarEntry(page, "Publication");
-  await page.getByTestId("add-publication-evidence").click();
-  await page.getByRole("button", { name: "Research conversations", exact: true }).click();
-  await page.locator(".publication-source-choice").click();
-  const preview=page.getByRole("textbox",{name:"Persisted message text"});
-  await preview.evaluate((element: HTMLTextAreaElement) => {
-    element.focus(); element.setSelectionRange(1,5); element.dispatchEvent(new Event("select",{bubbles:true}));
-  });
-  await page.getByTestId("publication-source-continue").click();
+  // Evidence is attached from where the result lives, not from a source browser.
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByTestId("right-launcher-artifacts").click();
+  const artifact = page.locator('.rp-tile[data-artifact-name="plddt_profile.png"]');
+  await artifact.getByRole("button", { name: "More" }).click();
+  await page.locator(".rp-tile-menu").getByRole("button", { name: "Use in publication" }).click();
   const binding = page.getByTestId("publication-binding-dialog");
-  await binding.locator("textarea").fill("The original decision passage");
+  await expect(binding).toContainText("plddt_profile.png");
+  await expect(page.locator(".publication-page-tabs button.active")).toHaveText("Evidence");
+  await binding.locator("textarea").fill("Use the reviewed version for Figure 2B");
   await binding.getByRole("button", { name: "Bind exact evidence" }).click();
-  await expect.poll(async () => {
-    const args=await lastInvokeArgs(page,"bind_publication_evidence");
-    return args?.input?.sourceId ? JSON.parse(args.input.sourceId) : null;
-  }).toEqual({byte_start:1,byte_end:11,frame_id:"publication-session",message_seq:7});
+  await expect.poll(() => lastInvokeArgs(page, "bind_publication_evidence")).toMatchObject({input:{sourceKind:"artifact",sourceId:"art-profile",purpose:"Use the reviewed version for Figure 2B",visibility:"private"}});
+  await expect(binding).toHaveCount(0);
+  await expect(page.getByTestId("publication-evidence-card")).toContainText("Use the reviewed version");
 });
 
 test("publication checks before locking and policy changes invalidate the check", async ({ page }) => {
@@ -8094,45 +8081,6 @@ test("publication page keeps its evidence and actions within the available width
   }
 });
 
-test("precise message evidence uses a stable locator and Escape closes only the top layer", async ({ page }) => {
-  await enterApp(page, "/?mockPublication=draft");
-  await openSidebarEntry(page, "Publication");
-
-  const workspace = page.getByTestId("publication-workspace");
-  await workspace.getByTestId("add-publication-evidence").click();
-  await workspace.locator(".publication-advanced summary").click();
-  await workspace.getByTestId("add-precise-publication-evidence").click();
-  await expect(page.getByTestId("publication-anchor-dialog")).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("publication-anchor-dialog")).toHaveCount(0);
-  await expect(workspace).toBeVisible();
-
-  await workspace.getByTestId("add-precise-publication-evidence").click();
-  const anchor = page.getByTestId("publication-anchor-dialog");
-  await anchor.getByTestId("publication-anchor-frame").fill("publication-session");
-  await anchor.getByLabel("Message sequence").fill("7");
-  await anchor.getByLabel("UTF-8 byte start").fill("4");
-  await anchor.getByLabel("UTF-8 byte end").fill("19");
-  await anchor.getByTestId("publication-anchor-continue").click();
-
-  const binding = page.getByTestId("publication-binding-dialog");
-  await binding.locator("textarea").fill("Exact sentence supporting the main claim");
-  await binding.getByRole("button", { name: "Bind exact evidence" }).click();
-  await expect.poll(() => lastInvokeArgs(page, "bind_publication_evidence")).toMatchObject({
-    input: {
-      sourceKind: "message_span",
-      purpose: "Exact sentence supporting the main claim",
-    },
-  });
-  const args = await lastInvokeArgs(page, "bind_publication_evidence");
-  expect(JSON.parse(args.input.sourceId)).toEqual({
-    byte_end: 19,
-    byte_start: 4,
-    frame_id: "publication-session",
-    message_seq: 7,
-  });
-});
-
 test("Frozen Publication is read-only and exposes exact source plus late-capture readiness", async ({ page }) => {
   await enterApp(page, "/?mockPublication=frozen");
   await openSidebarEntry(page, "Publication");
@@ -8148,6 +8096,7 @@ test("Frozen Publication is read-only and exposes exact source plus late-capture
   await expect(workspace).toContainText("A newer result exists");
   await expect(workspace.getByRole("button", { name: "Freeze", exact: true })).toHaveCount(0);
   await expect(workspace.getByRole("button", { name: "Add item", exact: true })).toHaveCount(0);
+  await expect(workspace.getByTestId("publication-evidence-hint")).toHaveCount(0);
   await expect(workspace.locator(".publication-binding-controls")).toHaveCount(0);
   expect(await invokeArgsList(page, "update_publication_evidence_binding")).toHaveLength(0);
 });

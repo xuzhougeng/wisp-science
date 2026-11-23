@@ -11037,27 +11037,16 @@ async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
         .await
         .unwrap();
 
-    // A run of the project is offered as evidence and bound with a reason.
+    // A run of the project is bound as evidence with a reason.
     let run = wisp_store::RunRecord::new("run-qpcr", PROJECT, "local", "qpcr_fit.py", "script");
     server.0.store.create_run(&run).await.unwrap();
-    let (runs, more) = server
-        .paper_source_choices(PROJECT, PaperSourceKind::Run, "QPCR", 0)
-        .await
-        .unwrap();
-    assert!(!more);
-    assert_eq!(runs.len(), 1);
-    assert_eq!(runs[0].name, "qpcr_fit.py");
-    assert!(server
-        .paper_source_choices(PROJECT, PaperSourceKind::ToolCall, "", 0)
-        .await
-        .is_err());
     server
         .bind_paper_source(
             PROJECT,
             &version,
             &figure,
             PaperSourceKind::Run,
-            &runs[0].id,
+            "run-qpcr",
             " the fit behind panel B ",
             desktop::PaperSelection::Selected,
             desktop::PaperAudience::Private,
@@ -11097,18 +11086,32 @@ async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
         .unwrap();
     send(&server, &session, "write the answer").await.unwrap();
     wait_for(&server, &session, |s| !s.running).await;
-    let (results, _) = server
-        .paper_source_choices(PROJECT, PaperSourceKind::Result, "", 0)
+    let results = server
+        .0
+        .store
+        .publication_source_page(PROJECT, "files", "", 0)
         .await
-        .unwrap();
+        .unwrap()
+        .sources;
     assert_eq!(results.len(), 1, "{results:?}");
+    // Named by its artifact, as a file under Artifacts is: the version it
+    // has now is the one bound.
+    let artifact = server
+        .0
+        .store
+        .get_artifact_version_context(&results[0].id)
+        .await
+        .unwrap()
+        .unwrap()
+        .version
+        .artifact_id;
     server
         .bind_paper_source(
             PROJECT,
             &version,
             &figure,
             PaperSourceKind::Result,
-            &results[0].id,
+            &artifact,
             "",
             desktop::PaperSelection::Selected,
             desktop::PaperAudience::Private,
@@ -11134,7 +11137,7 @@ async fn a_paper_keeps_its_figures_with_the_results_and_runs_they_rest_on() {
         .iter()
         .find(|source| source.kind == PaperSourceKind::Result)
         .unwrap();
-    assert_eq!(of_result.name, results[0].name);
+    assert_eq!(of_result.name, results[0].title);
     assert!(shown.items[1].sources.is_empty() && shown.loose.is_empty());
 
     // Evidence and items are removed one at a time.
@@ -11435,29 +11438,22 @@ async fn a_passage_of_a_conversation_is_evidence_with_its_text_kept() {
     .await
     .unwrap();
     wait_for(&server, &session, |s| !s.running).await;
-    let (said, more) = server
-        .paper_source_choices(PROJECT, PaperSourceKind::Passage, "COPY NUMBER DOUBLED", 0)
+    let said = server
+        .0
+        .store
+        .publication_source_page(PROJECT, "messages", "COPY NUMBER DOUBLED", 0)
         .await
-        .unwrap();
-    assert!(!more);
-    assert!(said
-        .iter()
-        .all(|choice| choice.kind == PaperSourceKind::Passage));
-    let choice = said
+        .unwrap()
+        .sources;
+    let message = said
         .iter()
         .find(|choice| choice.detail == "user")
-        .unwrap_or_else(|| panic!("{said:?}"));
-    let message = choice.message.clone().unwrap();
+        .unwrap_or_else(|| panic!("{said:?}"))
+        .clone();
     let text = message.text.clone().unwrap();
     assert!(message.frame_id.is_some() && message.message_seq.is_some());
-    // Results and runs carry no message.
-    let (runs, _) = server
-        .paper_source_choices(PROJECT, PaperSourceKind::Run, "", 0)
-        .await
-        .unwrap();
-    assert!(runs.iter().all(|choice| choice.message.is_none()));
 
-    // A passage chosen within it is bound with its text.
+    // A passage located within it is bound with its text.
     let start = text.find("strain").unwrap();
     let end = start + "strain 水稻".len();
     let exact =
@@ -11504,17 +11500,10 @@ async fn a_passage_of_a_conversation_is_evidence_with_its_text_kept() {
     assert_eq!(sources[0].purpose, "the strain we kept");
     assert_eq!(sources[0].run, None);
 
-    // Another project's conversation is not offered, and its passage is
-    // refused.
+    // Another project's passage is refused.
     let folder = temp.path().join("lab");
     std::fs::create_dir(&folder).unwrap();
     let lab = server.register_local_project(&folder).await.unwrap();
-    assert!(server
-        .paper_source_choices(&lab, PaperSourceKind::Passage, "", 0)
-        .await
-        .unwrap()
-        .0
-        .is_empty());
     let other = server
         .create_paper(
             &lab,
@@ -11796,11 +11785,16 @@ async fn paper_items_nest_and_evidence_is_anchored_marked_and_noted_as_in_the_we
         )
         .unwrap()
     };
-    for found in [
-        anchor("tool_call", "call-fit", ""),
-        anchor("code_cell", "", "exec-fit"),
+    for (found, kind) in [
+        (
+            anchor("tool_call", "call-fit", ""),
+            PaperSourceKind::ToolCall,
+        ),
+        (
+            anchor("code_cell", "", "exec-fit"),
+            PaperSourceKind::CodeCell,
+        ),
     ] {
-        let kind = PaperSourceKind::of_anchor(found.kind).unwrap();
         server
             .bind_paper_source(
                 PROJECT,
@@ -11845,11 +11839,6 @@ async fn paper_items_nest_and_evidence_is_anchored_marked_and_noted_as_in_the_we
             ("python cell 3", PaperSourceKind::CodeCell),
         ]
     );
-    assert_eq!(
-        PaperSourceKind::of_anchor("message_span"),
-        Some(PaperSourceKind::Passage)
-    );
-    assert_eq!(PaperSourceKind::of_anchor("run"), None);
     server.shutdown().await;
 }
 

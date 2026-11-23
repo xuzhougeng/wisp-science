@@ -1,11 +1,11 @@
 //! Paper evidence: how a paper's versions, items and their sources read,
-//! how a passage chosen in a message is pinned, where a source came from,
+//! what is being set as evidence from elsewhere, where a source came from,
 //! and how clean reruns and capsules of a finalized version read.
 use wisp_server::desktop::{
     Paper, PaperAudience, PaperCapsule, PaperCapsuleStatus, PaperCapture, PaperCheck, PaperDrift,
     PaperItem, PaperItemKind, PaperLevel, PaperLineage, PaperLineageQuality, PaperRerun,
-    PaperRerunOutput, PaperRerunStatus, PaperSelection, PaperSource, PaperSourceChoice,
-    PaperSourceKind, PaperVersion, PaperVersionState,
+    PaperRerunOutput, PaperRerunStatus, PaperSelection, PaperSource, PaperSourceKind, PaperVersion,
+    PaperVersionState,
 };
 
 use crate::i18n::{fill, tr};
@@ -57,26 +57,6 @@ pub fn selection_label(selection: PaperSelection) -> &'static str {
         PaperSelection::Candidate => tr("Candidate"),
         PaperSelection::Selected => tr("Selected"),
         PaperSelection::Rejected => tr("Rejected"),
-    }
-}
-
-/// The kinds of exact anchor the advanced dialog takes, as the WebView
-/// names them.
-pub const ANCHOR_KINDS: [&str; 5] = [
-    "message_span",
-    "tool_call",
-    "execution_log",
-    "code_cell",
-    "external_resource",
-];
-
-pub fn anchor_kind_label(kind: &str) -> &'static str {
-    match kind {
-        "message_span" => tr("Message span"),
-        "tool_call" => tr("Tool result"),
-        "execution_log" => tr("Execution log"),
-        "code_cell" => tr("Code cell"),
-        _ => tr("External resource"),
     }
 }
 
@@ -190,14 +170,6 @@ pub fn drift_line(drift: PaperDrift) -> String {
     )
 }
 
-/// Who wrote a message offered as evidence.
-pub fn role_label(role: &str) -> &'static str {
-    match role {
-        "user" => tr("You"),
-        _ => tr("Assistant"),
-    }
-}
-
 /// A source under its item: what it is, and why it was chosen when that
 /// was said.
 pub fn source_line(source: &PaperSource) -> String {
@@ -209,61 +181,31 @@ pub fn source_line(source: &PaperSource) -> String {
     }
 }
 
-/// A result, run or message in the list to choose from. A result says
-/// which of its versions would be bound; a run says how it ended; a message
-/// says its conversation, who wrote it and how it begins.
-pub fn choice_line(choice: &PaperSourceChoice) -> String {
-    match (choice.kind, choice.detail.trim()) {
-        (PaperSourceKind::Passage, role) => {
-            let mut line = format!("{} · {}", choice.name, role_label(role));
-            let teaser = choice
-                .message
-                .as_ref()
-                .and_then(|message| message.text.as_deref())
-                .map(wisp_dto::publication_sources::source_snippet)
-                .unwrap_or_default();
-            if !teaser.is_empty() {
-                line.push_str(" — ");
-                line.push_str(&teaser);
-            }
-            line
-        }
-        (_, "") => choice.name.clone(),
-        (PaperSourceKind::Result, version) => {
-            fill(tr("{} · version {}"), &[&choice.name, &version])
-        }
-        (_, state) => format!("{} · {state}", choice.name),
-    }
+/// A result or a run being set as evidence from where it was found (a
+/// file under Artifacts), until the item it is for is chosen on the page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingEvidence {
+    pub kind: PaperSourceKind,
+    /// The artifact (bound at the version it has now) or the run.
+    pub id: String,
+    pub name: String,
 }
 
-/// The exact locator binding a passage of `message`: `selected` is the
-/// selection in its preview, in UTF-16 units as the text input reports
-/// it, and `shown` the preview's text as the input holds it. An empty
-/// selection takes the whole preview, as the WebView does. A selection in
-/// a preview that is not exactly the message, or that splits a character,
-/// is refused rather than moved.
-pub fn passage_locator(
-    message: &wisp_dto::PublicationSourceChoice,
-    shown: &str,
-    selected: std::ops::Range<usize>,
-) -> Result<String, &'static str> {
-    use wisp_dto::publication_sources::{message_span_locator, utf16_byte_range};
-    let text = message.text.as_deref().unwrap_or_default();
-    let range = if selected.is_empty() {
-        None
-    } else {
-        if shown != text {
-            return Err(tr(
-                "This message could not be shown exactly; choose it without selecting a passage",
-            ));
-        }
-        let (Ok(start), Ok(end)) = (u32::try_from(selected.start), u32::try_from(selected.end))
-        else {
-            return Err(tr("Select the passage again"));
-        };
-        Some(utf16_byte_range(text, start, end).ok_or(tr("Select the passage again"))?)
-    };
-    message_span_locator(message, range).ok_or(tr("This is not a message to choose a passage from"))
+/// Why the evidence being set cannot go on an item yet, if it cannot: no
+/// paper is shown, the shown version is finalized, or it has no item.
+pub fn pending_note(paper: Option<&Paper>) -> Option<&'static str> {
+    match paper {
+        None => Some(tr(
+            "Start a paper first, then add the figure or table it is for.",
+        )),
+        Some(paper) if !paper.editable => Some(tr(
+            "The shown version is finalized. Start a new version to set evidence.",
+        )),
+        Some(paper) if paper.items.is_empty() => Some(tr(
+            "Add the figure, table or section it is for, then choose “Use here”.",
+        )),
+        Some(_) => None,
+    }
 }
 
 pub fn rerun_status_label(status: PaperRerunStatus) -> &'static str {
@@ -552,10 +494,6 @@ mod tests {
         );
         assert_eq!(selection_label(PaperSelection::Candidate), "Candidate");
         assert_eq!(source_kind_label(PaperSourceKind::ToolCall), "Tool result");
-        for kind in ANCHOR_KINDS {
-            assert!(PaperSourceKind::of_anchor(kind).is_some(), "{kind}");
-            assert!(!anchor_kind_label(kind).is_empty());
-        }
     }
 
     #[test]
@@ -573,25 +511,12 @@ mod tests {
     }
 
     #[test]
-    fn sources_and_choices_say_what_they_are() {
+    fn a_source_says_what_it_is_and_why() {
         assert_eq!(source_line(&source("fit.py", " ")), "fit.py");
         assert_eq!(
             source_line(&source("fit.py", "panel B")),
             "fit.py — panel B"
         );
-        let mut choice = PaperSourceChoice {
-            kind: PaperSourceKind::Result,
-            id: "a".into(),
-            name: "fig1.png".into(),
-            detail: "3".into(),
-            message: None,
-        };
-        assert_eq!(choice_line(&choice), "fig1.png · version 3");
-        choice.kind = PaperSourceKind::Run;
-        choice.detail = "succeeded".into();
-        assert_eq!(choice_line(&choice), "fig1.png · succeeded");
-        choice.detail.clear();
-        assert_eq!(choice_line(&choice), "fig1.png");
     }
 
     #[test]
@@ -676,57 +601,27 @@ mod tests {
         assert_eq!(next_version_label(&paper), "Version 1");
     }
 
-    fn message(text: &str) -> wisp_dto::PublicationSourceChoice {
-        wisp_dto::PublicationSourceChoice {
-            kind: "message_span".into(),
-            id: "m".into(),
-            title: "Strains".into(),
-            detail: "assistant".into(),
-            text: Some(text.into()),
-            text_sha256: None,
-            frame_id: Some("frame".into()),
-            message_seq: Some(3),
-        }
-    }
-
     #[test]
-    fn a_message_choice_names_its_conversation_writer_and_beginning() {
-        let choice = PaperSourceChoice {
-            kind: PaperSourceKind::Passage,
-            id: "m".into(),
-            name: "Strains".into(),
-            detail: "assistant".into(),
-            message: Some(message("## Kept **strain B** for `fit`")),
+    fn evidence_being_set_says_what_stands_in_its_way() {
+        assert!(pending_note(None).unwrap().contains("Start a paper"));
+        let mut paper = Paper {
+            id: "p".into(),
+            title: "Paper".into(),
+            description: String::new(),
+            versions: vec![],
+            shown: "v".into(),
+            editable: false,
+            items: vec![],
+            loose: vec![],
+            level: None,
+            reruns: vec![],
+            capsules: vec![],
         };
-        assert_eq!(
-            choice_line(&choice),
-            "Strains · Assistant — Kept strain B for fit"
-        );
-        assert_eq!(role_label("user"), "You");
-    }
-
-    #[test]
-    fn a_passage_is_pinned_by_its_bytes_or_the_whole_preview() {
-        let text = "A水稻🌱结果";
-        let found = message(text);
-        // Nothing selected: the whole preview.
-        assert_eq!(
-            passage_locator(&found, text, 2..2).unwrap(),
-            r#"{"byte_end":17,"byte_start":0,"frame_id":"frame","message_seq":3}"#
-        );
-        // "水稻🌱" is UTF-16 units 1..5, bytes 1..11.
-        assert_eq!(
-            passage_locator(&found, text, 1..5).unwrap(),
-            r#"{"byte_end":11,"byte_start":1,"frame_id":"frame","message_seq":3}"#
-        );
-        // Half of the seedling's surrogate pair is refused, not moved.
-        assert!(passage_locator(&found, text, 1..4).is_err());
-        // A preview the input changed cannot be pinned by a selection.
-        assert!(passage_locator(&found, "A水稻", 1..2).is_err());
-        assert!(passage_locator(&found, "A水稻", 0..0).is_ok());
-        let mut not_a_message = found.clone();
-        not_a_message.text = None;
-        assert!(passage_locator(&not_a_message, "", 0..0).is_err());
+        assert!(pending_note(Some(&paper)).unwrap().contains("finalized"));
+        paper.editable = true;
+        assert!(pending_note(Some(&paper)).unwrap().contains("Use here"));
+        paper.items.push(item("Figure 1", vec![]));
+        assert_eq!(pending_note(Some(&paper)), None);
     }
 
     #[test]

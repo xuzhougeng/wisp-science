@@ -1,7 +1,9 @@
-//! Choosing a passage of a research conversation as paper evidence: the
-//! offsets, teaser and exact locator shared by the WebView source picker and
-//! the GPUI desktop; the exact anchors of the advanced dialog; and the order
-//! the manuscript outline lists nested items in.
+//! Paper evidence shared by the hosts and both desktops: how a source set
+//! as evidence is named, the exact locators the store takes for a passage
+//! of a conversation message and for the other exact anchors, and the order
+//! the manuscript outline lists nested items in. Nothing here lists sources
+//! to choose from: evidence is set in a conversation or from where the
+//! source is shown.
 use crate::{PublicationItemInfo, PublicationSourceChoice};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -138,52 +140,10 @@ pub fn precise_evidence_source(
     }
 }
 
-/// Selection offsets count UTF-16 code units (the DOM's and GPUI's text
-/// input both do); persisted anchors count UTF-8 bytes. Reject offsets inside
-/// a surrogate pair rather than moving the range.
-pub fn utf16_byte_offset(text: &str, offset: u32) -> Option<usize> {
-    let mut units = 0;
-    for (byte, ch) in text.char_indices() {
-        if units == offset {
-            return Some(byte);
-        }
-        units += ch.len_utf16() as u32;
-    }
-    (units == offset).then_some(text.len())
-}
-
-/// A selection of `text` given in UTF-16 units, as a non-empty UTF-8 byte
-/// range; `None` for an empty selection or one that splits a character.
-pub fn utf16_byte_range(text: &str, start: u32, end: u32) -> Option<(usize, usize)> {
-    let start = utf16_byte_offset(text, start)?;
-    let end = utf16_byte_offset(text, end)?;
-    (start < end).then_some((start, end))
-}
-
-/// Card teaser for a transcript source: drops Markdown emphasis, code and
-/// heading markers and collapses whitespace. The preview keeps the exact text.
-pub fn source_snippet(text: &str) -> String {
-    let cleaned: String = text.chars().filter(|ch| !matches!(ch, '*' | '`')).collect();
-    let mut snippet = String::new();
-    for word in cleaned
-        .split_whitespace()
-        .filter(|word| !word.chars().all(|ch| ch == '#'))
-    {
-        if !snippet.is_empty() {
-            snippet.push(' ');
-        }
-        snippet.push_str(word);
-        if snippet.chars().count() >= 160 {
-            break;
-        }
-    }
-    snippet.chars().take(160).collect()
-}
-
 /// The exact `message_span` locator for a passage of a conversation message
-/// offered by the source picker: `range` in UTF-8 bytes of its preview text,
-/// or the whole preview when nothing is selected. Canonical JSON (sorted keys),
-/// as the store requires. `None` for a choice that is not a message.
+/// as the store lists it: `range` in UTF-8 bytes of its preview text, or the
+/// whole preview without one. Canonical JSON (sorted keys), as the store
+/// requires. `None` for a choice that is not a message.
 pub fn message_span_locator(
     source: &PublicationSourceChoice,
     range: Option<(usize, usize)>,
@@ -242,30 +202,6 @@ mod tests {
             source.id,
             r#"{"byte_end":11,"byte_start":2,"frame_id":"frame","message_seq":8}"#
         );
-    }
-
-    #[test]
-    fn transcript_selection_preserves_utf8_boundaries() {
-        let text = "A水稻🌱结果";
-        assert_eq!(utf16_byte_offset(text, 0), Some(0));
-        assert_eq!(utf16_byte_offset(text, 3), Some(7));
-        assert_eq!(utf16_byte_offset(text, 4), None);
-        assert_eq!(utf16_byte_offset(text, 5), Some(11));
-        assert_eq!(utf16_byte_offset(text, 7), Some(text.len()));
-        assert_eq!(utf16_byte_offset(text, 8), None);
-        assert_eq!(utf16_byte_range(text, 1, 5), Some((1, 11)));
-        assert_eq!(utf16_byte_range(text, 3, 3), None);
-        assert_eq!(utf16_byte_range(text, 1, 4), None);
-    }
-
-    #[test]
-    fn source_snippet_drops_markdown_markers_and_bounds_length() {
-        assert_eq!(
-            source_snippet("## 确认了。**`celltype_go/`** 就是\n\n这张图 `run_in_context`"),
-            "确认了。celltype_go/ 就是 这张图 run_in_context"
-        );
-        assert_eq!(source_snippet("  \n "), "");
-        assert_eq!(source_snippet(&"水稻 ".repeat(200)).chars().count(), 160);
     }
 
     #[test]

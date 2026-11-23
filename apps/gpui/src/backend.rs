@@ -2045,20 +2045,6 @@ impl Backend {
         )
     }
 
-    /// Results or runs to choose evidence from, and whether more follow.
-    pub fn paper_source_choices(
-        &self,
-        project: String,
-        kind: wisp_server::desktop::PaperSourceKind,
-        query: String,
-        offset: u32,
-    ) -> Reply<(Vec<wisp_server::desktop::PaperSourceChoice>, bool)> {
-        self.local(move |host| async move {
-            host.paper_source_choices(&project, kind, &query, offset)
-                .await
-        })
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn bind_paper_source(
         &self,

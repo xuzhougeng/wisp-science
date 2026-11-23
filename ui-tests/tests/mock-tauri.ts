@@ -2402,13 +2402,6 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             projectMemos.splice(index, 1);
             return null;
           }
-          case "list_publication_sources": {
-            const category = arg("kind");
-            const sources = category === "messages" ? [{kind:"message_span",id:"message-7",title:"Root cap review",detail:"assistant",text:"A水稻🌱结果",frame_id:"publication-session",message_seq:7}]
-              : category === "runs" ? [{kind:"run",id:"run-kinase-001",title:"Kinase analysis",detail:"succeeded",text:null,frame_id:null,message_seq:null}]
-              : [{kind:"artifact_version",id:"artifact-version-original-v3",title:"figure2b.png",detail:"3",text:null,frame_id:null,message_seq:null}];
-            return {sources: String(arg("query") ?? "") === "missing" ? [] : sources,has_more:false};
-          }
           case "check_publication_revision":
             return {frozen:false,revision:publicationRevision(),readiness:publicationReadiness()};
           case "get_publication_workspace":

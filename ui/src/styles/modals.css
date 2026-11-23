@@ -1358,11 +1358,9 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .publication-toolbar-actions,
 .publication-pane-head,
 .publication-evidence-card header,
-.publication-anchor-dialog header,
 .publication-binding-dialog header,
 .publication-policy-dialog header,
 .publication-waiver-dialog header,
-.publication-anchor-dialog footer,
 .publication-binding-dialog footer,
 .publication-policy-dialog footer,
 .publication-waiver-dialog footer {
@@ -1388,7 +1386,6 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .publication-toolbar label,
 .publication-create label,
 .publication-form-grid label,
-.publication-anchor-dialog > label,
 .publication-policy-dialog > label,
 .publication-waiver-dialog > label,
 .publication-binding-controls label {
@@ -1579,27 +1576,21 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .publication-create textarea { min-height: 80px; resize: vertical; font: inherit; }
 .publication-nested-overlay { z-index: 124; }
 .publication-binding-dialog { width: min(620px, calc(100vw - 40px)); max-width: none; }
-.publication-anchor-dialog,
 .publication-policy-dialog,
 .publication-waiver-dialog { width: min(480px, calc(100vw - 40px)); max-width: none; }
-.publication-anchor-dialog header,
 .publication-binding-dialog header,
 .publication-policy-dialog header,
 .publication-waiver-dialog header { justify-content: space-between; }
 .publication-waiver-dialog header code { font-family: var(--font-mono); }
-.publication-anchor-dialog h3,
-.publication-anchor-dialog p,
 .publication-binding-dialog h3,
 .publication-binding-dialog p,
 .publication-policy-dialog h3,
 .publication-waiver-dialog h3 { margin: 0; }
-.publication-anchor-dialog p { margin-top: 3px; color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); }
 .publication-binding-dialog p { margin-top: 3px; color: var(--text-faint); font: calc(10px * var(--ui-font-scale, 1)) var(--font-mono); overflow-wrap: anywhere; }
 .publication-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .publication-form-grid .wide { grid-column: 1 / -1; }
 .publication-form-grid textarea,
 .publication-waiver-dialog textarea { min-height: 74px; resize: vertical; font: inherit; }
-.publication-anchor-dialog footer,
 .publication-binding-dialog footer,
 .publication-policy-dialog footer,
 .publication-waiver-dialog footer { justify-content: flex-end; }

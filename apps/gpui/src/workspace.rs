@@ -331,27 +331,18 @@ pub struct Workspace {
     paper_item_parent: Option<String>,
     /// The item in the form; empty is a new one.
     paper_item_editing: Option<String>,
-    /// The item evidence is being chosen for.
+    /// The result or run being set as evidence from where it was found,
+    /// until the item it is for is chosen on the page.
+    paper_pending: Option<crate::papers::PendingEvidence>,
+    /// The item that evidence is being set on.
     paper_source_item: Option<String>,
-    paper_source_kind: wisp_server::desktop::PaperSourceKind,
-    /// Search, why it was chosen.
-    paper_source_fields: [Entity<InputState>; 2],
+    /// Why it was chosen.
+    paper_source_field: Entity<InputState>,
     /// Whether what is chosen is meant for the paper, and who may see it.
     paper_source_selection: wisp_server::desktop::PaperSelection,
     paper_source_audience: wisp_server::desktop::PaperAudience,
-    /// The exact anchor being typed in the advanced dialog: its kind as
-    /// the WebView names it, then the session, message, byte range, tool
-    /// call and exact id.
-    paper_anchor_kind: &'static str,
-    paper_anchor_fields: [Entity<InputState>; 6],
     /// The evidence whose source and environment details are open.
     paper_sources_open: std::collections::HashSet<String>,
-    paper_choices: Vec<wisp_server::desktop::PaperSourceChoice>,
-    paper_choices_more: bool,
-    /// The conversation message a passage is being chosen from, and its
-    /// text, read-only, to select the passage in.
-    paper_passage: Option<wisp_server::desktop::PaperSourceChoice>,
-    paper_passage_field: Entity<InputState>,
     /// The run of the shown finalized version being rerun clean, and
     /// whether its capsule is being written.
     paper_rerunning: Option<String>,
@@ -1237,19 +1228,9 @@ impl Workspace {
             cx.new(|cx| InputState::new(window, cx)),
             cx.new(|cx| InputState::new(window, cx).multi_line(true)),
         ];
-        let paper_source_fields = [
-            cx.new(|cx| InputState::new(window, cx)),
-            cx.new(|cx| InputState::new(window, cx)),
-        ];
-        let paper_anchor_fields = [
-            cx.new(|cx| InputState::new(window, cx)),
-            cx.new(|cx| InputState::new(window, cx)),
-            cx.new(|cx| InputState::new(window, cx)),
-            cx.new(|cx| InputState::new(window, cx)),
-            cx.new(|cx| InputState::new(window, cx)),
-            cx.new(|cx| InputState::new(window, cx)),
-        ];
-        let paper_passage_field = cx.new(|cx| InputState::new(window, cx).multi_line(true));
+        let paper_source_field = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(tr("What it is there, and why it was chosen"))
+        });
         let paper_waiver_field = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(tr("Why it can stand, for whoever reads the record"))
@@ -1839,18 +1820,12 @@ impl Workspace {
             paper_item_kind: wisp_server::desktop::PaperItemKind::Figure,
             paper_item_parent: None,
             paper_item_editing: None,
+            paper_pending: None,
             paper_source_item: None,
-            paper_source_kind: wisp_server::desktop::PaperSourceKind::Result,
-            paper_source_fields,
+            paper_source_field,
             paper_source_selection: Default::default(),
             paper_source_audience: Default::default(),
-            paper_anchor_kind: "message_span",
-            paper_anchor_fields,
             paper_sources_open: Default::default(),
-            paper_choices: Vec::new(),
-            paper_choices_more: false,
-            paper_passage: None,
-            paper_passage_field,
             paper_rerunning: None,
             paper_capsule_saving: false,
             paper_policy: Default::default(),
@@ -2451,6 +2426,7 @@ impl Workspace {
             Some(Layer::ConfirmDeleteMandate) => self.mandate_deleting = None,
             Some(Layer::Papers) => {
                 self.paper = None;
+                self.paper_pending = None;
                 self.paper_check = None;
                 self.paper_waiving = None;
                 self.focus_composer(window, cx);
@@ -2459,7 +2435,6 @@ impl Workspace {
                 Layer::PaperForm
                 | Layer::PaperItemForm
                 | Layer::PaperSources
-                | Layer::PaperAnchor
                 | Layer::ConfirmRemovePaper,
             ) => {}
             Some(Layer::PaperFinalize) => {

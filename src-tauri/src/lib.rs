@@ -8290,7 +8290,6 @@ pub fn run() {
             project_commands::get_project_settings,
             project_commands::update_project,
             publication_commands::get_publication_workspace,
-            publication_commands::list_publication_sources,
             publication_commands::create_publication_workspace,
             publication_commands::save_publication_item,
             publication_commands::bind_publication_evidence,

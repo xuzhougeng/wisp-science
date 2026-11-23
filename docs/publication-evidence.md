@@ -6,9 +6,9 @@ supports a manuscript. It is separate from project backup and Session export.
 Open **Publication** (**论文整理** in the Chinese interface) from the project
 sidebar. It opens a dedicated project page
 and keeps the project sidebar available. Returning to a conversation or project
-files restores the ordinary workspace. Escape dismisses an open editor or
-advanced dialog before navigating back from an evidence-entry step; it does
-not close the project page itself.
+files restores the ordinary workspace. Escape dismisses an open binding form,
+waiver dialog, or outline editor, one layer at a time; it does not close the
+project page itself.
 
 The page has three sections: **Evidence**, **Finalization check**, and
 **Version history**. Evidence pairs the manuscript outline with the selected
@@ -20,10 +20,9 @@ creating a new revision retains the historical evidence of its parent.
 The page uses the available project-pane width on large displays. The manuscript
 outline stays compact while evidence expands into two or three columns on wider
 panes. New-paper guidance and its form sit side by side when space permits;
-editing forms retain a readable width. Source lists and text previews also use
-taller windows. Layout breakpoints follow the pane width, so resizing the sidebar
-or using a narrower window returns the page to stacked layouts without changing
-evidence order or selection.
+editing forms retain a readable width. Layout breakpoints follow the pane width,
+so resizing the sidebar or using a narrower window returns the page to stacked
+layouts without changing evidence order or selection.
 
 A Publication contains ordered
 manuscript items (Section, Claim, Figure, Table, Methods, and Supplement) and
@@ -31,23 +30,28 @@ one or more revisions. Draft revisions can be edited. Frozen and Published
 revisions are read-only; use **Clone revision** to continue work without
 changing historical evidence.
 
-**Add evidence** selects registered project results, persisted analysis runs,
-or saved research conversation text. Source lists are project/mainline scoped,
-searchable, and paginated in batches of 50. **Previous** / **Next** and the shown
-range sit under the list, outside its scroll area, and appear only when there is
-more than one page. **Cancel** (or Escape) returns to Evidence, and the form that
-follows **Explain its use** opens directly under the page tabs. Files bind the exact ArtifactVersion
-shown in the picker, even if a newer result is created before saving. Message
-previews show up to 16 KiB of original text; select a passage with the mouse or
-keyboard, or use the entire preview. The editor converts UTF-16 selection
-positions to UTF-8 byte offsets automatically. A changed message is rejected at
-binding time so it cannot silently reinterpret the previewed passage. Very large
-serialized messages (over 256 KiB) are available through advanced exact anchors
-rather than the picker. The picker excludes system/tool messages and exploration
-results; advanced anchors remain available for the other supported source types.
+The Publication page has no source browser: evidence is never searched for
+or picked from a list by hand. A draft revision shows a short hint instead, and
+evidence is attached in one of two ways:
 
-Registered Artifacts and persisted Runs also expose **Use in publication**. The
-binding dialog records:
+- ask the assistant in a conversation to set a file as evidence for the paper
+  (for example "set `figures/fig1.png` as Figure 1 and
+  `figures/fig1_source.csv` as its source data"). The assistant calls the
+  `paper_evidence` tool, which registers the project file as a result at the
+  content it has now and binds that exact version to the named figure, table
+  or section of the paper's draft revision. A paper or an item whose title is
+  new is created; with one paper in the project the paper need not be named.
+  Setting the same file again after it changed replaces the older version on
+  that item and keeps its reason. The tool also takes a registered Artifact
+  or a Run by id, lists every paper with its items and evidence, and removes
+  one binding. It works on files inside the project folder, in the project's
+  own conversations (not in an exploration), and only on a draft revision; or
+- choose **Use in publication** on a registered Artifact tile or on a persisted
+  Run card.
+
+**Use in publication** opens the Publication page with the binding form directly
+under the page tabs, in place of the evidence list. **Cancel** or Escape closes
+only the form and returns to Evidence. The form records:
 
 - the exact target revision and manuscript item;
 - the evidence purpose and optional supported Claim;
@@ -117,14 +121,15 @@ frozen revision, including its revision-manifest hash and archive hash.
 
 ## Precise evidence and clean verification
 
-Draft revisions retain **Advanced: locate by source ID → Add precise evidence**.
-It accepts an exact
+Besides Artifact versions and Runs, a binding can anchor an exact
 `MessageSpan`, `ToolCall`, `ExecutionLog`, `CodeCell`, or `ExternalResource`
-identity. Message and tool locators contain the frame, persisted message
+identity. The Publication page no longer has a dialog for typing these
+identifiers; such bindings are displayed, checked, and frozen like any other.
+Message and tool locators contain the frame, persisted message
 sequence, and UTF-8 byte range or tool-call ID. Execution and code anchors use
 the exact execution-log ID, never the most recent execution for a path. Wisp
 copies the selected text, arguments, result, code, log, or resource metadata
-into a hash-authenticated binding snapshot when it is selected. Later Session
+into a hash-authenticated binding snapshot when it is bound. Later Session
 compaction or deletion cannot change that snapshot.
 
 A Frozen or Published evidence card with a producing Run exposes **Verify in
@@ -186,10 +191,12 @@ reproducibility.
 ## Manual smoke check
 
 1. Open **Publication**, create a Draft revision and Methods/Figure item, then
-   add a persisted Run with exact inputs, outputs, code, and environment.
-2. Open **Add evidence → Research conversations**, select a Chinese/emoji
-   passage and bind it. Also open the advanced anchor dialog and press Escape
-   immediately; only the dialog should close and the project page should remain.
+   choose **Use in publication** on a persisted Run card with exact inputs,
+   outputs, code, and environment, and bind it.
+2. Confirm the draft's Evidence section shows the hint and no **Add evidence**
+   button. From a registered Artifact tile choose **Use in publication** and
+   press Escape immediately; only the binding form should close and the
+   project page should remain on Evidence. Choose it again and bind it.
 3. In **Finalization check**, choose Private or Restricted, check the revision,
    and confirm it remains Draft. Change a policy option and confirm the lock
    action becomes unavailable until another check. Then confirm and lock.
