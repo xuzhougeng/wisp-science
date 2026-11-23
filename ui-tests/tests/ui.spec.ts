@@ -13830,6 +13830,83 @@ test("short windows fold the sidebar nav tail into a More flyout instead of scro
   await expect(nav.getByRole("button", { name: "Library", exact: true })).toBeVisible();
 });
 
+test("sidebar nav can be manually folded into More on tall windows and persists", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 960 });
+  await page.goto("/?mockManySessions=1");
+  await page.locator(".proj-card-main").first().click();
+
+  const nav = page.locator(".sidebar .nav");
+  const foldBtn = page.getByTestId("sidebar-nav-fold");
+  const more = nav.getByRole("button", { name: "More", exact: true });
+  const menu = page.getByTestId("sidebar-more-menu");
+  const list = page.locator(".sidebar .side-list");
+
+  await expect(foldBtn).toBeVisible();
+  await expect(foldBtn).toHaveAttribute("aria-expanded", "true");
+  await expect(foldBtn).toHaveAttribute("aria-label", "Collapse navigation");
+  await expect(more).toBeHidden();
+  await expect(nav.getByRole("button", { name: "Library", exact: true })).toBeVisible();
+  const expandedListHeight = (await list.boundingBox())!.height;
+
+  // Fold secondary nav entries into More and give the reclaimed height to Sessions.
+  await foldBtn.click();
+  await expect(foldBtn).toHaveAttribute("aria-expanded", "false");
+  await expect(foldBtn).toHaveAttribute("aria-label", "Expand navigation");
+  await expect(more).toBeVisible();
+  await expect(nav.getByRole("button", { name: "New group", exact: true })).toBeHidden();
+  await expect(nav.getByRole("button", { name: "Files", exact: true })).toBeHidden();
+  await expect(nav.getByRole("button", { name: "Library", exact: true })).toBeHidden();
+  await expect.poll(async () => (await list.boundingBox())!.height).toBeGreaterThan(expandedListHeight + 100);
+
+  // Every folded entry is reachable from More, and Escape closes only the flyout.
+  await more.click();
+  await expect(menu.getByRole("button")).toHaveText([
+    "New group",
+    "Files",
+    "Research journey",
+    "Memos",
+    "Publication",
+    "Library",
+  ]);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(page.locator(".sidebar")).toBeVisible();
+
+  // Opening a folded section lights up the More button while folded.
+  await more.click();
+  await menu.getByRole("button", { name: "Memos", exact: true }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(nav.locator(".nav-tier-1.active")).toHaveText("Memos");
+  await expect.poll(() => more.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+
+  // Folded preference persists across reload.
+  await page.reload();
+  await page.locator(".proj-card-main").first().click();
+  await expect(foldBtn).toHaveAttribute("aria-expanded", "false");
+  await expect(more).toBeVisible();
+  await expect(nav.getByRole("button", { name: "Files", exact: true })).toBeHidden();
+
+  // Medium windows (641-820px) still let the user toggle tier-2 entries in/out of More.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await expect(foldBtn).toBeVisible();
+  await expect(nav.getByRole("button", { name: "Files", exact: true })).toBeHidden();
+  await foldBtn.click();
+  await expect(foldBtn).toHaveAttribute("aria-expanded", "true");
+  await expect(nav.getByRole("button", { name: "Files", exact: true })).toBeVisible();
+  await expect(nav.getByRole("button", { name: "Library", exact: true })).toBeHidden();
+
+  // Very short windows (<= 640px) already fold all secondary entries by height, so the toggle hides.
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await expect(foldBtn).toBeHidden();
+
+  // Returning to a tall window reflects the restored expanded preference.
+  await page.setViewportSize({ width: 1280, height: 960 });
+  await expect(foldBtn).toBeVisible();
+  await expect(foldBtn).toHaveAttribute("aria-expanded", "true");
+  await expect(more).toBeHidden();
+  await expect(nav.getByRole("button", { name: "Library", exact: true })).toBeVisible();
+});
+
 test("the UI font size scales every font size proportionally instead of flattening controls", async ({ page }) => {
   // A raw px font size would ignore the UI font size setting (settings.css).
   const stylesDir = resolve(__dirname, "../../ui/src/styles");
