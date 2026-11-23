@@ -71,7 +71,7 @@
 .assistant-plans li + li { border-top: 1px solid var(--border); }
 .assistant-plan-title { display: flex; align-items: baseline; gap: 12px; font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.65; }
 .assistant-plan-title > span { flex: 1; min-width: 0; }
-.assistant-plan-title small { flex-shrink: 0; color: var(--text-muted); font-size: calc(10px * var(--ui-font-scale, 1)); }
+.assistant-plan-title small { flex-shrink: 0; color: var(--text-muted); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); }
 .assistant-plans li[data-status="done"] .assistant-plan-title > span, .assistant-plans li[data-status="dropped"] .assistant-plan-title > span { color: var(--text-muted); text-decoration: line-through; }
 .assistant-plans li p, .assistant-plan-empty { margin: 4px 0 0; color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.7; }
 .assistant-records-heading { padding: 18px 0 8px; }

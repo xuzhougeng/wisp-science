@@ -3308,7 +3308,7 @@ pub(super) fn SettingsView(
                                                     }
                                                 }).collect_view()}
                                             </select>
-                                            <button type="button" data-testid="notification-sound-preview"
+                                            <button type="button" class="btn-ghost" data-testid="notification-sound-preview"
                                                 on:click=preview_notification_sound>{move || t(locale.get(), "settings.notification_sound_preview")}</button>
                                         </div>
                                     })
@@ -4303,7 +4303,8 @@ pub(super) fn SettingsView(
                             let dark = theme_mode.get() == "dark";
                             let palette = if dark { dark_palette.get() } else { light_palette.get() };
                             let (accent, background, foreground) = appearance_palette_meta(dark, &palette);
-                            let accent_ink = if dark && palette == "gruvbox" { "#1D2021" } else { "#FFFFFF" };
+                            // Matches --on-clay: dark ink on the light accents of dark palettes.
+                            let accent_ink = if dark { "#0B1513" } else { "#FFFFFF" };
                             let background_ink = if dark { "#FFFFFF" } else { "#1F2328" };
                             let foreground_ink = if dark { "#1F2328" } else { "#FFFFFF" };
                             let options = appearance_palette_options(dark);

@@ -69,6 +69,47 @@ test("conversation grows on wide windows, caps on ultrawide screens, and shrinks
   await expect.poll(async () => Math.abs(await columnWidth(page) - narrowWidth)).toBeLessThanOrEqual(1);
 });
 
+test("prose keeps a reading measure while the column fills a wide window", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openConversation(page);
+  await expect.poll(() => columnWidth(page)).toBeGreaterThan(1000);
+
+  const measure = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.width = "var(--md-prose-measure)";
+    document.querySelector(".thread")!.append(probe);
+    const width = probe.getBoundingClientRect().width;
+    probe.remove();
+    return width;
+  });
+  expect(measure).toBeGreaterThan(600);
+  expect(measure).toBeLessThan(900);
+
+  const paragraphs = page.locator(".msg.assistant .body.md > p");
+  await expect(paragraphs.first()).toBeVisible();
+  const widths = await paragraphs.evaluateAll((nodes) => nodes.map((node) => {
+    const style = getComputedStyle(node);
+    return { maxWidth: parseFloat(style.maxWidth), width: node.getBoundingClientRect().width };
+  }));
+  for (const { maxWidth, width } of widths) {
+    expect(maxWidth).toBeCloseTo(measure, 0);
+    expect(width).toBeLessThanOrEqual(measure + 1);
+  }
+});
+
+test("an unresized Inspector leaves the conversation the wider column at the default window size", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 760 });
+  await openConversation(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await expect(page.locator(".rightpane")).toBeVisible();
+  await expectColumnsFit(page);
+  // Regression: a fixed 400px default left a 447px conversation beside it.
+  await expect.poll(() => page.evaluate(() => {
+    const width = (selector: string) => document.querySelector(selector)!.getBoundingClientRect().width;
+    return width(".rightpane") < width(".center") && width(".rightpane") >= 320;
+  })).toBe(true);
+});
+
 test("conversation follows available pane width when Inspector opens and closes", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await openConversation(page);

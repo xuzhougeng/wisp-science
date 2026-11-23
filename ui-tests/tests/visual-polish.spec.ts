@@ -74,6 +74,35 @@ test("composer shortcut hint appears only while the composer is focused or hover
   await expect.poll(() => hint.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
 });
 
+test("composer plus menu rows are plain actions without submenu chevrons", async ({ page }) => {
+  await enterApp(page);
+  await page.locator(".composer-plus").first().click();
+  const menu = page.locator(".compose-menu").first();
+  await expect(menu.locator(".compose-item").first()).toBeVisible();
+  await expect(menu.locator(".compose-item-chevron")).toHaveCount(0);
+});
+
+test("project card actions appear on hover or focus instead of sitting in every row", async ({ page }) => {
+  await page.goto("/");
+  const card = page.locator(".proj-card:not(.proj-example):not(.proj-recent)").first();
+  await expect(card).toBeVisible();
+  const opacity = (selector: string) => card.locator(selector).evaluate((el) => getComputedStyle(el).opacity);
+
+  await page.mouse.move(0, 0);
+  await expect.poll(() => opacity(".pc-del")).toBe("0");
+  await expect.poll(() => opacity(".pc-window")).toBe("0");
+
+  await card.hover();
+  await expect.poll(() => opacity(".pc-del")).toBe("1");
+  await expect.poll(() => opacity(".pc-window")).toBe("1");
+
+  // Keyboard users reach the same actions: focus inside the card reveals them.
+  await page.mouse.move(0, 0);
+  await expect.poll(() => opacity(".pc-del")).toBe("0");
+  await card.locator(".pc-window").focus();
+  await expect.poll(() => opacity(".pc-del")).toBe("1");
+});
+
 test("composer resize target stays functional without drawing a horizontal line", async ({ page }) => {
   await enterApp(page);
   const resizer = page.locator(".composer-resizer");
@@ -113,19 +142,61 @@ test("settings toggles use a softened active track and light thumb", async ({ pa
     swatch.style.background = "var(--clay)";
     document.body.appendChild(swatch);
     const accent = getComputedStyle(swatch).backgroundColor;
-    swatch.style.background = "var(--on-clay)";
-    const onAccent = getComputedStyle(swatch).backgroundColor;
+    swatch.style.background = "var(--toggle-thumb)";
+    const thumbToken = getComputedStyle(swatch).backgroundColor;
     swatch.remove();
     return {
       accent,
-      onAccent,
+      thumbToken,
       track: getComputedStyle(el).backgroundColor,
       thumb: getComputedStyle(el, "::after").backgroundColor,
     };
   });
 
   expect(colors.track).not.toBe(colors.accent);
-  expect(colors.thumb).toBe(colors.onAccent);
+  expect(colors.thumb).toBe(colors.thumbToken);
+});
+
+test("dark theme keeps a light toggle thumb while accent fills carry dark ink", async ({ page }) => {
+  await enterApp(page);
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  const luminance = (name: string) => page.evaluate((token) => {
+    const swatch = document.createElement("span");
+    swatch.style.color = `var(${token})`;
+    document.body.appendChild(swatch);
+    const [r, g, b] = getComputedStyle(swatch).color.match(/[\d.]+/g)!.map(Number);
+    swatch.remove();
+    const channel = (value: number) => {
+      const c = value / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    };
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+  }, name);
+  const contrast = (a: number, b: number) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+
+  const [accent, onAccent, thumb, faint, app, elevated] = await Promise.all(
+    ["--clay", "--on-clay", "--toggle-thumb", "--text-faint", "--bg-app", "--bg-elev"].map(luminance),
+  );
+  // Regression: near-white text on the light dark-theme accent was 2.9:1.
+  expect(contrast(accent, onAccent)).toBeGreaterThanOrEqual(4.5);
+  expect(thumb).toBeGreaterThan(0.8);
+  // Regression: faint text was 3.6–3.9:1 on the dark app and card surfaces.
+  expect(contrast(faint, app)).toBeGreaterThanOrEqual(4.5);
+  expect(contrast(faint, elevated)).toBeGreaterThanOrEqual(4.5);
+});
+
+test("composer shortcut hint shares the toolbar row instead of reserving its own", async ({ page }) => {
+  await enterApp(page);
+  const geometry = await page.locator(".composer-inner").first().evaluate((inner) => {
+    const box = (selector: string) => inner.querySelector(selector)!.getBoundingClientRect();
+    const [hint, actions, tools, buttons] = [".composer-hint", ".composer-actions", ".composer-tools", ".composer-buttons"].map(box);
+    return {
+      footer: inner.querySelectorAll(".composer-footer").length,
+      insideRow: hint.top >= actions.top - 1 && hint.bottom <= actions.bottom + 1,
+      betweenControls: hint.left >= tools.right - 1 && hint.right <= buttons.left + 1,
+    };
+  });
+  expect(geometry).toEqual({ footer: 0, insideRow: true, betweenControls: true });
 });
 
 test("right-pane tabs keep their labels and scroll instead of ellipsizing", async ({ page }) => {

@@ -21,6 +21,31 @@
 - Map near-miss radii onto those tiers (6–9→xs, 10–14→sm, 16–22→lg). Keep `999px` pills, `50%` circles, and asymmetric chat bubbles as literals.
 - Adopt the scale first on brand surfaces (projects landing, chat empty, research graph); avoid one-off px when extending those surfaces.
 
+- The smallest size for running interface text is `--text-xs` (11px), written as `calc(var(--text-xs) * var(--ui-font-scale, 1))` so it follows the user's font scale. Sizes below it are reserved for fixed-size chrome: count and status badges, SVG graph labels, and miniature previews.
+
+## Colour contrast
+
+- `--text-faint` clears 4.5:1 on every surface of the default Paper and Charcoal palettes, including sunken and panel tints. Check a new value against all of them, not just `--bg-app`.
+- `--on-clay` is the ink for text and icons on an accent fill. Dark palettes have light accents, so their ink is dark; do not hardcode white on `--clay`.
+- The settings toggle thumb uses `--toggle-thumb`, which stays light in both themes.
+
+## Conversation layout
+
+- The conversation column fills the pane up to 1280px so tables, code, figures and tool cards can use the space. Prose blocks (paragraphs, lists, blockquotes, headings) are held to `--md-prose-measure`; a Markdown table is as wide as its content, between that measure and the column.
+- Cards in the thread are left-aligned with the prose. Do not centre a narrower card inside the column.
+- The right pane's default width yields to the conversation: until the user drags it, it takes at most 42% of the space beside the sidebar, so the conversation stays the wider column at the 1100px default window. A dragged width is respected and only capped to the window.
+- The composer shortcut hint sits in the toolbar row between the tools and the model controls. It takes only leftover space and truncates; it never reserves a row of its own.
+
+## Home
+
+- A recent-session row shows the title, its project and its age. Only Running and Needs-you rows carry a status badge; Complete is the resting state.
+- Project card actions other than the star appear on hover or keyboard focus (always visible where the pointer cannot hover). Delete is spaced apart from the other actions and turns the error colour on hover.
+- Compact ages switch from a day count to a calendar date after 30 days.
+
+## Menus
+
+- A trailing chevron on a menu row means the row opens a submenu. Rows that run an action or open a dialog carry none.
+
 ## Brand surfaces
 
 - Projects landing and chat empty use the full molecular wordmark (`.brand-wordmark`) with transparent backgrounds. Select its light or dark asset through the app theme; explicit appearance choices override the system preference.

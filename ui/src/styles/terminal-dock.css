@@ -155,7 +155,7 @@
   white-space: nowrap;
   font-weight: 500;
 }
-.terminal-dock-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font: calc(10px * var(--ui-font-scale, 1))/1.2 var(--font-mono); }
+.terminal-dock-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font: calc(var(--text-xs) * var(--ui-font-scale, 1))/1.2 var(--font-mono); }
 .terminal-dock-spacer { flex: 1; }
 
 .terminal-dock-action {
@@ -200,7 +200,7 @@
 .terminal-dock-add-label {
   padding: 5px 8px 7px;
   color: var(--text-faint);
-  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-size: calc(var(--text-xs) * var(--ui-font-scale, 1));
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
@@ -224,7 +224,7 @@
 .terminal-dock-add-item:hover { background: var(--surface-hover); }
 .terminal-dock-add-item svg { width: 14px; height: 14px; color: var(--text-muted); }
 .terminal-dock-add-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(12px * var(--ui-font-scale, 1)); }
-.terminal-dock-add-item small { color: var(--text-faint); font: calc(10px * var(--ui-font-scale, 1))/1.2 var(--font-mono); }
+.terminal-dock-add-item small { color: var(--text-faint); font: calc(var(--text-xs) * var(--ui-font-scale, 1))/1.2 var(--font-mono); }
 
 .terminal-dock-frames {
   width: 100%;

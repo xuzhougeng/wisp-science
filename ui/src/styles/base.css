@@ -10,8 +10,9 @@
 
   --text: #141413;
   --text-muted: #5a574e;
-  /* Secondary text remains readable on the warm application background. */
-  --text-faint: #706d65;
+  /* Faint text clears 4.5:1 on every surface it sits on, including the
+     sunken and panel tints (the previous #706d65 fell to 4.45 on panels). */
+  --text-faint: #6b6860;
 
   --border: rgba(60, 55, 45, 0.1);
   --border-strong: #d6d4cc;
@@ -32,6 +33,7 @@
   --clay-strong: #0f766e;
   --clay-soft: rgba(13, 148, 136, 0.12);
   --on-clay: #ffffff;
+  --toggle-thumb: #ffffff;
   --warm: #0f766e;
   --ok: hsl(152 45% 38%);
   --err: hsl(0 72% 51%);
@@ -121,6 +123,11 @@
   --md-table-font-size: calc(var(--ui-font-size, 14px) - 1px);
   --md-lead-bar-width: 3px;
   --md-lead-bar-pad: 0.55em;
+  /* Longest comfortable line of running text: about 50 characters of body
+     type, as one length so headings, paragraphs and cards share an edge. The
+     conversation column fills the pane (up to 1280px); only prose is held to
+     this measure. */
+  --md-prose-measure: calc(50 * (var(--ui-font-size, 14px) + 1px));
 
   font-family: var(--font-ui);
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
@@ -141,7 +148,7 @@
   --surface-active: #312f2b;
   --text: #ebe8e2;
   --text-muted: #a39e94;
-  --text-faint: #7a756c;
+  --text-faint: #928d83;
   --border: rgba(245, 240, 230, 0.08);
   --border-strong: #3a3732;
   --focus-ring: rgba(45, 168, 152, 0.28);
@@ -151,7 +158,10 @@
   --clay: #2da898;
   --clay-strong: #3fbfad;
   --clay-soft: rgba(45, 168, 152, 0.16);
-  --on-clay: #f4fffc;
+  /* Dark palettes use light accents, so text on an accent fill is dark ink:
+     near-white on #2da898 was 2.9:1, this is 6:1. */
+  --on-clay: #0b1513;
+  --toggle-thumb: #f4fffc;
   --warm: #3fbfad;
   --ok: hsl(152 40% 48%);
   --err: hsl(0 65% 62%);
@@ -190,7 +200,7 @@
     --surface-active: #312f2b;
     --text: #ebe8e2;
     --text-muted: #a39e94;
-    --text-faint: #7a756c;
+    --text-faint: #928d83;
     --border: rgba(245, 240, 230, 0.08);
     --border-strong: #3a3732;
     --focus-ring: rgba(45, 168, 152, 0.28);
@@ -200,7 +210,8 @@
     --clay: #2da898;
     --clay-strong: #3fbfad;
     --clay-soft: rgba(45, 168, 152, 0.16);
-    --on-clay: #f4fffc;
+    --on-clay: #0b1513;
+    --toggle-thumb: #f4fffc;
     --warm: #3fbfad;
     --ok: hsl(152 40% 48%);
     --err: hsl(0 65% 62%);
@@ -239,13 +250,13 @@
 
 /* Appearance palettes keep independent light/dark choices. The active theme
    maps the corresponding palette tokens onto the app's semantic colors. */
-:root[data-light-palette="paper"] { --lp-app:#faf9f6; --lp-elev:#fff; --lp-sunken:#f3f1ec; --lp-input:#fff; --lp-panel:#f0eee6; --lp-hover:#f7f6f2; --lp-active:#fff; --lp-text:#141413; --lp-muted:#5a574e; --lp-faint:#706d65; --lp-border:rgba(60,55,45,.1); --lp-border-strong:#d6d4cc; --lp-accent:#0d9488; --lp-accent-strong:#0f766e; --lp-accent-soft:rgba(13,148,136,.12); }
+:root[data-light-palette="paper"] { --lp-app:#faf9f6; --lp-elev:#fff; --lp-sunken:#f3f1ec; --lp-input:#fff; --lp-panel:#f0eee6; --lp-hover:#f7f6f2; --lp-active:#fff; --lp-text:#141413; --lp-muted:#5a574e; --lp-faint:#6b6860; --lp-border:rgba(60,55,45,.1); --lp-border-strong:#d6d4cc; --lp-accent:#0d9488; --lp-accent-strong:#0f766e; --lp-accent-soft:rgba(13,148,136,.12); }
 :root[data-light-palette="codex"] { --lp-app:#f4f6f8; --lp-elev:#fff; --lp-sunken:#e9edf2; --lp-input:#fff; --lp-panel:#e7ebf0; --lp-hover:#eef2f6; --lp-active:#fff; --lp-text:#172033; --lp-muted:#526078; --lp-faint:#718096; --lp-border:rgba(55,65,81,.12); --lp-border-strong:#cbd3df; --lp-accent:#2563eb; --lp-accent-strong:#1d4ed8; --lp-accent-soft:rgba(37,99,235,.12); }
 :root[data-light-palette="github"] { --lp-app:#f6f8fa; --lp-elev:#fff; --lp-sunken:#eff2f5; --lp-input:#fff; --lp-panel:#eaeef2; --lp-hover:#f3f4f6; --lp-active:#fff; --lp-text:#1f2328; --lp-muted:#59636e; --lp-faint:#6e7781; --lp-border:#d8dee4; --lp-border-strong:#afb8c1; --lp-accent:#0969da; --lp-accent-strong:#0550ae; --lp-accent-soft:rgba(9,105,218,.12); }
 :root[data-light-palette="catppuccin"] { --lp-app:#eff1f5; --lp-elev:#e6e9ef; --lp-sunken:#dce0e8; --lp-input:#f8f9fb; --lp-panel:#e6e9ef; --lp-hover:#e1e5ec; --lp-active:#fff; --lp-text:#4c4f69; --lp-muted:#6c6f85; --lp-faint:#8c8fa1; --lp-border:rgba(76,79,105,.14); --lp-border-strong:#bcc0cc; --lp-accent:#8839ef; --lp-accent-strong:#6f2ed4; --lp-accent-soft:rgba(136,57,239,.13); }
 :root[data-light-palette="everforest"] { --lp-app:#f4f0d9; --lp-elev:#fffbef; --lp-sunken:#e9e4cc; --lp-input:#fffdf4; --lp-panel:#e7e1c8; --lp-hover:#eee9d2; --lp-active:#fffdf4; --lp-text:#2f383e; --lp-muted:#56635f; --lp-faint:#78847c; --lp-border:rgba(74,88,80,.15); --lp-border-strong:#c8c2aa; --lp-accent:#3a8f6b; --lp-accent-strong:#2f7658; --lp-accent-soft:rgba(58,143,107,.14); }
 
-:root[data-dark-palette="charcoal"] { --dp-app:#171614; --dp-elev:#1f1e1b; --dp-sunken:#121110; --dp-input:#262521; --dp-panel:#1c1b18; --dp-hover:#2a2825; --dp-active:#312f2b; --dp-text:#ebe8e2; --dp-muted:#a39e94; --dp-faint:#7a756c; --dp-border:rgba(245,240,230,.08); --dp-border-strong:#3a3732; --dp-accent:#2da898; --dp-accent-strong:#3fbfad; --dp-accent-soft:rgba(45,168,152,.16); }
+:root[data-dark-palette="charcoal"] { --dp-app:#171614; --dp-elev:#1f1e1b; --dp-sunken:#121110; --dp-input:#262521; --dp-panel:#1c1b18; --dp-hover:#2a2825; --dp-active:#312f2b; --dp-text:#ebe8e2; --dp-muted:#a39e94; --dp-faint:#928d83; --dp-border:rgba(245,240,230,.08); --dp-border-strong:#3a3732; --dp-accent:#2da898; --dp-accent-strong:#3fbfad; --dp-accent-soft:rgba(45,168,152,.16); }
 :root[data-dark-palette="codex"] { --dp-app:#202123; --dp-elev:#292a2d; --dp-sunken:#191a1c; --dp-input:#303135; --dp-panel:#25262a; --dp-hover:#33353a; --dp-active:#3a3c42; --dp-text:#f3f4f6; --dp-muted:#b4b8c1; --dp-faint:#858b98; --dp-border:rgba(255,255,255,.09); --dp-border-strong:#444750; --dp-accent:#7c8cff; --dp-accent-strong:#9aa6ff; --dp-accent-soft:rgba(124,140,255,.18); }
 :root[data-dark-palette="github"] { --dp-app:#0d1117; --dp-elev:#161b22; --dp-sunken:#090c10; --dp-input:#21262d; --dp-panel:#151b23; --dp-hover:#1c2128; --dp-active:#262c36; --dp-text:#f0f6fc; --dp-muted:#b1bac4; --dp-faint:#7d8590; --dp-border:#30363d; --dp-border-strong:#484f58; --dp-accent:#58a6ff; --dp-accent-strong:#79c0ff; --dp-accent-soft:rgba(56,139,253,.2); }
 :root[data-dark-palette="catppuccin"] { --dp-app:#1e1e2e; --dp-elev:#28283d; --dp-sunken:#181825; --dp-input:#313244; --dp-panel:#252538; --dp-hover:#343448; --dp-active:#3d3e54; --dp-text:#cdd6f4; --dp-muted:#bac2de; --dp-faint:#7f849c; --dp-border:rgba(205,214,244,.1); --dp-border-strong:#45475a; --dp-accent:#cba6f7; --dp-accent-strong:#d8b9ff; --dp-accent-soft:rgba(203,166,247,.18); }

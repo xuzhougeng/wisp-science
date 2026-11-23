@@ -6,8 +6,8 @@
 use super::*;
 use crate::bindings::schedule_chat_follow;
 use crate::{
-    max_right_pane_width, CENTER_CHAT_MIN_WIDTH, CENTER_DOCUMENT_MIN_WIDTH, PANE_RESIZER_WIDTH,
-    RIGHT_PANE_MIN_WIDTH,
+    max_right_pane_width, space_beside_sidebar, CENTER_CHAT_MIN_WIDTH, CENTER_DOCUMENT_MIN_WIDTH,
+    PANE_RESIZER_WIDTH, RIGHT_PANE_MIN_WIDTH,
 };
 
 /// All reactive geometry of the resizable panes. `RwSignal` is `Copy`, so the
@@ -19,6 +19,7 @@ pub(crate) struct PaneLayoutState {
     pub(crate) sidebar_drag_start_x: RwSignal<f64>,
     pub(crate) sidebar_drag_start_w: RwSignal<f64>,
     pub(crate) right_w: RwSignal<f64>,
+    pub(crate) right_w_custom: RwSignal<bool>,
     pub(crate) right_dragging: RwSignal<bool>,
     pub(crate) right_drag_start_x: RwSignal<f64>,
     pub(crate) right_drag_start_w: RwSignal<f64>,
@@ -45,6 +46,7 @@ impl PaneLayoutState {
             sidebar_drag_start_x: create_rw_signal(0.0_f64),
             sidebar_drag_start_w: create_rw_signal(0.0_f64),
             right_w: create_rw_signal(load_right_pane_w()),
+            right_w_custom: create_rw_signal(right_pane_w_custom()),
             right_dragging: create_rw_signal(false),
             right_drag_start_x: create_rw_signal(0.0_f64),
             right_drag_start_w: create_rw_signal(0.0_f64),
@@ -86,11 +88,33 @@ impl PaneLayoutState {
         }
     }
 
-    pub(crate) fn right_resize_start(self, ev: web_sys::MouseEvent) {
+    /// The width the right pane is drawn at. A width the user dragged is only
+    /// capped to the window; the untouched default also yields to the
+    /// conversation on small windows.
+    pub(crate) fn right_pane_width(self, sidebar_open: bool) -> f64 {
+        let sidebar_w = self.sidebar_w.get();
+        let width = self
+            .right_w
+            .get()
+            .min(max_right_pane_width(sidebar_open, sidebar_w));
+        if self.right_w_custom.get() {
+            width
+        } else {
+            width.min(default_right_pane_w(
+                space_beside_sidebar(sidebar_open, sidebar_w) - PANE_RESIZER_WIDTH,
+            ))
+        }
+    }
+
+    pub(crate) fn right_resize_start(self, ev: web_sys::MouseEvent, sidebar_open: bool) {
         ev.prevent_default();
+        // Drag from the drawn width, which can be narrower than the stored default.
+        let drawn = self.right_pane_width(sidebar_open);
+        self.right_w.set(drawn);
+        self.right_w_custom.set(true);
         self.right_dragging.set(true);
         self.right_drag_start_x.set(ev.client_x() as f64);
-        self.right_drag_start_w.set(self.right_w.get());
+        self.right_drag_start_w.set(drawn);
     }
 
     pub(crate) fn right_resize_move(self, ev: web_sys::MouseEvent, sidebar_open: bool) {

@@ -108,7 +108,7 @@
 .swarm-worker[data-status="running"] .swarm-worker-dot { animation: swarm-breathe var(--agent-pulse-duration) var(--agent-motion-ease) infinite; }
 .swarm-roster-footer { display: grid; gap: 12px; padding: 14px 16px; border-top: 1px solid var(--border); }
 .swarm-model { display: grid; gap: 4px; min-width: 0; }
-.swarm-model > span { color: var(--text-faint); font-size: calc(10px * var(--ui-font-scale, 1)); }
+.swarm-model > span { color: var(--text-faint); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); }
 .swarm-model small { color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .swarm-stop, .swarm-back, .swarm-more, .swarm-retry { display: flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--border); background: var(--bg-elev); padding: 8px 12px; border-radius: var(--radius-xs); font-size: calc(12px * var(--ui-font-scale, 1)); }
 .swarm-stop:hover { color: var(--err); border-color: color-mix(in srgb, var(--err) 30%, var(--border)); background: color-mix(in srgb, var(--err) 5%, var(--bg-elev)); }
@@ -216,7 +216,7 @@
   .swarm-roster-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; }
   .swarm-model { flex: 1; }
   .swarm-model > span { display: none; }
-  .swarm-roster-footer small { font-size: calc(10px * var(--ui-font-scale, 1)); }
+  .swarm-roster-footer small { font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); }
   .swarm-stop { padding: 6px 8px; font-size: calc(11px * var(--ui-font-scale, 1)); flex-shrink: 0; }
   .swarm-detail { padding: 16px; }
   .swarm-overview-hero { min-height: 0; margin-bottom: 16px; }

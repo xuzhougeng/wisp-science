@@ -292,7 +292,8 @@ fn session_highlight_count(session: Option<String>, items: &[LibraryItemSummary]
         .count()
 }
 
-fn max_right_pane_width(sidebar_open: bool, sidebar_width: f64) -> f64 {
+/// Window width left for the conversation and the right pane.
+fn space_beside_sidebar(sidebar_open: bool, sidebar_width: f64) -> f64 {
     let viewport_width = web_sys::window()
         .and_then(|window| window.inner_width().ok())
         .and_then(|width| width.as_f64())
@@ -302,7 +303,13 @@ fn max_right_pane_width(sidebar_open: bool, sidebar_width: f64) -> f64 {
     } else {
         0.0
     };
-    let available = viewport_width - sidebar_space - CENTER_PANE_MIN_WIDTH - PANE_RESIZER_WIDTH;
+    viewport_width - sidebar_space
+}
+
+fn max_right_pane_width(sidebar_open: bool, sidebar_width: f64) -> f64 {
+    let available = space_beside_sidebar(sidebar_open, sidebar_width)
+        - CENTER_PANE_MIN_WIDTH
+        - PANE_RESIZER_WIDTH;
     available.clamp(RIGHT_PANE_MIN_WIDTH, RIGHT_PANE_MAX_WIDTH)
 }
 
@@ -9003,7 +9010,9 @@ fn App() -> impl IntoView {
     let on_sidebar_resize_move = move |ev: web_sys::MouseEvent| pane_layout.sidebar_resize_move(ev);
     let on_sidebar_resize_end = move |_| pane_layout.sidebar_resize_end();
 
-    let on_resize_start = move |ev: web_sys::MouseEvent| pane_layout.right_resize_start(ev);
+    let on_resize_start = move |ev: web_sys::MouseEvent| {
+        pane_layout.right_resize_start(ev, show_sidebar.get_untracked())
+    };
     let on_resize_move =
         move |ev: web_sys::MouseEvent| pane_layout.right_resize_move(ev, show_sidebar.get());
 
@@ -16350,19 +16359,6 @@ fn App() -> impl IntoView {
                             }
                         })}
                     </div>
-                    <div class="composer-footer">
-                        <div class="composer-hint">{move || {
-                            if send_with_modifier.get() {
-                                tf(
-                                    locale.get(),
-                                    "composer.hint_modifier",
-                                    &[("modifier", if is_mac() { "Cmd" } else { "Ctrl" })],
-                                )
-                            } else {
-                                t(locale.get(), "composer.hint").into()
-                            }
-                        }}</div>
-                    </div>
                     <div class="composer-actions">
                         <div class="composer-tools">
                             {move || session_timer.get().map(|timer| view! {
@@ -16387,7 +16383,6 @@ fn App() -> impl IntoView {
                                                 <span class="compose-item-label">{move || t(locale.get(), "composer.attach_files")}</span>
                                                 <span class="compose-item-sub">{move || t(locale.get(), "composer.attach_files_sub")}</span>
                                             </span>
-                                            <span class="compose-item-chevron">{compose_icon("chevron")}</span>
                                         </button>
                                         <button type="button" class="compose-item"
                                             on:click=move |ev| { compose_menu_open.set(false); open_files(ev); }>
@@ -16396,7 +16391,6 @@ fn App() -> impl IntoView {
                                                 <span class="compose-item-label">{move || t(locale.get(), "composer.your_files")}</span>
                                                 <span class="compose-item-sub">{move || t(locale.get(), "composer.your_files_sub")}</span>
                                             </span>
-                                            <span class="compose-item-chevron">{compose_icon("chevron")}</span>
                                         </button>
                                     </div>
                                     <div class="compose-group">
@@ -16413,7 +16407,6 @@ fn App() -> impl IntoView {
                                                 <span class="compose-item-label">{move || t(locale.get(), "composer.request_review")}</span>
                                                 <span class="compose-item-sub">{move || t(locale.get(), "composer.request_review_sub")}</span>
                                             </span>
-                                            <span class="compose-item-chevron">{compose_icon("chevron")}</span>
                                         </button>
                                         <button type="button" class="compose-item" disabled=move || !can_share.get()
                                             on:click=move |_| {
@@ -16425,7 +16418,6 @@ fn App() -> impl IntoView {
                                                 <span class="compose-item-label">{move || t(locale.get(), "share.title")}</span>
                                                 <span class="compose-item-sub">{move || t(locale.get(), "composer.share_sub")}</span>
                                             </span>
-                                            <span class="compose-item-chevron">{compose_icon("chevron")}</span>
                                         </button>
                                         <button type="button" class="compose-item"
                                             on:click=move |_| {
@@ -16438,7 +16430,6 @@ fn App() -> impl IntoView {
                                                 <span class="compose-item-label">{move || t(locale.get(), "composer.save_skill")}</span>
                                                 <span class="compose-item-sub">{move || t(locale.get(), "composer.save_skill_sub")}</span>
                                             </span>
-                                            <span class="compose-item-chevron">{compose_icon("chevron")}</span>
                                         </button>
                                         <button type="button" class="compose-item"
                                             on:click=move |_| {
@@ -16450,7 +16441,6 @@ fn App() -> impl IntoView {
                                                 <span class="compose-item-label">{move || t(locale.get(), "skills.manage")}</span>
                                                 <span class="compose-item-sub">{move || t(locale.get(), "skills.manage_sub")}</span>
                                             </span>
-                                            <span class="compose-item-chevron">{compose_icon("chevron")}</span>
                                         </button>
                                     </div>
                                 </div>
@@ -17052,6 +17042,19 @@ fn App() -> impl IntoView {
                                 }
                             })}
                         </div>
+                        // Shortcut hint lives in the toolbar's free middle, so an
+                        // idle composer reserves no row for text it is not showing.
+                        <div class="composer-hint">{move || {
+                            if send_with_modifier.get() {
+                                tf(
+                                    locale.get(),
+                                    "composer.hint_modifier",
+                                    &[("modifier", if is_mac() { "Cmd" } else { "Ctrl" })],
+                                )
+                            } else {
+                                t(locale.get(), "composer.hint").into()
+                            }
+                        }}</div>
                         <div class="composer-buttons">
                             {move || active_context_usage.get().map(|snapshot| {
                                 let pct = context_percent(snapshot.used, snapshot.max);
@@ -17655,9 +17658,7 @@ fn App() -> impl IntoView {
                 aria-label=move || t(locale.get(), "right.close")
                 on:click=move |_| show_right.set(false)></button>
             <section class="rightpane" style=move || {
-                let width = right_w
-                    .get()
-                    .min(max_right_pane_width(show_sidebar.get(), sidebar_w.get()));
+                let width = pane_layout.right_pane_width(show_sidebar.get());
                 format!("width:{width}px")
             }>
                 <Show when=move || !right_launcher_open.get() fallback=move || view! {

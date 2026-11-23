@@ -99,10 +99,10 @@
 .center-runtime-environment-head { display: flex; min-height: 48px; flex: 0 0 auto; align-items: center; gap: 8px; padding: 7px 10px 7px 12px; border-bottom: 1px solid var(--border); }
 .center-runtime-environment-head > div:first-child { min-width: 0; flex: 1 1 auto; }
 .center-runtime-environment-head h3 { margin: 0; overflow: hidden; color: var(--text); font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.center-runtime-environment-head > div:first-child > span { display: block; margin-top: 2px; overflow: hidden; color: var(--text-faint); font: calc(10px * var(--ui-font-scale, 1))/1.3 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.center-runtime-environment-head > div:first-child > span { display: block; margin-top: 2px; overflow: hidden; color: var(--text-faint); font: calc(var(--text-xs) * var(--ui-font-scale, 1))/1.3 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .center-runtime-environment-table-head,
 .center-runtime-environment-row { display: grid; grid-template-columns: minmax(62px, 1fr) minmax(56px, .8fr) minmax(76px, 1.25fr) minmax(44px, auto); align-items: center; gap: 8px; }
-.center-runtime-environment-table-head { flex: 0 0 auto; padding: 7px 10px; border-bottom: 1px solid var(--border); background: var(--bg-sunken); color: var(--text-faint); font-size: calc(9.5px * var(--ui-font-scale, 1)); font-weight: 600; }
+.center-runtime-environment-table-head { flex: 0 0 auto; padding: 7px 10px; border-bottom: 1px solid var(--border); background: var(--bg-sunken); color: var(--text-faint); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); font-weight: 600; }
 .center-runtime-environment-table-head span:last-child { text-align: right; }
 .center-runtime-environment-body { min-height: 0; flex: 1 1 auto; overflow: auto; }
 .center-runtime-environment-rows { min-width: 280px; }
@@ -230,8 +230,8 @@
 .plan-card-head .plan-card-icon svg { width: 16px; height: 16px; }
 .plan-card-head > div { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 1px; }
 .plan-card-head strong { color: var(--text); font-size: calc(11.5px * var(--ui-font-scale, 1)); }
-.plan-card-head > div > span { color: var(--text-faint); font-size: calc(9.5px * var(--ui-font-scale, 1)); }
-.plan-card-compat { flex: none; padding: 1px 7px; border-radius: 999px; background: var(--bg-sunken); color: var(--text-faint); font-size: calc(9.5px * var(--ui-font-scale, 1)); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.plan-card-head > div > span { color: var(--text-faint); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); }
+.plan-card-compat { flex: none; padding: 1px 7px; border-radius: 999px; background: var(--bg-sunken); color: var(--text-faint); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .plan-card-body { margin: 0; padding: 14px 16px; color: var(--text); font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.62; list-style: none; }
 .plan-card-body > :first-child { margin-top: 0; }
 .plan-card-body > :last-child { margin-bottom: 0; }
@@ -250,7 +250,7 @@
 .plan-card-body li[data-status="completed"] .plan-entry-mark { color: var(--clay-strong); }
 .plan-card-body li[data-status="in_progress"] { color: var(--text); font-weight: 600; }
 .plan-card-body li[data-status="in_progress"] .plan-entry-mark { color: var(--clay-strong); }
-.plan-entry-priority { flex: none; padding: 0 5px; border-radius: 5px; background: color-mix(in srgb, var(--clay) 20%, transparent); color: var(--clay-strong); font-size: calc(9.5px * var(--ui-font-scale, 1)); font-weight: 700; }
+.plan-entry-priority { flex: none; padding: 0 5px; border-radius: 5px; background: color-mix(in srgb, var(--clay) 20%, transparent); color: var(--clay-strong); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); font-weight: 700; }
 .plan-card-actions { display: flex; flex-wrap: wrap; gap: 7px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--bg-sunken); }
 .plan-card-hint { flex-basis: 100%; margin: 0; color: var(--text-faint); font-size: calc(10.5px * var(--ui-font-scale, 1)); }
 .plan-card-actions button { padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--bg-elev); color: var(--text); font: inherit; font-size: calc(10.5px * var(--ui-font-scale, 1)); cursor: pointer; }
@@ -530,7 +530,7 @@
 @keyframes review-dot-squirm { to { opacity: .9; transform: translateY(-2px); } }
 .review-live-copy { display: grid; min-width: 0; line-height: 1.15; }
 .review-live-copy strong { font-size: calc(11.5px * var(--ui-font-scale, 1)); font-weight: 600; white-space: nowrap; }
-.review-live-copy span { color: var(--text-faint); font-size: calc(9.5px * var(--ui-font-scale, 1)); white-space: nowrap; }
+.review-live-copy span { color: var(--text-faint); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) {
   .review-live-lens::after, .review-live-lens i { animation: none; }
 }
@@ -657,7 +657,7 @@
 /* Body copy sits after the title; do not use :last-child — the extension banner
    appends a path <code> (and maybe an error) after the body span. */
 .exploration-banner-copy strong + span { color: var(--text-muted); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.4; }
-.exploration-banner-eyebrow { color: var(--clay-strong); font-size: calc(9.5px * var(--ui-font-scale, 1)); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.exploration-banner-eyebrow { color: var(--clay-strong); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .exploration-banner-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .exploration-banner button {
   flex: 0 0 auto; padding: 5px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs);
@@ -700,7 +700,7 @@
 .browser-extension-path {
   display: block; overflow: hidden; max-width: 100%; box-sizing: border-box; padding: 3px 5px;
   border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--bg-input);
-  color: var(--text); font-size: calc(10px * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); text-overflow: ellipsis; white-space: nowrap;
 }
 .exploration-banner-copy .browser-extension-error { color: var(--err); }
 /* Database recovery notice (#1635): a restored copy reads as a warning, an
@@ -723,7 +723,7 @@
 .database-recovery-icon { display: inline-flex; flex: 0 0 auto; padding-top: 2px; }
 .database-recovery-icon svg { width: 18px; height: 18px; }
 .database-recovery-label {
-  margin-top: 4px; color: var(--text-muted); font-size: calc(10px * var(--ui-font-scale, 1));
+  margin-top: 4px; color: var(--text-muted); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1));
 }
 .exploration-banner.database-recovery button.database-recovery-dismiss {
   display: inline-flex; align-items: center; justify-content: center; padding: 4px;
@@ -823,7 +823,7 @@
   overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
 }
 .conversation-outline-time {
-  color: var(--text-faint); font-family: var(--font-mono); font-size: calc(10px * var(--ui-font-scale, 1));
+  color: var(--text-faint); font-family: var(--font-mono); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums; line-height: 1.3;
 }
 
@@ -925,7 +925,7 @@
 .follow-up-options button:hover { background: var(--surface-hover); }
 .follow-up-options button > span:first-child { color: var(--text-faint); }
 .message-artifacts { margin-top: 14px; max-width: 100%; }
-.message-artifacts-label { margin-bottom: 7px; color: var(--text-faint); font-size: calc(10px * var(--ui-font-scale, 1)); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+.message-artifacts-label { margin-bottom: 7px; color: var(--text-faint); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
 /* Compact rows instead of large tiles: non-image kinds only carry a type badge,
    so a 4:3 thumb area was empty weight. Images still show a cropped thumb. */
 .message-artifact-card { display: grid; grid-template-columns: 40px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 10px; align-items: center; padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); font: inherit; cursor: pointer; text-align: left; transition: border-color .12s ease, background .12s ease; }
@@ -1332,6 +1332,12 @@ details.rz .body { margin-top: 6px; }
   color: color-mix(in srgb, var(--text) 96%, var(--text-muted));
 }
 .md > :first-child { margin-top: 0; }
+/* The column is deliberately wide so tables, code, figures and tool cards can
+   use the pane. Running text is not: at 1100px+ a paragraph ran past 150
+   characters per line. Hold prose blocks to a reading measure and leave every
+   other block at the column width. */
+.msg.assistant .body.md > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-width: var(--md-prose-measure); }
+.msg.assistant .body.md > p:has(img, video, iframe) { max-width: none; }
 .md > :last-child { margin-bottom: 0; }
 /* KaTeX display math: block-level, scroll long equations instead of overflowing. */
 .md .math-display { display: block; overflow-x: auto; overflow-y: hidden; }
@@ -1651,6 +1657,10 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse var(--a
 .share-raster.md pre { overflow: visible; }
 .share-raster.md pre code, .share-raster.md pre.md-code code { white-space: pre-wrap; overflow-wrap: anywhere; overflow: visible; }
 .md .md-table-card { margin: 0 0 10px; }
+/* A table is as wide as its content needs: never narrower than the prose
+   beside it, never wider than the column. A two-column table no longer
+   stretches across a 1200px pane. */
+.msg.assistant .body.md > .md-table-card { width: fit-content; min-width: min(100%, var(--md-prose-measure)); max-width: 100%; }
 .md .md-table-card table { width: 100%; margin: 0; display: table; overflow: visible; }
 .md .md-table-card .tbl-wrap { margin: 0; }
 .md th, .md td { padding: 6px 10px; border: 1px solid var(--border); text-align: left; white-space: normal; vertical-align: top; }
@@ -1890,11 +1900,11 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse var(--a
   font: inherit; font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1));
 }
 .model-menu-config-toggle { flex: 0 0 auto; }
-/* Hint row sits above the toolbar so the toolbar is the composer's bottom edge. */
-.composer-footer { display: grid; min-height: 20px; margin-top: 2px; }
 /* Shortcut hint stays hidden until the composer is focused (or hovered), so the
-   idle composer reads as a clean input rather than a help panel. */
-.composer-hint { min-width: 0; padding: 0 2px 0 54px; font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.35; color: var(--text-faint); user-select: none; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity .15s ease; }
+   idle composer reads as a clean input rather than a help panel. It takes only
+   the toolbar's leftover middle (flex-basis 0), so it never costs a row of its
+   own and truncates before it can push the model picker or send button. */
+.composer-hint { flex: 1 1 0; min-width: 0; padding: 0 2px; font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.35; color: var(--text-faint); user-select: none; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity .15s ease; }
 .composer-inner:focus-within .composer-hint, .composer-inner:hover .composer-hint { opacity: 1; }
 .context-usage-trigger {
   display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 4px;
@@ -2107,7 +2117,7 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse var(--a
 .compute-resource-row.enabled .compute-resource-icon { color: var(--clay-strong); }
 .compute-resource-name-wrap { min-width: 0; display: flex; align-items: center; gap: 6px; }
 .compute-resource-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.compute-resource-default { flex: 0 0 auto; padding: 0 6px; border-radius: 999px; border: 1px solid var(--clay); color: var(--clay-strong); font-size: calc(10px * var(--ui-font-scale, 1)); font-weight: 600; line-height: 15px; }
+.compute-resource-default { flex: 0 0 auto; padding: 0 6px; border-radius: 999px; border: 1px solid var(--clay); color: var(--clay-strong); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); font-weight: 600; line-height: 15px; }
 .compute-resource-state { color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); }
 .compute-resource-row.enabled .compute-resource-state { color: var(--clay-strong); font-weight: 600; }
 .compute-resource-toggle { display: contents; }
@@ -2134,7 +2144,6 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse var(--a
 .compose-item-text { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; }
 .compose-item-label { font-size: calc(14px * var(--ui-font-scale, 1)); color: var(--text); line-height: 1.3; }
 .compose-item-sub { margin-top: 1px; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-faint); line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.compose-item-chevron { flex: 0 0 auto; color: var(--text-faint); opacity: .65; }
 
 /* @-mention menu (pick a session file from the composer) */
 .composer-mention-anchor { position: relative; min-width: 0; }
@@ -2171,7 +2180,7 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse var(--a
   flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 180px; padding: 1px 6px; border: 1px solid var(--border);
   border-radius: 999px; background: var(--bg-elev); color: var(--text-faint);
-  font-family: var(--font-mono); font-size: calc(10px * var(--ui-font-scale, 1));
+  font-family: var(--font-mono); font-size: calc(var(--text-xs) * var(--ui-font-scale, 1));
 }
 .review-card { border: 1px solid color-mix(in srgb, var(--clay) 30%, var(--border-strong)); border-radius: var(--radius); background: color-mix(in srgb, var(--clay) 4%, var(--bg-elev)); overflow: hidden; }
 .review-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-size: calc(12.5px * var(--ui-font-scale, 1)); font-weight: 600; color: var(--clay-strong); border-bottom: 1px solid color-mix(in srgb, var(--clay) 18%, var(--border-strong)); background: color-mix(in srgb, var(--clay) 7%, transparent); }
@@ -2422,7 +2431,9 @@ button.stop:disabled { opacity: .45; cursor: default; }
 
 .run-monitor-wrap { align-self:stretch; }
 .run-monitor-wrap:empty { display:none; }
-.run-monitor-card { width:min(760px, 100%); margin:0 auto; padding:12px 14px; box-sizing:border-box; border:1px solid color-mix(in srgb, var(--clay) 45%, var(--border)); border-radius:var(--radius-sm); background:var(--bg-elev); box-shadow:var(--shadow-sm); }
+/* Left-aligned and as wide as the prose around it; a centred 760px card left
+   its edge floating ~180px inside the column on wide windows. */
+.run-monitor-card { width:min(var(--md-prose-measure), 100%); margin:0; padding:12px 14px; box-sizing:border-box; border:1px solid color-mix(in srgb, var(--clay) 45%, var(--border)); border-radius:var(--radius-sm); background:var(--bg-elev); box-shadow:var(--shadow-sm); }
 .run-monitor-head { display:flex; align-items:center; gap:9px; min-width:0; }
 .run-monitor-icon { display:flex; flex:0 0 auto; width:22px; height:22px; align-items:center; justify-content:center; border-radius: var(--radius-xs); background:var(--clay-soft); color:var(--clay-strong); font-weight:800; }
 .run-monitor-title { display:flex; min-width:0; flex:1 1 auto; flex-direction:column; gap:1px; }
@@ -2546,7 +2557,6 @@ button.stop:disabled { opacity: .45; cursor: default; }
   .composer-actions { gap: 8px; }
   .model-picker-btn { max-width: 126px; }
   .composer-hint { display: none; }
-  .composer-footer { display: none; }
   .context-usage-panel { padding: 14px 14px 16px; border-radius: var(--radius); }
 }
 
@@ -2739,7 +2749,7 @@ button.stop:disabled { opacity: .45; cursor: default; }
   font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 700; letter-spacing: .04em; color: var(--text-muted);
 }
 .traj-running {
-  font-size: calc(9.5px * var(--ui-font-scale, 1)); font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
   color: var(--clay-strong); background: var(--clay-soft);
   border-radius: 999px; padding: 1px 7px;
 }
@@ -2835,7 +2845,7 @@ button.stop:disabled { opacity: .45; cursor: default; }
 .traj-meta dd { margin: 0; color: var(--text); min-width: 0; word-break: break-word; }
 .traj-preview-block { display: flex; flex-direction: column; gap: 6px; }
 .traj-detail-label {
-  font-size: calc(9.5px * var(--ui-font-scale, 1)); font-weight: 700; letter-spacing: .05em;
+  font-size: calc(var(--text-xs) * var(--ui-font-scale, 1)); font-weight: 700; letter-spacing: .05em;
   text-transform: uppercase; color: var(--text-faint);
 }
 .traj-inspector-body pre,

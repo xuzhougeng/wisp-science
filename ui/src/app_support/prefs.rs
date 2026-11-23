@@ -46,11 +46,18 @@ pub(crate) fn cache_privacy_mode(active: bool, projects: &HashSet<String>) {
 /// Read the host before displaying project identities. Only the first read
 /// offers the old window cache as a migration seed; it is not a preference write.
 pub(crate) async fn read_shared_privacy(seed: bool) -> Option<project_browser::PrivacyMode> {
-    let legacy = seed.then(load_privacy_mode).filter(|(_, ids)| !ids.is_empty());
+    let legacy = seed
+        .then(load_privacy_mode)
+        .filter(|(_, ids)| !ids.is_empty());
     let args = if let Some((active, ids)) = legacy {
-        let legacy = project_browser::PrivacyMode { active, project_ids: ids.into_iter().collect() };
+        let legacy = project_browser::PrivacyMode {
+            active,
+            project_ids: ids.into_iter().collect(),
+        };
         to_value(&serde_json::json!({ "legacy": legacy })).ok()?
-    } else { JsValue::UNDEFINED };
+    } else {
+        JsValue::UNDEFINED
+    };
     serde_wasm_bindgen::from_value(invoke_checked("get_privacy_mode", args).await.ok()?).ok()
 }
 
@@ -732,6 +739,28 @@ pub(crate) fn load_right_pane_w() -> f64 {
     parse_right_pane_w(saved.as_deref())
 }
 
+/// Whether the user has dragged the right pane themselves. Until then its
+/// width is a default the layout may shrink to keep the conversation primary.
+pub(crate) fn right_pane_w_custom() -> bool {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(RIGHT_PANE_W_KEY).ok().flatten())
+        .is_some()
+}
+
+/// Share of the space beside the sidebar that an un-resized right pane may
+/// take. Below one half, so the conversation stays the wider column.
+const RIGHT_PANE_DEFAULT_SHARE: f64 = 0.42;
+
+/// Width of a right pane the user has not resized: the default, shrunk on
+/// small windows so it never outgrows the conversation next to it. `available`
+/// is the window width left after the sidebar and the pane resizer.
+pub(crate) fn default_right_pane_w(available: f64) -> f64 {
+    (available * RIGHT_PANE_DEFAULT_SHARE)
+        .floor()
+        .clamp(crate::RIGHT_PANE_MIN_WIDTH, RIGHT_PANE_W_DEFAULT)
+}
+
 pub(crate) fn save_right_pane_w(w: f64) {
     if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
         let _ = s.set_item(RIGHT_PANE_W_KEY, &w.to_string());
@@ -740,7 +769,23 @@ pub(crate) fn save_right_pane_w(w: f64) {
 
 #[cfg(test)]
 mod right_pane_width_tests {
-    use super::{parse_right_pane_w, RIGHT_PANE_W_DEFAULT};
+    use super::{default_right_pane_w, parse_right_pane_w, RIGHT_PANE_W_DEFAULT};
+
+    #[test]
+    fn an_unresized_pane_stays_narrower_than_the_conversation() {
+        // 1100px default window, 248px sidebar + 10px resizer + 5px pane resizer.
+        let available = 1100.0 - 248.0 - 10.0 - 5.0;
+        let pane = default_right_pane_w(available);
+        assert!(pane < RIGHT_PANE_W_DEFAULT);
+        assert!(
+            pane < available - pane,
+            "pane {pane} vs chat {}",
+            available - pane
+        );
+        // Roomy windows keep the normal default; tiny ones keep the minimum.
+        assert_eq!(default_right_pane_w(1440.0 - 263.0), RIGHT_PANE_W_DEFAULT);
+        assert_eq!(default_right_pane_w(500.0), crate::RIGHT_PANE_MIN_WIDTH);
+    }
 
     #[test]
     fn missing_or_unreadable_widths_fall_back_to_the_default() {
