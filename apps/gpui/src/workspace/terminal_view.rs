@@ -552,9 +552,9 @@ impl Workspace {
             .v_flex()
             .min_w(px(200.))
             .p_1()
-            .rounded(cx.theme().radius)
+            .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(cx.theme().border)
+            .border_color(surfaces::surface_border(cx))
             .bg(cx.theme().popover)
             .shadow_md();
         let hosts = self

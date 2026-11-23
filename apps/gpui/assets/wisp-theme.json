@@ -36,7 +36,7 @@
         "link.hover": "#0d9488",
         "link.active": "#115e59",
         "list.background": "#faf9f6",
-        "list.hover.background": "#f7f6f2",
+        "list.hover.background": "#f0eee6",
         "list.active.background": "#0d94881f",
         "list.active.border": "#0d9488",
         "list.even.background": "#f7f6f2",

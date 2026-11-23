@@ -295,13 +295,12 @@ impl Workspace {
                 cx.listener(move |this, _, _, cx| this.open_centre_menu(asked.clone(), cx)),
             )
             .child(
-                surfaces::tab_close(("centre-tab-close", index), tr("Close tab"), cx).on_click(
-                    cx.listener(move |this, _, window, cx| {
+                surfaces::tab_close(("centre-tab-close", index), tr("Close tab"), selected, cx)
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         // Not a click on the tab underneath.
                         cx.stop_propagation();
                         this.close_centre_tab(closed.clone(), window, cx)
-                    }),
-                ),
+                    })),
             );
             if !selected {
                 tab = tab.on_click(cx.listener(move |this, _, window, cx| {
@@ -333,9 +332,9 @@ impl Workspace {
             .v_flex()
             .p_1()
             .occlude()
-            .rounded(cx.theme().radius)
+            .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(cx.theme().border)
+            .border_color(surfaces::surface_border(cx))
             .bg(cx.theme().popover)
             .shadow_md()
             // A click anywhere else puts it away, as the WebView's menu goes.

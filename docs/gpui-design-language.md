@@ -116,11 +116,18 @@ names and never a colour of their own.
 - **Radius**: 4 px for controls and rows (`radius`), 6 px for cards, fields,
   the composer, dialogs and menus (`radius_lg`), 2 px for a stamp. Pills
   only for counts, tags and switches.
-- **Cards**: `surfaces::card`: a white surface with a hairline and no
-  shadow. Hover darkens the line; it does not lift the card.
+- **Cards**: `surfaces::card`: a white surface with a hairline (`border` in light
+  mode, the firmer `input.border` in dark mode via `surfaces::surface_border`,
+  so interactive cards and popovers stand apart from dark paper) and no
+  shadow. Hover darkens the line; it does not lift the card. Third-party
+  palettes in Settings › General keep `popover` and `tab_active` distinct from
+  the page background so this separation holds across every palette.
 - **Shadows**: dialogs and menus only (with the palette and the cards
   for other projects' conversations, which also float over the page). A test in `surfaces.rs` names
   every function that may draw one and rejects a shadow anywhere else.
+- **Motion**: subtle and purposeful — the live turn's teal dot gently breathes,
+  running `loader` marks slowly rotate (`surfaces::spinning_icon`), and dialogs
+  and the command palette fade in over 120 ms.
 - **Spacing**: the rem steps (`gap_1` … `gap_8`, `p_*`), not pixels. Pixels
   are for layout widths.
 - **Rows**: a row in a list or the sidebar is 32 px high or more, with a
@@ -139,7 +146,9 @@ names and never a colour of their own.
   name, a command, a path) is set in the fact face in ink (`mono`); a
   faded suffix may follow the text (`· local`), and icon buttons may end
   the row after its value. 10 px from the time to the icon and
-  from the icon to the text.
+  from the icon to the text. Expandable rows (`.expandable(open)`) carry a
+  quiet chevron and hover ground, and open into a muted inset well with a
+  left guide rule so tool input/output and logs stay distinct from prose.
 - **Stamps** (`stamp`, `stamp_with`): a status is a stamp, not a coloured
   word or a pill: square corners (2 px), a hairline in the status colour,
   no fill, and a word as a Fact at the regular weight in that colour; no
@@ -197,29 +206,30 @@ names and never a colour of their own.
   Calendar, Scheduled, Favorites, each with its full name as tooltip), then
   the documentation and the settings as icon buttons.
 - Below it one centred column, at most 880 px wide: the greeting (Display),
-  the search field (white, a line, `radius`), then the ways to start (New
-  project filled; Open folder and Import outlined, with icons), on one line
-  that does not wrap. At its right end "More ways to start" (a chevron:
-  the rest of these, not more actions) opens a menu
-  (`Layer::StartMenu`, closed by Escape) of the rarer ways, each an icon
-  and a word: Example conversations, Bring over from WebView, Join from
-  another device, Sample project.
+  the search field (white, 40 px tall, `radius_lg`, with a keycap `⌘K` /
+  `Ctrl+K` hint), then the ways to start (New project filled; Open folder and
+  Import outlined, with icons), on one line that does not wrap. At its right
+  end "More ways to start" (a chevron: the rest of these, not more actions)
+  opens a menu (`Layer::StartMenu`, closed by Escape) of the rarer ways, each
+  an icon and a word: Example conversations, Bring over from WebView, Join
+  from another device, Sample project.
 - Without a model, a bar to act on (`surfaces::bar`: white, a hairline,
   the waiting colour's `circle-alert`, the sentence, Open Settings as an
   outlined `gear` and word) stands under the ways to start.
-- Projects are cells side by side, two to a line, starred ones first (a
-  last one alone takes the whole line, `home::last_cell_spans`), with
-  hairlines between them and round the grid (`radius_lg`). A cell shows the
-  name (Title), a waiting stamp with the bell and the count when something
-  needs the user, the folder (a Fact), and a line of icons and numbers
-  (conversations, artifacts, last touched, and what is running), whose
-  tooltip says them in words. Its actions (keep first, settings, new
-  window, the two exports, remove) are icon buttons with tooltips that
-  show over the cell's top right corner under the pointer, taking no height
-  of their own; a click anywhere else on the cell opens the project.
-- Recent conversations are record rows under the projects: when (the clock
-  today, Yesterday, then a date), the conversation icon, the project and the
-  title, its status as a stamp.
+- Projects sit under a quiet section eyebrow (`Projects` and count) as white
+  cells side by side, two to a line, starred ones first (a last one alone
+  takes the whole line, `home::last_cell_spans`), with hairlines between them
+  and round the grid (`radius_lg`). A cell shows the name (Title), a waiting
+  stamp with the bell and the count when something needs the user, the folder
+  (a Fact), and a line of icons and numbers (conversations, artifacts, last
+  touched, and what is running), whose tooltip says them in words. Its
+  actions (keep first, settings, new window, the two exports, remove) are
+  icon buttons with tooltips that show over the cell's top right corner under
+  the pointer, taking no height of their own; a click anywhere else on the
+  cell opens the project.
+- Recent conversations sit under a quiet section eyebrow as record rows under
+  the projects: when (the clock today, Yesterday, then a date), the
+  conversation icon, the project and the title, its status as a stamp.
 
 ### Project page
 
@@ -294,12 +304,12 @@ names and never a colour of their own.
   (`surfaces::ENTRY_TEXT`, 24 px in from each side). Each of the user's
   messages opens an entry with one head line (`surfaces::entry_head`):
   `№ n` and the time in faded fact text on the text edge; the entry whose
-  turn runs has a solid 7 px teal dot before the number. A hairline across
-  the text column (`entry_rule`, theme `border`) with 14 px above and below
-  (`ENTRY_SPACE`) separates an entry from the one before; none before the
-  first. The question row draws both, so the list measures them. `n`
-  counts the user's messages from 1 (`present::entry_number`, the one place
-  it is counted).
+  turn runs has a solid 7 px teal dot before the number that gently breathes.
+  A hairline across the text column (`entry_rule`, theme `border`) with 18 px
+  above and below (`ENTRY_SPACE`) separates an entry from the one before;
+  none before the first. The question row draws both, so the list measures
+  them. `n` counts the user's messages from 1 (`present::entry_number`, the
+  one place it is counted).
 - **The question** is the user's message, left-aligned on the paper with no
   bubble or fill (`surfaces::question`): a Title (regular) when it is short, one
   paragraph of at most 120 characters (a Chinese character counts as one,
@@ -331,7 +341,8 @@ names and never a colour of their own.
   report) and a branch brought back (`branch`) are record rows too.
 - Markdown (answers, the side chat, a `.md` preview, favourites, reports)
   goes through `surfaces::markdown`: blocks stand about 0.6 em apart
-  (`PARAGRAPH_GAP`), before and after lists, code and tables too. The
+  (`PARAGRAPH_GAP`), before and after lists, code and tables too, and fenced
+  code blocks carry a quiet language label and one-click copy button. The
   component library drew no gap at all; the vendored copy fixes it
   (`vendor/gpui-component/WISP-PATCH.md`). Closing CJK punctuation can
   still start a line: GPUI 0.2.2's wrapper has no line-breaking rules.

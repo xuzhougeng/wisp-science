@@ -58,9 +58,9 @@ fn popup(id: impl Into<ElementId>, width: f32, cx: &App) -> Stateful<Div> {
         .v_flex()
         .p_1()
         .occlude()
-        .rounded(cx.theme().radius)
+        .rounded(cx.theme().radius_lg)
         .border_1()
-        .border_color(cx.theme().border)
+        .border_color(surfaces::surface_border(cx))
         .bg(cx.theme().popover)
         .shadow_md()
 }
@@ -1064,6 +1064,7 @@ impl Workspace {
         let picked = selecting && self.picks.contains(&id);
         let mut row = div()
             .id(SharedString::from(format!("session-{id}")))
+            .relative()
             .h_flex()
             .gap_2()
             .px_2()
@@ -1076,9 +1077,21 @@ impl Workspace {
             .text_sm()
             .border_1()
             .border_color(cx.theme().transparent)
-            // The open one is white with a hairline.
+            // The open one is white with a hairline and a quiet teal bar on its left edge.
             .when(open && !selecting, |row| {
                 row.bg(cx.theme().popover).border_color(cx.theme().border)
+            })
+            .when(open && !selecting, |row| {
+                row.child(
+                    div()
+                        .absolute()
+                        .left(px(2.))
+                        .top(px(7.))
+                        .w(px(2.))
+                        .h(px(14.))
+                        .rounded_full()
+                        .bg(cx.theme().primary),
+                )
             })
             .when(picked, |row| row.bg(accent.opacity(0.6)));
         if selecting {
@@ -1107,6 +1120,16 @@ impl Workspace {
                 Some(kind) => surfaces::stamp_color(kind, cx),
                 None => cx.theme().muted_foreground,
             };
+            let mark = if glyph_name == "loader" {
+                surfaces::spinning_icon(
+                    SharedString::from(format!("session-spin-{id}")),
+                    glyph_name,
+                    surfaces::IconSize::Inline,
+                    colour,
+                )
+            } else {
+                icon(glyph_name).text_color(colour).into_any_element()
+            };
             row = row.child(
                 div()
                     .id(SharedString::from(format!("session-mark-{id}")))
@@ -1114,7 +1137,7 @@ impl Workspace {
                     .tooltip(move |window, cx| {
                         gpui_component::tooltip::Tooltip::new(word).build(window, cx)
                     })
-                    .child(icon(glyph_name).text_color(colour)),
+                    .child(mark),
             );
         }
         if !self.pending {
