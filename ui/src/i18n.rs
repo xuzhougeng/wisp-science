@@ -2626,15 +2626,14 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "approval.run_shell") => Some("Run shell command?"),
         (Locale::En, "approval.run_tool") => Some("Run {tool}?"),
         (Locale::En, "approval.code") => Some("Code"),
+        (Locale::En, "approval.command") => Some("Command"),
         (Locale::En, "approval.scope") => Some("Approval scope"),
         (Locale::En, "approval.scope.once") => Some("Once"),
         (Locale::En, "approval.scope.session") => Some("This conversation"),
         (Locale::En, "approval.scope.project") => Some("This project"),
         (Locale::En, "approval.scope.global") => Some("Global"),
         (Locale::En, "approval.allow_once") => Some("Allow once"),
-        (Locale::En, "approval.allow_session") => Some("Allow for this conversation"),
-        (Locale::En, "approval.allow_project") => Some("Allow for this project"),
-        (Locale::En, "approval.allow_global") => Some("Allow globally"),
+        (Locale::En, "approval.allow") => Some("Allow"),
         (Locale::En, "approval.hint") => Some("Approve to run this once. Change default behavior in Settings → Connections."),
         (Locale::En, "approval.image_resize_title") => Some("Resize large image for model input?"),
         (Locale::En, "approval.image_resize_hint") => Some("Wisp will resize a temporary model-input copy. The original file will not be changed."),
@@ -3985,6 +3984,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "chat.steps_1") => Some("Ran 1 step"),
         (Locale::En, "chat.steps_1_time") => Some("Ran 1 step · {t}"),
         (Locale::En, "chat.steps_running") => Some("Working…"),
+        (Locale::En, "chat.steps_awaiting_approval") => Some("Awaiting approval"),
         (Locale::En, "chat.model_waiting") => Some("Waiting for the model…"),
         (Locale::En, "chat.turn_pending") => Some("Waiting for the model to respond…"),
         (Locale::En, "chat.iteration_limit_title") => Some("This turn stopped at the iteration limit"),
@@ -3996,6 +3996,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "chat.model_wait_4") => Some("The model is carefully selecting its next token…"),
         (Locale::En, "chat.step_lines") => Some("{n} lines"),
         (Locale::En, "chat.error") => Some("Error"),
+        (Locale::En, "chat.error_details") => Some("Details"),
         (Locale::En, "chat.jump_bottom") => Some("Back to latest"),
         (Locale::En, "trajectory.title") => Some("Trajectory"),
         (Locale::En, "trajectory.topbar") => Some("Trajectory"),
@@ -4052,6 +4053,9 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "trajectory.export_saved") => Some("Trajectory saved to {path}"),
         (Locale::En, "trajectory.export_failed") => Some("Could not export trajectory"),
         (Locale::En, "chat.resume") => Some("Resume"),
+        (Locale::En, "chat.retry") => Some("Retry"),
+        (Locale::En, "chat.open_model_settings") => Some("Open model settings"),
+        (Locale::En, "chat.open_network_settings") => Some("Open network settings"),
         (Locale::En, "chat.context_auto_compacted") => Some("Context automatically compacted"),
         (Locale::En, "chat.auto_continued") => Some("Output limit reached; automatically continued ({count}/{limit})"),
         (Locale::En, "chat.stream_recovery.waiting_title") => Some("Model response stream interrupted; recovering the connection ({attempt}/{max})"),
@@ -4117,9 +4121,22 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "err.hint.rate") => Some("Rate limited by the provider. Wait a moment and retry."),
         (Locale::En, "err.hint.server") => Some("The provider is temporarily overloaded or down. Retry in a bit."),
         (Locale::En, "err.hint.network") => Some("Could not reach the model API. A closed proxy app often leaves the OS system proxy or HTTP_PROXY/HTTPS_PROXY pointing at a port that is not listening. Open Settings → Network, set Model API to Direct to connect without a proxy, or enter a proxy that is still running."),
+        (Locale::En, "err.hint.network_local") => Some("Nothing on this computer is accepting connections at {addr}, so the local model gateway is probably not running. Start it (Magpie or another local gateway) and click Retry, or correct the Base URL in Settings → Models if the gateway listens on a different port."),
         (Locale::En, "err.hint.opencode_session") => Some("OpenCode requires x-opencode-session. In Request headers (advanced), enable Send conversation identifier and use this header name. Check that any forwarding proxy preserves the header."),
         (Locale::En, "err.hint.bad_request") => Some("The provider rejected the request. Common causes: the conversation is too long, or a message contains content this model does not support (e.g. images). Try /compact or another model."),
-        (Locale::En, "err.hint.tool_pairing") => Some("A tool call is missing its result in the conversation history (often after an interrupted or timed-out tool). Click Resume again after updating, or send /compact to repair the history."),
+        (Locale::En, "err.hint.tool_pairing") => Some("A tool call is missing its result in the conversation history (often after an interrupted or timed-out tool). Click Retry again after updating, or send /compact to repair the history."),
+        (Locale::En, "err.summary.balance") => Some("The provider account is out of credit"),
+        (Locale::En, "err.summary.auth") => Some("The API key was rejected"),
+        (Locale::En, "err.summary.context") => Some("The conversation exceeds the model's context limit"),
+        (Locale::En, "err.summary.image") => Some("This model does not accept images"),
+        (Locale::En, "err.summary.model_name") => Some("The provider does not recognize the model name"),
+        (Locale::En, "err.summary.rate") => Some("Rate limited by the provider"),
+        (Locale::En, "err.summary.server") => Some("The provider is temporarily unavailable"),
+        (Locale::En, "err.summary.network") => Some("Could not reach the model API"),
+        (Locale::En, "err.summary.network_local") => Some("The local model gateway at {addr} is not running"),
+        (Locale::En, "err.summary.opencode_session") => Some("OpenCode needs a session header"),
+        (Locale::En, "err.summary.bad_request") => Some("The provider rejected the request"),
+        (Locale::En, "err.summary.tool_pairing") => Some("A tool call is missing its result"),
         (Locale::En, "outline.title") => Some("Conversation outline"),
         (Locale::En, "outline.show") => Some("Show conversation outline"),
         (Locale::En, "outline.hide") => Some("Hide conversation outline"),
@@ -6241,15 +6258,14 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "approval.run_shell") => Some("运行 Shell 命令？"),
         (Locale::Zh, "approval.run_tool") => Some("运行 {tool}？"),
         (Locale::Zh, "approval.code") => Some("代码"),
+        (Locale::Zh, "approval.command") => Some("命令"),
         (Locale::Zh, "approval.scope") => Some("批准范围"),
         (Locale::Zh, "approval.scope.once") => Some("仅本次"),
         (Locale::Zh, "approval.scope.session") => Some("本会话"),
         (Locale::Zh, "approval.scope.project") => Some("本项目"),
         (Locale::Zh, "approval.scope.global") => Some("全局"),
         (Locale::Zh, "approval.allow_once") => Some("仅本次允许"),
-        (Locale::Zh, "approval.allow_session") => Some("本会话允许"),
-        (Locale::Zh, "approval.allow_project") => Some("本项目允许"),
-        (Locale::Zh, "approval.allow_global") => Some("全局允许"),
+        (Locale::Zh, "approval.allow") => Some("允许"),
         (Locale::Zh, "approval.hint") => Some("批准后执行一次。默认策略可在「设置 → 连接」中修改。"),
         (Locale::Zh, "approval.image_resize_title") => Some("缩小大图片后交给模型？"),
         (Locale::Zh, "approval.image_resize_hint") => Some("Wisp 只会缩小临时的模型输入副本，原始文件不会被修改。"),
@@ -7415,6 +7431,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "chat.steps_1") => Some("已执行 1 步"),
         (Locale::Zh, "chat.steps_1_time") => Some("已执行 1 步 · {t}"),
         (Locale::Zh, "chat.steps_running") => Some("执行中…"),
+        (Locale::Zh, "chat.steps_awaiting_approval") => Some("等待批准"),
         (Locale::Zh, "chat.model_waiting") => Some("等待模型继续…"),
         (Locale::Zh, "chat.turn_pending") => Some("等待模型响应…"),
         (Locale::Zh, "chat.iteration_limit_title") => Some("本轮已达到迭代上限"),
@@ -7426,6 +7443,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "chat.model_wait_4") => Some("模型正在谨慎挑选下一个 token…"),
         (Locale::Zh, "chat.step_lines") => Some("{n} 行"),
         (Locale::Zh, "chat.error") => Some("错误"),
+        (Locale::Zh, "chat.error_details") => Some("详情"),
         (Locale::Zh, "chat.jump_bottom") => Some("回到底部"),
         (Locale::Zh, "trajectory.title") => Some("轨迹"),
         (Locale::Zh, "trajectory.topbar") => Some("轨迹"),
@@ -7482,6 +7500,9 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "trajectory.export_saved") => Some("轨迹已保存到 {path}"),
         (Locale::Zh, "trajectory.export_failed") => Some("无法导出轨迹"),
         (Locale::Zh, "chat.resume") => Some("继续执行"),
+        (Locale::Zh, "chat.retry") => Some("重试"),
+        (Locale::Zh, "chat.open_model_settings") => Some("打开模型设置"),
+        (Locale::Zh, "chat.open_network_settings") => Some("打开网络设置"),
         (Locale::Zh, "chat.context_auto_compacted") => Some("上下文已自动压缩"),
         (Locale::Zh, "chat.auto_continued") => Some("输出达到上限，已自动继续（{count}/{limit}）"),
         (Locale::Zh, "chat.stream_recovery.waiting_title") => Some("模型响应流已中断，正在尝试恢复连接（第 {attempt}/{max} 次）"),
@@ -7545,9 +7566,22 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "err.hint.rate") => Some("请求过于频繁，被服务商限流。稍等片刻再重试。"),
         (Locale::Zh, "err.hint.server") => Some("服务商暂时过载或故障。请稍后重试。"),
         (Locale::Zh, "err.hint.network") => Some("无法连接到模型 API。常见原因是本机代理软件已关闭，但操作系统仍保留系统代理，或残留 HTTP_PROXY/HTTPS_PROXY。请打开 设置 → 网络，将「模型 API」设为「直连」，或填入仍在运行的代理地址。"),
+        (Locale::Zh, "err.hint.network_local") => Some("本机 {addr} 上没有服务在接受连接，本地模型网关很可能没有运行。请先启动它（Magpie 或其他本地网关）后点击「重试」；如果网关监听的是其他端口，请在 设置 → 模型 中修改 Base URL。"),
         (Locale::Zh, "err.hint.opencode_session") => Some("OpenCode 要求 x-opencode-session 会话头。请在“请求附加信息（高级）”中开启“附加会话标识”并使用此请求头名称，同时检查转发代理是否保留该请求头。"),
         (Locale::Zh, "err.hint.bad_request") => Some("请求被服务商拒绝。常见原因：对话过长，或消息包含该模型不支持的内容（如图片）。可尝试 /compact 或更换模型。"),
-        (Locale::Zh, "err.hint.tool_pairing") => Some("对话历史里有一条工具调用缺少对应结果（常见于工具中断或超时后）。更新后请再点「继续执行」，或发送 /compact 修复历史。"),
+        (Locale::Zh, "err.hint.tool_pairing") => Some("对话历史里有一条工具调用缺少对应结果（常见于工具中断或超时后）。更新后请再点「重试」，或发送 /compact 修复历史。"),
+        (Locale::Zh, "err.summary.balance") => Some("服务商账户余额不足"),
+        (Locale::Zh, "err.summary.auth") => Some("API 密钥被拒绝"),
+        (Locale::Zh, "err.summary.context") => Some("对话超出模型上下文上限"),
+        (Locale::Zh, "err.summary.image") => Some("当前模型不支持图片输入"),
+        (Locale::Zh, "err.summary.model_name") => Some("服务商不识别所配置的模型名"),
+        (Locale::Zh, "err.summary.rate") => Some("请求被服务商限流"),
+        (Locale::Zh, "err.summary.server") => Some("服务商暂时不可用"),
+        (Locale::Zh, "err.summary.network") => Some("无法连接到模型 API"),
+        (Locale::Zh, "err.summary.network_local") => Some("本地模型网关 {addr} 没有运行"),
+        (Locale::Zh, "err.summary.opencode_session") => Some("OpenCode 缺少会话请求头"),
+        (Locale::Zh, "err.summary.bad_request") => Some("请求被服务商拒绝"),
+        (Locale::Zh, "err.summary.tool_pairing") => Some("工具调用缺少对应结果"),
         (Locale::Zh, "outline.title") => Some("对话目录"),
         (Locale::Zh, "outline.show") => Some("展开对话目录"),
         (Locale::Zh, "outline.hide") => Some("收起对话目录"),
@@ -8208,6 +8242,16 @@ pub fn send_failed(locale: Locale, msg: &str) -> String {
     tf(locale, "status.send_failed", &[("msg", &detail)])
 }
 
+/// Status-bar text for a failed chat send/resume. A classified provider
+/// failure shows its short summary; the raw transport error stays in the
+/// transcript's error card, where it can be expanded and copied.
+pub fn send_failed_status(locale: Locale, msg: &str) -> String {
+    match api_error_summary(locale, msg.trim()) {
+        Some(summary) => tf(locale, "status.send_failed", &[("msg", &summary)]),
+        None => send_failed(locale, msg),
+    }
+}
+
 pub fn localize_backend(locale: Locale, msg: &str) -> String {
     match msg {
         m if m.starts_with("project_folder_invalid:") => {
@@ -8691,7 +8735,93 @@ fn found_openssh_version(msg: &str) -> Option<&str> {
 /// `http: ...` from wisp-llm). Provider error bodies vary too much to parse,
 /// so this is substring classification — specific causes first, generic last.
 pub fn api_error_hint(locale: Locale, msg: &str) -> Option<String> {
-    api_error_hint_key(msg).map(|key| t(locale, key))
+    let key = api_error_hint_key(msg)?;
+    if key == "err.hint.network" {
+        if let Some(addr) = loopback_endpoint(msg) {
+            return Some(tf(locale, "err.hint.network_local", &[("addr", &addr)]));
+        }
+    }
+    Some(t(locale, key))
+}
+
+/// One-line, human-readable headline for a classified provider failure — the
+/// error card's title and the status-bar text. `None` keeps the raw error as
+/// the headline (unclassified failures and ACP turns, whose detail is the
+/// only useful text).
+pub fn api_error_summary(locale: Locale, msg: &str) -> Option<String> {
+    let key = api_error_hint_key(msg)?;
+    if key == "err.hint.network" {
+        if let Some(addr) = loopback_endpoint(msg) {
+            return Some(tf(locale, "err.summary.network_local", &[("addr", &addr)]));
+        }
+    }
+    let summary = key.strip_prefix("err.hint.")?;
+    let summary_key = match summary {
+        "balance" => "err.summary.balance",
+        "auth" => "err.summary.auth",
+        "context" => "err.summary.context",
+        "image" => "err.summary.image",
+        "model_name" => "err.summary.model_name",
+        "rate" => "err.summary.rate",
+        "server" => "err.summary.server",
+        "network" => "err.summary.network",
+        "opencode_session" => "err.summary.opencode_session",
+        "bad_request" => "err.summary.bad_request",
+        "tool_pairing" => "err.summary.tool_pairing",
+        _ => return None,
+    };
+    Some(t(locale, summary_key))
+}
+
+/// True for a classified provider/transport failure (`api: …` / `http: …`):
+/// resuming such a turn re-sends the same model request, so the error card
+/// labels it Retry rather than Resume.
+pub fn is_model_request_error(msg: &str) -> bool {
+    api_error_hint_key(msg).is_some_and(|key| key != "err.hint.acp_no_fallback")
+}
+
+/// Settings section that fixes a connection or authentication failure:
+/// the key and a loopback gateway's Base URL live under Models; a remote
+/// host that cannot be reached is usually a proxy problem under Network.
+pub fn api_error_settings_section(msg: &str) -> Option<&'static str> {
+    match api_error_hint_key(msg)? {
+        "err.hint.auth" => Some("models"),
+        "err.hint.network" if loopback_endpoint(msg).is_some() => Some("models"),
+        "err.hint.network" => Some("network"),
+        _ => None,
+    }
+}
+
+/// `host[:port]` of the request URL when it targets this computer
+/// (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`). reqwest reports the
+/// URL as `… for url (http://127.0.0.1:3999/v1/chat/completions): …`. A
+/// failure routed through a proxy (`(via …)` annotation) is the proxy's
+/// fault, so it keeps the proxy explanation. Pure string parsing: the same
+/// on Windows, macOS and Linux.
+fn loopback_endpoint(msg: &str) -> Option<String> {
+    if msg.contains("(via ") {
+        return None;
+    }
+    const MARK: &str = "for url (";
+    let start = msg.find(MARK)? + MARK.len();
+    let rest = &msg[start..];
+    let url = &rest[..rest.find(')')?];
+    let after_scheme = url.split_once("://").map_or(url, |(_, tail)| tail);
+    let authority = after_scheme.split(['/', '?', '#']).next()?;
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = match authority.strip_prefix('[') {
+        Some(bracketed) => bracketed.split(']').next()?,
+        None => authority.split(':').next()?,
+    };
+    let host = host.to_ascii_lowercase();
+    let loopback = host == "localhost"
+        || host.ends_with(".localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    (loopback && !authority.is_empty()).then(|| authority.to_string())
 }
 
 /// True when the provider rejected the request because it cannot take image
@@ -8877,6 +9007,125 @@ mod api_error_hint_tests {
             r#"api: 400 {"error":{"message":"invalid context field"}}"#
         ));
         assert!(!is_context_limit_error("context window exceeded"));
+    }
+
+    const LOCAL_REFUSED: &str = "http: error sending request for url (http://127.0.0.1:3999/v1/chat/completions): client error (Connect): tcp connect error: Connection refused (os error 61)";
+
+    #[test]
+    fn loopback_connect_failures_point_at_the_local_gateway() {
+        for (msg, addr) in [
+            (LOCAL_REFUSED, "127.0.0.1:3999"),
+            (
+                "http: error sending request for url (http://localhost:8080/v1/messages): client error (Connect): tcp connect error: Connection refused (os error 111)",
+                "localhost:8080",
+            ),
+            (
+                "http: error sending request for url (http://[::1]:11434/v1/chat/completions): client error (Connect): tcp connect error: No connection could be made because the target machine actively refused it. (os error 10061)",
+                "[::1]:11434",
+            ),
+            (
+                "http: error sending request for url (http://magpie.localhost/v1/chat/completions): client error (Connect): tcp connect error: Connection refused (os error 61)",
+                "magpie.localhost",
+            ),
+        ] {
+            assert_eq!(loopback_endpoint(msg).as_deref(), Some(addr), "for: {msg}");
+            for locale in [Locale::En, Locale::Zh] {
+                let hint = api_error_hint(locale, msg).unwrap();
+                assert!(hint.contains(addr), "{hint}");
+                assert!(hint.contains("Magpie"), "{hint}");
+                assert!(!hint.contains("HTTP_PROXY"), "{hint}");
+                let summary = api_error_summary(locale, msg).unwrap();
+                assert!(summary.contains(addr), "{summary}");
+                assert!(!summary.contains("os error"), "{summary}");
+            }
+            assert_eq!(api_error_settings_section(msg), Some("models"));
+        }
+        assert_eq!(
+            api_error_summary(Locale::Zh, LOCAL_REFUSED).as_deref(),
+            Some("本地模型网关 127.0.0.1:3999 没有运行")
+        );
+    }
+
+    #[test]
+    fn remote_and_proxied_connect_failures_keep_the_proxy_hint() {
+        for msg in [
+            "http: error sending request for url (https://api.deepseek.com/v1/chat/completions): client error (Connect): tcp connect error: Connection refused (os error 61)",
+            // Looks local only because of the proxy annotation.
+            "http: error sending request for url (https://opencode.ai/zen/go/v1/chat/completions): client error (Connect): tunnel error: failed to create underlying connection: tcp connect error: Connection refused (os error 61) (via system proxy http://127.0.0.1:10080)",
+            // A loopback target routed through a leftover proxy is the proxy's fault.
+            "http: error sending request for url (http://127.0.0.1:3999/v1/chat/completions): client error (Connect): Connection refused (via leftover HTTPS_PROXY=http://127.0.0.1:7890)",
+            // A host that merely starts with 127 is not loopback.
+            "http: error sending request for url (https://127.example.com/v1): client error (Connect): tcp connect error: Connection refused",
+            // No URL in the message.
+            "http: error sending request: tcp connect error",
+        ] {
+            assert_eq!(loopback_endpoint(msg), None, "for: {msg}");
+            assert_eq!(hint_key(msg), Some(t(Locale::En, "err.hint.network")), "for: {msg}");
+            assert_eq!(
+                api_error_summary(Locale::En, msg),
+                Some(t(Locale::En, "err.summary.network"))
+            );
+            assert_eq!(api_error_settings_section(msg), Some("network"));
+        }
+    }
+
+    #[test]
+    fn summaries_replace_raw_errors_in_the_headline_and_status() {
+        let auth = r#"api: 401 {"error":{"message":"invalid x-api-key"}}"#;
+        assert_eq!(
+            api_error_summary(Locale::En, auth).as_deref(),
+            Some("The API key was rejected")
+        );
+        assert_eq!(api_error_settings_section(auth), Some("models"));
+        assert!(is_model_request_error(auth));
+        assert_eq!(
+            send_failed_status(Locale::Zh, LOCAL_REFUSED),
+            "发送失败：本地模型网关 127.0.0.1:3999 没有运行"
+        );
+        assert!(!send_failed_status(Locale::En, LOCAL_REFUSED).contains("os error"));
+        // Unclassified failures keep the raw text; nothing to retry or fix
+        // in settings.
+        for msg in ["stream ended without completion", "tool `python` failed"] {
+            assert_eq!(api_error_summary(Locale::En, msg), None);
+            assert_eq!(api_error_settings_section(msg), None);
+            assert!(!is_model_request_error(msg));
+            assert_eq!(
+                send_failed_status(Locale::En, msg),
+                send_failed(Locale::En, msg)
+            );
+        }
+        // Rate limits are not a settings problem.
+        assert_eq!(api_error_settings_section("api: 429 rate limit"), None);
+        // ACP turns never offer an HTTP retry or a model-settings shortcut.
+        let acp = format!("{}api: 401 unauthorized", crate::dto::ACP_TURN_ERROR_PREFIX);
+        assert_eq!(api_error_summary(Locale::En, &acp), None);
+        assert_eq!(api_error_settings_section(&acp), None);
+        assert!(!is_model_request_error(&acp));
+    }
+
+    #[test]
+    fn every_hint_has_a_summary_in_both_locales() {
+        for msg in [
+            r#"api: 402 {"error":{"message":"Insufficient Balance"}}"#,
+            "api: 401 invalid api key",
+            "api: 400 context_length_exceeded",
+            "api: 400 image_url",
+            "api: 400 model_not_found",
+            "api: 429 rate limit",
+            "api: 503 overloaded",
+            "http: error sending request: tcp connect error",
+            "api: 400 No tool output found for tool call call_1",
+            "api: 400 missing x-opencode-session",
+            "api: 400 invalid argument",
+        ] {
+            for locale in [Locale::En, Locale::Zh] {
+                let summary = api_error_summary(locale, msg).unwrap_or_default();
+                assert!(
+                    !summary.is_empty() && !summary.starts_with("err."),
+                    "for: {msg}"
+                );
+            }
+        }
     }
 
     #[test]
