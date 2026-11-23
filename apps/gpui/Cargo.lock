@@ -9096,7 +9096,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-acp"
-version = "1.25.0"
+version = "1.26.0"
 dependencies = [
  "agent-client-protocol",
  "futures",
@@ -9108,7 +9108,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-app"
-version = "1.25.0"
+version = "1.26.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9124,7 +9124,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-bio"
-version = "1.25.0"
+version = "1.26.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9146,7 +9146,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-core"
-version = "1.25.0"
+version = "1.26.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9169,7 +9169,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-dto"
-version = "1.25.0"
+version = "1.26.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -9200,7 +9200,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-llm"
-version = "1.25.0"
+version = "1.26.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -9219,7 +9219,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-mcp"
-version = "1.25.0"
+version = "1.26.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9236,11 +9236,11 @@ dependencies = [
 
 [[package]]
 name = "wisp-paths"
-version = "1.25.0"
+version = "1.26.0"
 
 [[package]]
 name = "wisp-runs"
-version = "1.25.0"
+version = "1.26.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9267,7 +9267,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-runtime"
-version = "1.25.0"
+version = "1.26.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9286,7 +9286,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-server"
-version = "1.25.0"
+version = "1.26.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9336,7 +9336,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-skills"
-version = "1.25.0"
+version = "1.26.0"
 dependencies = [
  "async-trait",
  "hex",
@@ -9357,7 +9357,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-store"
-version = "1.25.0"
+version = "1.26.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9381,7 +9381,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-sync"
-version = "1.25.0"
+version = "1.26.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9407,7 +9407,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-tools"
-version = "1.25.0"
+version = "1.26.0"
 dependencies = [
  "anydoc",
  "async-trait",
