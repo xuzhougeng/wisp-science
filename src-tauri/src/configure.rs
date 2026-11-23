@@ -703,11 +703,8 @@ fn render_value(value: &Value) -> String {
 
 async fn current_values(store: &Store) -> Result<Map<String, Value>, String> {
     let appearance = load_appearance(store).await.prefs;
-    let locale = store
-        .get_setting("locale")
-        .await
-        .map_err(|error| error.to_string())?
-        .unwrap_or_else(|| "en".into());
+    // The language the UI is showing: saved preference, else the system's.
+    let locale = crate::load_locale(store).await;
     let max_iter = store
         .get_setting("max_iter")
         .await
