@@ -4336,7 +4336,7 @@ fn wire_macos_menu_events(window: &crate::workspace_surface::WorkspaceSurface) {
 fn install_macos_app_menu(app: &AppHandle, locale_tag: &str) -> Result<(), String> {
     let labels = mac_menu_labels(AppMenuLocale::from_tag(locale_tag));
     let about = AboutMetadata {
-        name: Some("wisp-science".into()),
+        name: Some("Wisp Science".into()),
         version: Some(env!("CARGO_PKG_VERSION").into()),
         ..Default::default()
     };
@@ -8435,6 +8435,7 @@ pub fn run() {
             artifact_commands::search_artifacts,
             session_commands::search_sessions,
             session_commands::list_needs_you_sessions,
+            session_commands::list_awaiting_sessions,
             session_commands::search_project_chats,
             session_commands::locate_project_chat_match,
             artifact_commands::read_artifact,

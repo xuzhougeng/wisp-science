@@ -356,7 +356,7 @@ fn request_turn_memory_proposal(
                     proposal.set(Some(next));
                     status.set(t(locale.get_untracked(), "memory.proposal.ready"));
                 }
-                Ok(_) => status.set(t(locale.get_untracked(), "memory.proposal.none")),
+                Ok(_) => flash_status(status, t(locale.get_untracked(), "memory.proposal.none")),
                 Err(parse_error) => {
                     status.set(tf(
                         locale.get_untracked(),
@@ -512,6 +512,9 @@ fn App() -> impl IntoView {
     // Hydration clears viewed replies locally, even while a shared inbox read
     // is still in flight. Its epoch also rejects that read's stale snapshot.
     let inbox_sessions = create_rw_signal::<Vec<SessionSearchInfo>>(vec![]);
+    // Inbox rows blocked on an approval in any project, read with the inbox.
+    // The rest are finished replies nobody has opened yet ("New reply").
+    let awaiting_sessions = create_rw_signal::<HashSet<String>>(HashSet::new());
     let inbox_request_epoch = create_rw_signal(0u64);
 
     let pet_activity = create_rw_signal((String::from("idle"), 0_u64));
@@ -1326,6 +1329,31 @@ fn App() -> impl IntoView {
         Some((profile.provider, profile.api_url, profile.model))
     });
     let magpie_model = model_settings.magpie_model;
+    // No usable model yet (skipped the key step, no Magpie): the home screen
+    // and composer say so before a first message fails. Rechecked whenever the
+    // model list, the Magpie connection or the Settings overlay changes.
+    let model_missing = create_rw_signal(false);
+    create_effect(move |_| {
+        models.track();
+        magpie_model.track();
+        show_settings.track();
+        spawn_local(async move {
+            let value = invoke("get_onboarding_state", JsValue::UNDEFINED).await;
+            if let Ok(state) = serde_wasm_bindgen::from_value::<OnboardingState>(value) {
+                // Ask for Magpie directly: at startup the shared signal is
+                // still empty and would flash the notice for Magpie users.
+                let magpie = state.has_api_key == Some(false)
+                    && match invoke_checked("magpie_model_info", JsValue::UNDEFINED).await {
+                        Ok(value) => !value.is_null() && !value.is_undefined(),
+                        Err(_) => magpie_model.get_untracked().is_some(),
+                    };
+                let missing = model_setup_missing(state.has_api_key, magpie);
+                if model_missing.get_untracked() != missing {
+                    model_missing.set(missing);
+                }
+            }
+        });
+    });
     let magpie_effort = create_memo(move |_| match active_session.get() {
         Some(session_id) => session_reasoning_efforts
             .with(|values| values.get(&session_id).cloned())
@@ -4869,7 +4897,7 @@ fn App() -> impl IntoView {
                     }
                 });
                 if active_cb.get().as_deref() == Some(&frame_id) {
-                    status_cb.set(t(locale_cb.get(), "status.review_done"));
+                    flash_status(status_cb, t(locale_cb.get(), "status.review_done"));
                 }
             }
             // Deliberately ignored, not forgotten: `edit` emits Diff from
@@ -5285,7 +5313,7 @@ fn App() -> impl IntoView {
             }
             "AvailableCommands" => {
                 if active_session.get_untracked().as_deref() == Some(update.frame_id.as_str()) {
-                    status.set("ACP commands updated".into());
+                    flash_status(status, "ACP commands updated");
                 }
             }
             _ => {}
@@ -6955,7 +6983,7 @@ fn App() -> impl IntoView {
                             &[("version", &update.current_version)],
                         );
                         msg.set(Some((true, text.clone())));
-                        status_msg.set(text);
+                        flash_status(status_msg, text);
                         if matches!(modal.get_untracked(), Some(UpdateCheckModal::Checking)) {
                             modal.set(Some(UpdateCheckModal::UpToDate {
                                 version: update.current_version,
@@ -7268,7 +7296,7 @@ fn App() -> impl IntoView {
             sync_actions_available.set(project_sync_backend_configured(&cfg));
             busy.set(false);
             show.set(false);
-            status_msg.set(t(loc.get(), "status.settings_saved").into());
+            flash_status(status_msg, t(loc.get(), "status.settings_saved"));
             s.set(cfg);
             refresh_pet.call(());
         });
@@ -8429,7 +8457,7 @@ fn App() -> impl IntoView {
                                 session_timer.set(Some(timer));
                                 timer_refresh.update(|n| *n = n.wrapping_add(1));
                                 if input.get_untracked() == text { input.set(String::new()); }
-                                status.set(crate::i18n::tr(locale.get_untracked(), "assistant.timer_saved_use_the_clock_to_manage_it").into());
+                                flash_status(status, crate::i18n::tr(locale.get_untracked(), "assistant.timer_saved_use_the_clock_to_manage_it"));
                             }
                         },
                         Err(error) => status.set(error),
@@ -8875,6 +8903,26 @@ fn App() -> impl IntoView {
             }
         });
     };
+    // The example project is read-only, so its empty hero invites a message
+    // the user cannot send. Open the first example conversation on entry.
+    let demo_auto_opened = store_value(false);
+    create_effect(move |_| {
+        if !demo_mode.get() {
+            demo_auto_opened.set_value(false);
+            return;
+        }
+        if demo_auto_opened.get_value() {
+            return;
+        }
+        let Some(first) = demos.with(|list| list.first().cloned()) else {
+            return;
+        };
+        if active_session.get_untracked().is_some() || !items.with_untracked(Vec::is_empty) {
+            return;
+        }
+        demo_auto_opened.set_value(true);
+        load_demo(first);
+    });
 
     let respond_confirm = {
         let active_session = active_session;
@@ -10197,6 +10245,16 @@ fn App() -> impl IntoView {
                 let v = invoke("list_needs_you_sessions", JsValue::UNDEFINED).await;
                 if epoch != inbox_request_epoch.get_untracked() {
                     continue;
+                }
+                let awaiting = invoke("list_awaiting_sessions", JsValue::UNDEFINED).await;
+                if epoch != inbox_request_epoch.get_untracked() {
+                    continue;
+                }
+                let awaiting = serde_wasm_bindgen::from_value::<Vec<String>>(awaiting)
+                    .map(|ids| ids.into_iter().collect::<HashSet<_>>())
+                    .unwrap_or_default();
+                if awaiting_sessions.with_untracked(|current| current != &awaiting) {
+                    awaiting_sessions.set(awaiting);
                 }
                 if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<SessionSearchInfo>>(v) {
                     if inbox_sessions.with_untracked(|current| current != &rows) {
@@ -13249,6 +13307,7 @@ fn App() -> impl IntoView {
                 sync_actions_available, command_palette_open, project_transfer,
                 privacy_mode_active, privacy_hidden_project_ids, privacy_ready,
                 menu_new_project, menu_import_project, home_calendar_open, home_dialog_open,
+                model_missing,
             }
             open_project=switch_project
             open_project_folder=Callback::new(move |id| open_project_with_files.call((id, None, true)))
@@ -13333,6 +13392,7 @@ fn App() -> impl IntoView {
                 sessions, folders, drag_session, drop_target, active_session, running,
                 explorations,
                 attention: approval_pending,
+                awaiting_sessions,
                 inbox_sessions,
                 rename_session_input, rename_session_target, collapsed_folders, folder_modal_input,
                 folder_modal, demos, session_history_cursor, session_history_loading,
@@ -13697,8 +13757,14 @@ fn App() -> impl IntoView {
                                     let project_id = s.project_id.clone();
                                     let session_id = s.id.clone();
                                     let title = user_message_presentation(&s.title).body;
+                                    // Say why the row is here: an approval wait needs
+                                    // the user; a finished reply only needs reading.
+                                    let awaiting = approval_pending.with(|ids| ids.contains(&s.id))
+                                        || awaiting_sessions.with(|ids| ids.contains(&s.id));
                                     view! {
                                         <button type="button" class="inbox-item"
+                                            class:inbox-item-approval=awaiting
+                                            data-testid="inbox-item"
                                             on:click=move |_| {
                                                 inbox_open.set(false);
                                                 topbar_more_open.set(false);
@@ -13706,6 +13772,9 @@ fn App() -> impl IntoView {
                                             }>
                                             <span class="inbox-item-project">{s.project_name.clone()}</span>
                                             <span class="inbox-item-title">{title}</span>
+                                            <span class="inbox-item-reason" data-testid="inbox-item-reason">
+                                                {t(locale.get(), attention_reason_key(awaiting))}
+                                            </span>
                                         </button>
                                     }
                                 };
@@ -14377,7 +14446,7 @@ fn App() -> impl IntoView {
                                             match invoke_checked("append_review_note", arg).await {
                                                 Ok(v) => {
                                                     let path = v.as_string().unwrap_or_default();
-                                                    status.set(tf(loc, "selection.annotated", &[("path", &path)]));
+                                                    flash_status(status, tf(loc, "selection.annotated", &[("path", &path)]));
                                                 }
                                                 Err(e) => status.set(localize_backend(loc, &js_error_text(e))),
                                             }
@@ -15813,6 +15882,16 @@ fn App() -> impl IntoView {
                 {move || demo_mode.get().then(|| view! {
                     <div class="demo-read-only-notice" data-testid="demo-read-only" role="status">
                         {t(locale.get(), "projects.example_read_only")}
+                    </div>
+                })}
+                {move || (model_missing.get() && !demo_mode.get()).then(|| view! {
+                    <div class="model-missing-notice composer-model-missing" role="status"
+                        data-testid="composer-model-missing">
+                        <span>{move || t(locale.get(), "projects.model_missing")}</span>
+                        <button type="button" class="btn-ghost"
+                            on:click=move |_| open_settings_fn(Some("models".into()))>
+                            {move || t(locale.get(), "projects.model_missing_action")}
+                        </button>
                     </div>
                 })}
                 {move ||active_archived.get().then(||view!{

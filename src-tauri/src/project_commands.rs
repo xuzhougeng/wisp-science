@@ -472,7 +472,7 @@ pub(crate) async fn startup_main_project_id(store: &Store) -> String {
 /// Brand string used when no project is open (home, or a window that has not
 /// loaded a workspace yet). Taskbar, Alt-Tab, and the macOS title bar all
 /// read this, so it must stay in sync with the custom Windows titlebar.
-pub(super) const APP_WINDOW_TITLE: &str = "wisp science";
+pub(super) const APP_WINDOW_TITLE: &str = "Wisp Science";
 
 /// Native window title: the app name, plus the project when one is open.
 pub(super) fn app_window_title(project_name: Option<&str>) -> String {
@@ -1559,11 +1559,11 @@ mod tests {
         assert_eq!(app_window_title(Some("   ")), APP_WINDOW_TITLE);
         assert_eq!(
             app_window_title(Some("fkbp1a-aortic-ring-assay")),
-            "wisp science \u{2014} fkbp1a-aortic-ring-assay"
+            "Wisp Science \u{2014} fkbp1a-aortic-ring-assay"
         );
         assert_eq!(
             app_window_title(Some("  fkbp1a  ")),
-            "wisp science \u{2014} fkbp1a"
+            "Wisp Science \u{2014} fkbp1a"
         );
     }
 

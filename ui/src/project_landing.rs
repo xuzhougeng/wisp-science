@@ -30,6 +30,8 @@ pub(super) struct ProjectLandingState {
     /// actual dialogs and resets these flags.
     pub(super) menu_new_project: RwSignal<bool>,
     pub(super) menu_import_project: RwSignal<bool>,
+    /// No model can answer yet; the home screen offers Settings › Models.
+    pub(super) model_missing: RwSignal<bool>,
 }
 #[component]
 pub(super) fn ProjectLanding(
@@ -64,6 +66,7 @@ pub(super) fn ProjectLanding(
         privacy_ready,
         menu_new_project,
         menu_import_project,
+        model_missing,
     } = state;
 
     move || {
@@ -86,6 +89,8 @@ pub(super) fn ProjectLanding(
                     modal_artifact.set(Some((path, name, kind)));
                 });
             let on_open_settings = Callback::new(move |_: ()| open_settings.call(None));
+            let on_open_model_settings =
+                Callback::new(move |_: ()| open_settings.call(Some("models".into())));
             view! {
                 <ProjectsScreen
                     locale=locale
@@ -101,6 +106,8 @@ pub(super) fn ProjectLanding(
                     on_open_journey=open_project_journey
                     on_open_artifact=on_open_artifact
                     on_open_settings=on_open_settings
+                    model_missing=model_missing.read_only()
+                    on_open_model_settings=on_open_model_settings
                     on_open_library=open_library
                     on_open_demo=on_open_demo
                     on_open_assistant=open_assistant

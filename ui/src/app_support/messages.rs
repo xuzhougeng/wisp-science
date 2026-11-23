@@ -166,13 +166,40 @@ pub(crate) fn StreamingAssistantMessage(
 pub(crate) fn SessionStatusBadge(
     status: SessionStatusKind,
     locale: RwSignal<Locale>,
+    /// Needs-you only because a finished reply is still unread: nothing is
+    /// blocked on the user, so it reads "New reply" rather than "Needs you".
+    #[prop(optional)]
+    new_reply: bool,
 ) -> impl IntoView {
-    let key = status.i18n_key();
-    let class = status.css();
+    let (key, class) = attention_label(status, new_reply);
     view! {
         <span class=format!("sess-status sess-status-{class}")>
             {move || t(locale.get(), key)}
         </span>
+    }
+}
+
+/// i18n key and CSS suffix for a session status. The backend reports both
+/// unread finished replies and approval waits as `needs_you`; callers that know
+/// the session is not waiting on an approval pass `new_reply`.
+pub(crate) fn attention_label(
+    status: SessionStatusKind,
+    new_reply: bool,
+) -> (&'static str, &'static str) {
+    if new_reply && status == SessionStatusKind::NeedsYou {
+        ("sess_status.new_reply", "new-reply")
+    } else {
+        (status.i18n_key(), status.css())
+    }
+}
+
+/// Why a Needs-you session is listed, for the inbox: an approval wait, or a
+/// finished reply nobody has opened yet.
+pub(crate) fn attention_reason_key(awaiting_approval: bool) -> &'static str {
+    if awaiting_approval {
+        "inbox.reason_approval"
+    } else {
+        "inbox.reason_reply"
     }
 }
 
@@ -1721,6 +1748,31 @@ pub(crate) fn ApprovalCard(
                 })}
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod attention_label_tests {
+    use super::{attention_label, attention_reason_key};
+    use crate::dto::SessionStatusKind;
+
+    #[test]
+    fn unread_replies_read_as_new_reply_and_approvals_as_needs_you() {
+        assert_eq!(
+            attention_label(SessionStatusKind::NeedsYou, true),
+            ("sess_status.new_reply", "new-reply")
+        );
+        assert_eq!(
+            attention_label(SessionStatusKind::NeedsYou, false),
+            ("sess_status.needs_you", "needs-you")
+        );
+        // Only a needs-you row can become a new reply.
+        assert_eq!(
+            attention_label(SessionStatusKind::Running, true),
+            ("sess_status.running", "running")
+        );
+        assert_eq!(attention_reason_key(true), "inbox.reason_approval");
+        assert_eq!(attention_reason_key(false), "inbox.reason_reply");
     }
 }
 

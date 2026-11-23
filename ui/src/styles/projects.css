@@ -50,6 +50,7 @@ body:has(.window-titlebar) .projects-screen { top: 38px; }
 .project-open-error { width: min(100%, 1200px); margin: -16px 0 20px; padding: 10px 13px;
   border: 1px solid color-mix(in srgb, var(--err) 32%, var(--border)); border-radius: var(--radius-sm);
   color: var(--err); background: color-mix(in srgb, var(--err) 7%, var(--bg-elev)); font-size: calc(13px * var(--ui-font-scale, 1)); }
+.projects-model-missing { width: min(100%, 1200px); margin: -16px 0 20px; }
 .projects-icon-btn { width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center;
   background: transparent; color: var(--text); border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer; }
 .projects-icon-btn:hover { background: var(--bg-elev); border-color: var(--border); }
@@ -103,6 +104,7 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
 .proj-card .pc-sync-state[data-folder-sync="waiting"] { color: var(--warn); }
 .proj-card .pc-sync-state[data-folder-sync="conflict"] { color: var(--err); }
 .proj-card .pc-transfer-lock { flex: 0 0 auto; color: var(--clay); font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 650; }
+.projects-recent-empty { margin: 0; padding: 14px 2px; color: var(--text-faint); font-size: calc(13px * var(--ui-font-scale, 1)); }
 .proj-card.proj-recent { align-items: center; }
 .proj-card.proj-recent .pc-name-row { margin-top: 0; }
 /* Project and age sit quietly at the row's right edge; the title keeps the
@@ -113,6 +115,8 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
 .sess-status { display: inline-flex; align-items: center; flex: 0 0 auto; padding: 2px 8px; border-radius: 999px; font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 600; letter-spacing: .01em; white-space: nowrap; }
 .sess-status-running { color: var(--clay); background: color-mix(in srgb, var(--clay) 12%, transparent); }
 .sess-status-needs-you { color: var(--info); background: var(--info-soft); }
+/* An unread finished reply: informative, not a request for action. */
+.sess-status-new-reply { color: var(--info); background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--info) 35%, transparent); }
 .sess-status-complete { color: var(--text-faint); background: var(--bg-sunken); }
 /* Card actions share one uniform 28px box with a 16px compose_icon glyph so the
    cluster reads as a single aligned row (previously padding-sized boxes made the
@@ -178,6 +182,12 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
 .project-sync-conflict-actions { flex-wrap: wrap; }
 .pn-dir { display: flex; gap: 8px; align-items: center; }
 .pn-dir .path { flex: 1; color: var(--text-faint); font-size: calc(13px * var(--ui-font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-suggest { display: flex; align-items: center; gap: 8px; margin: -6px 0 12px; min-width: 0; }
+.pn-suggest-path { flex: 1; min-width: 0; color: var(--text-muted); font-size: calc(12.5px * var(--ui-font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-suggest .btn-ghost { flex: 0 0 auto; }
+.pn-layout-dirs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.pn-layout-dirs code { padding: 1px 6px; border-radius: var(--radius-xs); background: var(--bg-sunken); color: var(--text-muted); font-size: calc(11.5px * var(--ui-font-scale, 1)); }
+.pn-missing { margin: 4px 0 0; color: var(--text-muted); font-size: calc(12.5px * var(--ui-font-scale, 1)); text-align: right; }
 /* .btn-primary / .btn-ghost live in base.css */
 
 /* ---------- Global starred library ---------- */

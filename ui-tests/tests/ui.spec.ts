@@ -318,7 +318,11 @@ test("Example project shows bundled demos as read-only transcripts", async ({ pa
   await expect(page.getByText("What specific samples are included in GSE153250")).toBeVisible();
   await expect(page.getByText("Based on the upstream Counts data from GSE153250")).toBeVisible();
   await expect(page.getByText("Based on the Counts data from our study")).toBeVisible();
-  await page.getByText("Connect to the remote compute host, locate the FASTQ data").click();
+  // The first example opens on entry, so the read-only view never sits on the
+  // empty "what's next?" hero above a disabled composer.
+  await expect(page.locator(".msg.assistant").first()).toBeVisible();
+  expect(await invokeArgsList(page, "load_demo")).toContainEqual({ id: "manifest_esr1_01_datasets" });
+  await page.locator(".side-item.ses", { hasText: "Connect to the remote compute host, locate the FASTQ data" }).click();
 
   // The demo request renders as the user turn…
   await expect(
@@ -2022,9 +2026,9 @@ test("automatic reviewer resolves its finding and jumps past UI-only rows (#550)
 
   const handoffs = page.locator(".review-transition");
   await expect(handoffs).toHaveCount(2);
-  await expect(handoffs.nth(0)).toContainText("wisp-science nudged Reviewer");
+  await expect(handoffs.nth(0)).toContainText("Wisp Science nudged Reviewer");
   await expect(handoffs.nth(0)).toHaveAttribute("data-phase", "reviewing");
-  await expect(handoffs.nth(1)).toContainText("Reviewer nudged wisp-science");
+  await expect(handoffs.nth(1)).toContainText("Reviewer nudged Wisp Science");
   await expect(handoffs.nth(1)).toContainText("deepseek-v4-pro");
   await expect(handoffs.nth(1)).toHaveAttribute("data-phase", "correcting");
 
@@ -13702,7 +13706,8 @@ test("recent sessions show title, project and age, with a badge only when attent
 
   const first = cards.first();
   await expect(first.locator(".pc-name")).toHaveText("帮我找一篇单细胞的文章");
-  await expect(first.locator(".sess-status-needs-you")).toBeVisible();
+  // Not blocked on an approval, so the unread reply reads "New reply".
+  await expect(first.locator(".sess-status-new-reply")).toHaveText("New reply");
   await expect(first.locator(".pc-hint")).toHaveCount(0);
   await expect(first.locator(".pc-meta-row")).toHaveCount(0);
 
@@ -13733,6 +13738,60 @@ test("recent sessions show title, project and age, with a badge only when attent
     const style = getComputedStyle(node);
     return { flexShrink: style.flexShrink, whiteSpace: style.whiteSpace };
   })).toEqual({ flexShrink: "0", whiteSpace: "nowrap" });
+  await expect(page.getByTestId("recent-sessions-empty")).toHaveCount(0);
+});
+
+test("home screen says when there are no recent sessions yet", async ({ page }) => {
+  await page.goto("/?mockNoRecentSessions=1&mockLocale=zh");
+  await expect(page.locator('[data-testid="recent-session-card"]')).toHaveCount(0);
+  await expect(page.getByTestId("recent-sessions-empty")).toHaveText("还没有会话。打开一个项目即可开始对话。");
+});
+
+test("home icon buttons carry visible tooltips and accessible names", async ({ page }) => {
+  await page.goto("/");
+  const buttons = page.locator(".projects-quick-actions .projects-icon-btn");
+  await expect(buttons).toHaveCount(5);
+  for (const name of ["Research calendar", "Library", "Search", "Settings", "Documentation"]) {
+    const button = page.locator(".projects-quick-actions").getByRole("button", { name, exact: true });
+    await expect(button).toBeVisible();
+    await expect(button).toHaveAttribute("title", name);
+  }
+});
+
+test("home and composer say when no model is set up and open Settings › Models", async ({ page }) => {
+  await page.goto("/?mockNoModel=1");
+  const notice = page.getByTestId("home-model-missing");
+  await expect(notice).toContainText("No model is set up yet");
+  await notice.getByRole("button", { name: "Set up a model" }).click();
+  await expect(page.getByTestId("settings-nav-models")).toHaveAttribute("aria-current", "page");
+});
+
+test("composer shows the missing-model notice inside a project", async ({ page }) => {
+  await page.goto("/?mockNoModel=1&mockLocale=zh");
+  await page.locator(".proj-card-main").first().click();
+  const notice = page.getByTestId("composer-model-missing");
+  await expect(notice).toContainText("还没有配置模型");
+  await notice.getByRole("button", { name: "去配置模型" }).click();
+  await expect(page.getByTestId("settings-nav-models")).toHaveAttribute("aria-current", "page");
+});
+
+test("a configured key or a Magpie connection hides the missing-model notice", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".proj-card-main").first()).toBeVisible();
+  await expect(page.getByTestId("home-model-missing")).toHaveCount(0);
+  await page.goto("/?mockNoModel=1&mockMagpie=1");
+  await expect(page.locator(".proj-card-main").first()).toBeVisible();
+  await expect.poll(() => invokeArgsList(page, "magpie_model_info").then((calls) => calls.length)).toBeGreaterThan(0);
+  await expect(page.getByTestId("home-model-missing")).toHaveCount(0);
+});
+
+test("relative times read as elapsed time in both languages", async ({ page }) => {
+  const minutesAgo = Math.floor(Date.now() / 1000) - 4 * 60;
+  await page.addInitScript((ts) => { (window as any).__mockRecentSessionTs = ts; }, minutesAgo);
+  await page.goto("/?mockLocale=zh");
+  await expect(page.locator('[data-testid="recent-session-card"]').first().locator(".pc-when")).toHaveText("4 分钟前");
+  await page.goto("/?mockLocale=en");
+  await expect(page.locator('[data-testid="recent-session-card"]').first().locator(".pc-when")).toHaveText("4m ago");
 });
 
 test("right panel keeps actions and the active tab visible when tabs overflow", async ({ page }) => {
@@ -15651,8 +15710,8 @@ test("Windows uses the integrated title bar without covering the project landing
   await page.goto("/");
 
   await expect(page.locator(".window-titlebar")).toBeVisible();
-  await expect(page.getByTestId("window-brand-title")).toHaveText("wisp science");
-  await expect(page).toHaveTitle("wisp science");
+  await expect(page.getByTestId("window-brand-title")).toHaveText("Wisp Science");
+  await expect(page).toHaveTitle("Wisp Science");
   await expect(page.getByRole("button", { name: "Minimize" })).toBeVisible();
   await expect(page.getByTestId("window-maximize")).toBeVisible();
   await expect(page.locator("#titlebar-maximize")).toHaveAttribute("aria-label", "Maximize");
@@ -15765,24 +15824,24 @@ test("window title includes the open project name (#1017)", async ({ browser }) 
   await page.addInitScript(tauriMock);
   await page.goto("/");
 
-  await expect(page.getByTestId("window-brand-title")).toHaveText("wisp science");
-  await expect(page).toHaveTitle("wisp science");
+  await expect(page.getByTestId("window-brand-title")).toHaveText("Wisp Science");
+  await expect(page).toHaveTitle("Wisp Science");
 
   await page.locator(".proj-card-main").first().click();
   await expect(newSessionButton(page)).toBeVisible();
-  await expect(page.getByTestId("window-brand-title")).toHaveText("wisp science \u2014 wisp-science");
-  await expect(page).toHaveTitle("wisp science \u2014 wisp-science");
+  await expect(page.getByTestId("window-brand-title")).toHaveText("Wisp Science \u2014 wisp-science");
+  await expect(page).toHaveTitle("Wisp Science \u2014 wisp-science");
 
   await page.locator(".proj-switch").click();
   await page.locator(".proj-menu").getByRole("button", { name: "Other project" }).click();
   await expect(page.locator(".proj-name")).toHaveText("Other project");
-  await expect(page.getByTestId("window-brand-title")).toHaveText("wisp science \u2014 Other project");
-  await expect(page).toHaveTitle("wisp science \u2014 Other project");
+  await expect(page.getByTestId("window-brand-title")).toHaveText("Wisp Science \u2014 Other project");
+  await expect(page).toHaveTitle("Wisp Science \u2014 Other project");
 
   await page.getByRole("button", { name: "Back to projects" }).click();
   await expect(page.locator(".projects-screen")).toBeVisible();
-  await expect(page.getByTestId("window-brand-title")).toHaveText("wisp science");
-  await expect(page).toHaveTitle("wisp science");
+  await expect(page.getByTestId("window-brand-title")).toHaveText("Wisp Science");
+  await expect(page).toHaveTitle("Wisp Science");
 
   await context.close();
 });
@@ -16038,6 +16097,47 @@ test("new project form enables Create after name and folder are set", async ({ p
   await page.locator(".pn-dir .btn-ghost").click(); // Choose folder → mock path
   await expect(page.locator(".pn-dir .path")).toHaveText("/mock/root/new-project");
   await expect(create).toBeEnabled();
+});
+
+test("new project form says what is missing and offers a folder beside the workspace", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "New project" }).click();
+  const form = page.getByRole("dialog").filter({ has: page.locator("#new-project-name") });
+  const create = form.getByRole("button", { name: "Create" });
+  const missing = form.getByTestId("new-project-missing");
+  await expect(create).toBeDisabled();
+  await expect(missing).toHaveText("Enter a project name to continue.");
+  await expect(form.getByTestId("new-project-suggested-dir")).toHaveCount(0);
+
+  await form.locator("#new-project-name").pressSequentially("Liver: atlas");
+  await expect(missing).toHaveText("Choose a folder for the project files to continue.");
+  const suggestion = form.getByTestId("new-project-suggested-dir");
+  // The default workspace lives at /mock/root, so the sibling is /mock/<name>,
+  // with the colon replaced because Windows rejects it in folder names.
+  await expect(suggestion).toContainText("Suggested: /mock/Liver- atlas");
+  await expect(create).toBeDisabled();
+  await suggestion.getByRole("button", { name: "Use this folder" }).click();
+  await expect(form.locator(".pn-dir .path")).toHaveText("/mock/Liver- atlas");
+  await expect(missing).toHaveCount(0);
+  await expect(suggestion).toHaveCount(0);
+  await create.click();
+  await expect.poll(() => lastInvokeArgs(page, "create_project")).toMatchObject({
+    name: "Liver: atlas",
+    workspaceDir: "/mock/Liver- atlas",
+  });
+});
+
+test("standard layout toggle lists the folders it creates before a folder is chosen", async ({ page }) => {
+  await page.goto("/?mockLocale=zh");
+  await page.getByRole("button", { name: "新建项目" }).click();
+  const form = page.getByRole("dialog").filter({ has: page.locator("#new-project-name") });
+  await expect(form.locator(".pn-dir .path")).toHaveText("");
+  await expect(form.locator(".pn-layout .ps-hint")).toHaveText(/在项目目录中创建以下文件夹/);
+  const dirs = form.getByTestId("standard-layout-dirs").locator("code");
+  await expect(dirs).toHaveCount(14);
+  await expect(dirs.first()).toHaveText("data/raw/");
+  await expect(form.getByTestId("standard-layout-dirs")).toContainText("results/tables/");
+  await expect(form.getByTestId("standard-layout-dirs")).toContainText("literature/");
 });
 
 test("new project form reports an unreadable create_project response instead of staying open", async ({ page }) => {
@@ -16457,6 +16557,17 @@ test("remote access settings configure a cloud-drive sync folder", async ({ page
   await expect.poll(() => lastInvokeArgs(page, "set_settings")).toMatchObject({
     settings: { sync_backend: "folder", sync_folder: "/mock/root/new-project" },
   });
+});
+
+test("the Settings saved status clears itself from the title bar", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Session");
+  await expect(page.getByTestId("session-settings-pane")).toBeVisible();
+  await page.locator(".settings-footer").getByRole("button", { name: "Save" }).click();
+  const status = page.locator(".topbar .hint", { hasText: "Settings saved" });
+  await expect(status).toBeVisible();
+  // A success message is transient; it must not linger after leaving Settings.
+  await expect(status).toHaveCount(0, { timeout: 10_000 });
 });
 
 test("session settings save the maximum agent iterations", async ({ page }) => {
@@ -18280,7 +18391,7 @@ test("a ?project window opens straight into the project, skipping the landing (#
   await expect.poll(async () => page.evaluate(() =>
     ((window as any).__skillInvokeLog ?? []).some((c: any) => c.cmd === "open_project"),
   )).toBe(true);
-  await expect(page).toHaveTitle("wisp science \u2014 wisp-science");
+  await expect(page).toHaveTitle("Wisp Science \u2014 wisp-science");
 });
 
 test("specialists page configures the builtin Reader and saves a custom specialist", async ({ page }) => {
@@ -19253,7 +19364,7 @@ for (const platform of ["Linux x86_64", "MacIntel"]) {
       await palette.getByText("Quick setup", { exact: true }).click();
       const setup = page.locator(".onboard-overlay");
       await expect(setup).toBeVisible();
-      await expect(setup.getByRole("heading", { name: "Welcome to wisp-science" })).toBeVisible();
+      await expect(setup.getByRole("heading", { name: "Welcome to Wisp Science" })).toBeVisible();
       await expect(setup.getByLabel("API key (stored in OS keyring)")).toHaveCount(0);
       await expect(setup.getByTestId("local-environment")).toHaveCount(0);
       // Immediate Escape closes the topmost setup page, preserving Settings.
@@ -19281,7 +19392,7 @@ test("quick setup above General follows the preview language and preserves its d
   await search.fill("快速配置");
   await search.press("Enter");
   const setup = page.locator(".onboard-overlay");
-  await expect(setup.getByRole("heading")).toHaveText("欢迎使用 wisp-science");
+  await expect(setup.getByRole("heading")).toHaveText("欢迎使用 Wisp Science");
   await page.keyboard.press("Escape");
   await expect(setup).toBeHidden();
   await expect(folder).toHaveValue("draft-workspace");
@@ -19294,21 +19405,21 @@ test("onboarding Enter advances once, respects composition and controls, and fin
   await expect(modal).toBeFocused();
   await page.keyboard.down("Enter");
   await expect(modal.locator(".onboard-dot.active")).toHaveCount(1);
-  await expect(modal.getByRole("heading")).toHaveText("What wisp-science can do");
+  await expect(modal.getByRole("heading")).toHaveText("What Wisp Science can do");
   await page.keyboard.down("Enter"); // Auto-repeat must not skip another page.
   await page.keyboard.up("Enter");
-  await expect(modal.getByRole("heading")).toHaveText("What wisp-science can do");
+  await expect(modal.getByRole("heading")).toHaveText("What Wisp Science can do");
   await modal.dispatchEvent("keydown", { key: "Enter", isComposing: true, bubbles: true });
   await modal.dispatchEvent("compositionend", { bubbles: true });
   await modal.dispatchEvent("keydown", { key: "Enter", keyCode: 229, bubbles: true });
   await page.keyboard.press("Shift+Enter");
-  await expect(modal.getByRole("heading")).toHaveText("What wisp-science can do");
+  await expect(modal.getByRole("heading")).toHaveText("What Wisp Science can do");
   // Native keyboard activation of Back still returns exactly one page.
   await modal.getByRole("button", { name: "Back", exact: true }).focus();
   await page.keyboard.press("Enter");
-  await expect(modal.getByRole("heading")).toHaveText("Welcome to wisp-science");
+  await expect(modal.getByRole("heading")).toHaveText("Welcome to Wisp Science");
   await page.keyboard.press("Enter");
-  await expect(modal.getByRole("heading")).toHaveText("What wisp-science can do");
+  await expect(modal.getByRole("heading")).toHaveText("What Wisp Science can do");
   await modal.locator(".row > .primary").focus();
   await page.keyboard.press("Enter");
   await expect(modal.getByRole("heading")).toHaveText("Set up your model");
@@ -19386,8 +19497,8 @@ for (const locale of ["en", "zh"]) {
     await page.goto(`/?mockOnboarding=1&mockLocale=${locale}`);
     const modal = page.locator(".onboard");
     const titles = locale === "zh"
-      ? ["欢迎使用 wisp-science", "wisp-science 能做什么", "配置模型", "本地环境（可选）"]
-      : ["Welcome to wisp-science", "What wisp-science can do", "Set up your model", "Local environment (optional)"];
+      ? ["欢迎使用 Wisp Science", "Wisp Science 能做什么", "配置模型", "本地环境（可选）"]
+      : ["Welcome to Wisp Science", "What Wisp Science can do", "Set up your model", "Local environment (optional)"];
     const next = locale === "zh" ? "下一步" : "Next";
     for (let step = 0; step < 4; step++) {
       await expect(modal.getByRole("heading", { name: titles[step], exact: true })).toBeVisible();
