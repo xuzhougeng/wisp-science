@@ -21,6 +21,13 @@ with the same turn duration. Expand it to inspect the full process. The final
 answer, trailing usage, approval/question cards, and dedicated run/media cards
 remain separate. Active turns continue to show live progress.
 
+While a turn runs, each settled group of tool steps is titled by what ran: one
+step names the tool and a short target (`python · import matplotlib…`,
+`write_file · hist_plot.py`), a larger group gives the count and the distinct
+tool names (`Ran 3 steps · write_file, python, shell` / `已执行 3 步 · …`). The
+group's duration sits at the right. Long targets are cut with an ellipsis and
+the full text is in the header's tooltip.
+
 While a later turn is running, earlier messages keep **Copy**, **Memory**, and
 **Branch** available. Memory uses only the selected historical turn and still
 requires confirmation before saving. Branch opens an independent conversation

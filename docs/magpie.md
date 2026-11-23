@@ -20,8 +20,9 @@ To try an unreleased plugin, pass its source checkout instead:
 
 Restart Wisp Science after every connection, model change, or disconnection.
 The desktop and CLI read the connection once per process, so live agents and
-their context limits use one consistent model. Runtime session labels show
-`Magpie · <model>`. To disconnect, run `magpie wisp-science default` once and
+their context limits use one consistent model. Runtime session labels, and
+the model badge on each reply in the conversation, show `Magpie · <model>`
+rather than the name of a saved model profile. To disconnect, run `magpie wisp-science default` once and
 restart the application. A newly launched CLI process also picks up the change.
 
 The GPUI desktop reads the same file at startup: its built-in conversations,

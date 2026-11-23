@@ -882,6 +882,152 @@ pub(crate) fn steps_title(
     }
 }
 
+/// Upper bound on the characters a step target carries into the DOM. The
+/// header itself truncates with CSS ellipsis; this only keeps a minified
+/// one-line input from ballooning the row. Counted in chars, never bytes.
+const STEP_TARGET_MAX_CHARS: usize = 200;
+
+/// Tool name and short target (first non-empty input line) for one step, as
+/// the settled group header names it: `python · import matplotlib…`.
+pub(crate) fn step_tool_target(item: &ChatItem) -> Option<(String, String)> {
+    let first_line = |s: &str| -> String {
+        s.lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("")
+            .trim()
+            .chars()
+            .take(STEP_TARGET_MAX_CHARS)
+            .collect()
+    };
+    match item {
+        ChatItem::Tool { name, input, .. } => {
+            let (_, title) = tool_card_label(name, input);
+            let target = if name == "update_plan" {
+                String::new()
+            } else {
+                first_line(input)
+            };
+            let target = if target == title {
+                String::new()
+            } else {
+                target
+            };
+            Some((title, target))
+        }
+        ChatItem::AcpTool {
+            title,
+            kind,
+            content,
+            locations,
+            ..
+        } => Some((
+            title.clone(),
+            acp_tool_step_detail(kind, content, locations),
+        )),
+        _ => None,
+    }
+}
+
+/// Collapsed header for a settled step group that ran tools: one step names
+/// the tool and its target, a larger group gives the count and the distinct
+/// tool names in the order they first ran.
+pub(crate) fn steps_summary(locale: Locale, steps: &[(String, String)]) -> Option<String> {
+    match steps {
+        [] => None,
+        [(tool, target)] if target.is_empty() => Some(tool.clone()),
+        [(tool, target)] => Some(format!("{tool} · {target}")),
+        _ => {
+            let mut tools: Vec<&str> = Vec::new();
+            for (tool, _) in steps {
+                if !tools.contains(&tool.as_str()) {
+                    tools.push(tool);
+                }
+            }
+            Some(tf(
+                locale,
+                "chat.steps_n_tools",
+                &[
+                    ("n", &steps.len().to_string()),
+                    ("tools", &tools.join(", ")),
+                ],
+            ))
+        }
+    }
+}
+
+#[cfg(test)]
+mod steps_summary_tests {
+    use super::{step_tool_target, steps_summary, Locale};
+    use crate::dto::ChatItem;
+
+    fn tool(name: &str, input: &str) -> ChatItem {
+        ChatItem::Tool {
+            name: name.into(),
+            ok: Some(true),
+            input: input.into(),
+            output: String::new(),
+            started_at_ms: None,
+            duration_ms: Some(24),
+        }
+    }
+
+    fn targets(items: &[ChatItem]) -> Vec<(String, String)> {
+        items.iter().filter_map(step_tool_target).collect()
+    }
+
+    #[test]
+    fn one_step_names_the_tool_and_its_target() {
+        let steps = targets(&[tool(
+            "python",
+            "\nimport matplotlib.pyplot as plt\nplt.hist(x)",
+        )]);
+        assert_eq!(
+            steps_summary(Locale::Zh, &steps).as_deref(),
+            Some("python · import matplotlib.pyplot as plt")
+        );
+        let steps = targets(&[tool("write_file", "hist_plot.py\nimport numpy")]);
+        assert_eq!(
+            steps_summary(Locale::En, &steps).as_deref(),
+            Some("write_file · hist_plot.py")
+        );
+        assert_eq!(
+            steps_summary(
+                Locale::En,
+                &targets(&[tool("update_plan", "0/4 steps done")])
+            )
+            .as_deref(),
+            Some("update_plan")
+        );
+    }
+
+    #[test]
+    fn a_group_lists_the_count_and_distinct_tools_in_order() {
+        let steps = targets(&[
+            tool("write_file", "hist_plot.py"),
+            tool("python", "exec(open('hist_plot.py').read())"),
+            tool("shell", "rm -f normal_draws.csv"),
+            tool("python", "print(1)"),
+        ]);
+        assert_eq!(
+            steps_summary(Locale::Zh, &steps).as_deref(),
+            Some("已执行 4 步 · write_file, python, shell")
+        );
+        assert_eq!(
+            steps_summary(Locale::En, &steps).as_deref(),
+            Some("Ran 4 steps · write_file, python, shell")
+        );
+        assert_eq!(steps_summary(Locale::En, &[]), None);
+    }
+
+    #[test]
+    fn long_targets_are_bounded_on_char_boundaries() {
+        let input = "数".repeat(500);
+        let (_, target) = step_tool_target(&tool("python", &input)).unwrap();
+        assert_eq!(target.chars().count(), super::STEP_TARGET_MAX_CHARS);
+        assert!(target.chars().all(|c| c == '数'));
+    }
+}
+
 #[cfg(test)]
 mod steps_title_tests {
     use super::{steps_title, Locale};
@@ -996,14 +1142,29 @@ pub(crate) fn render_steps_group(
                 });
         (n_tools, total_ms, now_line, waiting_for_model)
     });
+    // What ran, for a settled group's header (tool + target per step).
+    let step_targets = if live || completed_turn {
+        Vec::new()
+    } else {
+        source.with_untracked(|items| {
+            indices
+                .iter()
+                .filter_map(|index| items.get(*index))
+                .filter_map(step_tool_target)
+                .collect::<Vec<_>>()
+        })
+    };
     let total_ms =
         turn_duration_ms.unwrap_or_else(|| if completed_turn { 0 } else { tool_total_ms });
     let total_label =
         (total_ms > 0 && (!live || n_tools > 0)).then(|| format_duration_ms(total_ms));
-    // A settled step-count header reads better with the duration inline; the
+    // A settled group that ran tools is named by what ran (tool + target), so a
+    // beginner can tell the steps apart; its duration sits in the meta slot.
+    // A bare step-count header reads better with the duration inline; the
     // running and activity-done headers keep it in the right-aligned meta slot,
     // where it doubles as a ticking total.
-    let inline_time = (!completed_turn && !live)
+    let has_summary = !step_targets.is_empty();
+    let inline_time = (!completed_turn && !live && !has_summary)
         .then(|| total_label.clone())
         .flatten();
     let meta_label = inline_time.is_none().then_some(total_label).flatten();
@@ -1024,7 +1185,15 @@ pub(crate) fn render_steps_group(
             )
         })
     };
+    let step_targets = store_value(step_targets);
     let title = move || {
+        if has_summary {
+            if let Some(summary) =
+                step_targets.with_value(|steps| steps_summary(locale.get(), steps))
+            {
+                return summary;
+            }
+        }
         steps_title(
             locale.get(),
             completed_turn,
@@ -1034,6 +1203,7 @@ pub(crate) fn render_steps_group(
             inline_time.as_deref(),
         )
     };
+    let title_attr = title.clone();
     let class_group_id = group_id.clone();
     let toggle_group_id = group_id.clone();
     let rows_group_id = group_id;
@@ -1069,7 +1239,9 @@ pub(crate) fn render_steps_group(
                     {compose_icon(if live { "activity-orbit" } else if settled_ok { "circle-check" } else { "circle-minus" })}
                 </span>
                 <span class="steps-copy">
-                    <span class="steps-title">{title}</span>
+                    <span class="steps-title" class:is-summary=has_summary
+                        data-testid="steps-title"
+                        title=move || has_summary.then(|| title_attr())>{title}</span>
                     {waiting_for_model.then(|| view! {
                         <span class="steps-note" data-testid="steps-wait-note">{model_wait_message}</span>
                     })}

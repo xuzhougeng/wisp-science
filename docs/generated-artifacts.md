@@ -1,11 +1,18 @@
 # Generated files in assistant replies
 
-Each assistant reply with generated artifacts has a collapsed **Generated · N**
-entry (**已生成 · N** in Chinese). Open it to browse a directory hierarchy built
+Each assistant reply with generated artifacts has a **Generated · N** entry
+(**已生成 · N** in Chinese). Open it to browse a directory hierarchy built
 from the files associated with that reply, using the same workspace-location
 rules as the right-side artifact panel. This does not list unrelated project files.
 
-Folders start collapsed and show their total descendant artifact count. Root
+When a reply generated four outputs or fewer, the entry starts expanded with
+its folders open, and each current image file is shown as an inline thumbnail
+(the whole figure, scaled to fit) that opens the preview when clicked. Longer
+lists start collapsed, with images as rows in the tree. Either form can be
+collapsed or expanded from the entry's summary.
+
+In a collapsed list, folders start collapsed and show their total descendant
+artifact count. Root
 files and inline outputs appear directly in the list. Open nested folders to
 find files with identical names in different directories. Clicking a file keeps
 the existing artifact preview behavior, including its Open in center action;
@@ -29,6 +36,12 @@ the answer, uploaded files and outputs a run harvested outside a turn are not
 listed, and turns that ended before the host started keeping which answer its
 artifacts belong to have no list (their files are in the Artifacts tab).
 Clicking a file opens it in the Files tab; there is no Open in center yet.
+
+The artifact preview opens an image fitted to its viewport (the zoom label reads
+**Fit** / **适应**), so a tall figure is shown whole. Clicking the label switches
+to 100% (full width); the zoom buttons and the wheel step from 100%; the **Fit**
+button returns to the fitted view. The center and side-panel previews keep
+opening at 100%.
 
 An open artifact preview stays in place while background tools produce or update
 other outputs. Its zoom, provenance tab, and unsent code edits are preserved;

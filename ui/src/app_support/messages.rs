@@ -1080,11 +1080,42 @@ impl GeneratedDirectory {
     }
 }
 
+/// A reply with at most this many generated outputs shows them expanded, with
+/// images as inline thumbnails; longer lists keep the collapsed tree.
+pub(crate) const INLINE_GENERATED_MAX: usize = 4;
+
+/// Whether a reply's generated outputs open expanded by default.
+pub(crate) fn generated_inline(count: usize) -> bool {
+    (1..=INLINE_GENERATED_MAX).contains(&count)
+}
+
+#[cfg(test)]
+mod generated_inline_tests {
+    use super::{generated_inline, INLINE_GENERATED_MAX};
+
+    #[test]
+    fn small_output_sets_open_and_long_lists_stay_collapsed() {
+        assert!(!generated_inline(0));
+        assert!(generated_inline(1));
+        assert!(generated_inline(INLINE_GENERATED_MAX));
+        assert!(!generated_inline(INLINE_GENERATED_MAX + 1));
+    }
+}
+
+/// An image output shown as an inline thumbnail under a short reply.
+#[derive(Clone, PartialEq)]
+struct GeneratedImage {
+    index: usize,
+    name: String,
+    path: String,
+}
+
 fn generated_directory_view(
     node: GeneratedDirectory,
     on_artifact: Callback<usize>,
     disclosures: RwSignal<std::collections::HashMap<String, bool>>,
     parent: String,
+    folders_open: bool,
 ) -> View {
     let locale = use_locale();
     let folders = node
@@ -1097,10 +1128,10 @@ fn generated_directory_view(
             let toggle_path = path.clone();
             view! {
                 <details class="generated-directory"
-                    open=move || crate::chat_render::disclosure_open(disclosures, &open_path, false)>
+                    open=move || crate::chat_render::disclosure_open(disclosures, &open_path, folders_open)>
                     <summary on:click=move |event| {
                         event.prevent_default();
-                        crate::chat_render::toggle_disclosure(disclosures, &toggle_path, false);
+                        crate::chat_render::toggle_disclosure(disclosures, &toggle_path, folders_open);
                     }>
                         {compose_icon("chevron-right")}
                         {compose_icon("folder")}
@@ -1108,7 +1139,7 @@ fn generated_directory_view(
                         <span class="generated-directory-count">{count}</span>
                     </summary>
                     <div class="generated-directory-children">
-                        {generated_directory_view(child, on_artifact, disclosures, path)}
+                        {generated_directory_view(child, on_artifact, disclosures, path, folders_open)}
                     </div>
                 </details>
             }
@@ -1237,11 +1268,26 @@ pub(crate) fn AssistantMessage(
             .unwrap_or_default();
         artifacts.with(|arts| {
             let mut tree = GeneratedDirectory::default();
-            for (index, artifact) in arts
-                .iter()
-                .enumerate()
-                .filter(|(_, a)| a.source_item == source_item)
-            {
+            let mut images = Vec::new();
+            let own = || {
+                arts.iter()
+                    .enumerate()
+                    .filter(|(_, a)| a.source_item == source_item)
+            };
+            // A short output list shows its current image files as inline
+            // thumbnails; everything else (and every long list) stays a row.
+            let inline = generated_inline(own().count());
+            for (index, artifact) in own() {
+                if let PreviewData::File { path, .. } = &artifact.data {
+                    if inline && artifact.kind == "image" && !artifact.superseded {
+                        images.push(GeneratedImage {
+                            index,
+                            name: artifact.name.clone(),
+                            path: path.clone(),
+                        });
+                        continue;
+                    }
+                }
                 let group = crate::text::artifact_group_key(artifact, &root);
                 let mut node = &mut tree;
                 // Inline outputs have no filesystem parent; keep them at the root.
@@ -1262,10 +1308,11 @@ pub(crate) fn AssistantMessage(
                     path,
                 ));
             }
-            tree
+            (tree, images)
         })
     });
-    let generated_count = move || generated.with(GeneratedDirectory::count);
+    let generated_count = move || generated.with(|(tree, images)| tree.count() + images.len());
+    let generated_open_default = move || generated_inline(generated_count());
     let text_for_disabled = text.clone();
     let text_for_click_copy = text;
     view! {
@@ -1305,18 +1352,43 @@ pub(crate) fn AssistantMessage(
                     )
                 }></div>
             {move || (generated_count() > 0).then(|| view! {
-                <details class="message-artifacts"
-                    open=move || crate::chat_render::disclosure_open(generated_disclosures, "", false)>
+                <details class="message-artifacts" class:inline=generated_open_default
+                    open=move || crate::chat_render::disclosure_open(generated_disclosures, "", generated_open_default())>
                     <summary class="message-artifacts-label" on:click=move |event| {
                         event.prevent_default();
-                        crate::chat_render::toggle_disclosure(generated_disclosures, "", false);
+                        crate::chat_render::toggle_disclosure(generated_disclosures, "", generated_open_default());
                     }>
                         {compose_icon("chevron-right")}
                         {move || tf(locale.get(), "artifact.generated_count", &[("n", &generated_count().to_string())])}
                     </summary>
-                    <div class="generated-artifact-tree">
-                        {move || generated_directory_view(generated.get(), on_artifact_for_cards, generated_disclosures, String::new())}
-                    </div>
+                    {move || {
+                        let images = generated.with(|(_, images)| images.clone());
+                        (!images.is_empty()).then(|| view! {
+                            <div class="message-artifact-gallery" data-testid="generated-image-gallery">
+                                {images.into_iter().map(|image| {
+                                    let index = image.index;
+                                    view! {
+                                        <button type="button" class="message-artifact-image"
+                                            data-artifact-name=image.name.clone()
+                                            title=image.path.clone()
+                                            aria-label=image.name.clone()
+                                            on:click=move |_| on_artifact_for_cards.call(index)>
+                                            <ArtifactThumb path=Some(image.path) kind="image" />
+                                            <span class="message-artifact-name">{image.name}</span>
+                                        </button>
+                                    }
+                                }).collect_view()}
+                            </div>
+                        })
+                    }}
+                    {move || {
+                        let tree = generated.with(|(tree, _)| tree.clone());
+                        (tree.count() > 0).then(|| view! {
+                            <div class="generated-artifact-tree">
+                                {generated_directory_view(tree, on_artifact_for_cards, generated_disclosures, String::new(), generated_open_default())}
+                            </div>
+                        })
+                    }}
                 </details>
             })}
             {move || {

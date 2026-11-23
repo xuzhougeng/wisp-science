@@ -211,3 +211,38 @@ test("a turn that stops at the iteration limit says where to raise it (#1723)", 
   await expect(page.getByTestId("turn-pending")).toHaveCount(0);
   await expect(notice).toHaveCount(0);
 });
+
+for (const locale of ["en", "zh"]) {
+  test(`settled step groups name the tools that ran, not only a count (${locale})`, async ({ page }) => {
+    const frameId = await start(page, locale);
+    await emit(page, frameId, { kind: "ToolResult", name: "pdf-explore", ok: true, content: "Findings extracted." });
+    await emit(page, frameId, { kind: "Text", delta: "Next I will write the plotting script." });
+    const titles = page.getByTestId("steps-title");
+    const single = "pdf-explore · Read the paper and extract its findings";
+    await expect(titles.first()).toHaveText(single);
+    // The full text stays available when the ellipsis cuts it.
+    await expect(titles.first()).toHaveAttribute("title", single);
+    await expect(titles.first()).toHaveCSS("white-space", "nowrap");
+    await expect(titles.first()).toHaveCSS("text-overflow", "ellipsis");
+
+    await emit(page, frameId, { kind: "ToolCall", name: "write_file", preview: "hist_plot.py\nimport numpy as np" });
+    await emit(page, frameId, { kind: "ToolResult", name: "write_file", ok: true, content: "wrote hist_plot.py" });
+    await emit(page, frameId, { kind: "ToolCall", name: "shell", preview: "rm -f normal_draws.csv" });
+    await emit(page, frameId, { kind: "ToolResult", name: "shell", ok: true, content: "" });
+    await emit(page, frameId, { kind: "Text", delta: "Cleaned up." });
+    await expect(titles.nth(1)).toHaveText(
+      locale === "zh" ? "已执行 2 步 · write_file, shell" : "Ran 2 steps · write_file, shell",
+    );
+
+    // A long target is cut by the CSS ellipsis inside a narrow transcript.
+    await emit(page, frameId, { kind: "ToolCall", name: "python", preview: `import matplotlib.pyplot as plt; ${"x = 1; ".repeat(60)}` });
+    await emit(page, frameId, { kind: "ToolResult", name: "python", ok: true, content: "ok" });
+    await emit(page, frameId, { kind: "Text", delta: "Plotted." });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const long = titles.nth(2);
+    await expect(long).toContainText("python · import matplotlib.pyplot as plt;");
+    await expect.poll(() => long.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
+    const head = page.locator(".steps-head").nth(2);
+    await expect.poll(() => head.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  });
+}
