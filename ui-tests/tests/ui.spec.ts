@@ -1933,8 +1933,12 @@ test("post-start API errors keep the user bubble when an Error event lands first
   await expect(page.locator(".finding.err")).toContainText("max_tokens too high");
   await expect(page.locator(".finding.err")).not.toContainText("[turn-started]");
   await expect(composer(page)).toHaveValue("");
-  // Resume must still see the original question in the transcript.
-  await expect(page.getByRole("button", { name: /Resume|继续执行/ })).toBeVisible();
+  // Retry (Resume of a failed model request) must still see the original
+  // question in the transcript.
+  await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+  // The headline is the plain-language summary; the raw body stays in Details.
+  await expect(page.locator(".finding.err .finding-title")).toHaveText("The provider rejected the request");
+  await expect(page.locator(".finding.err .finding-raw pre")).toContainText("max_tokens too high");
 });
 
 for (const locale of ["zh", "en"]) {
@@ -1949,8 +1953,13 @@ for (const locale of ["zh", "en"]) {
       + "https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof-" + "connection".repeat(30);
     await emitTauriEvent(page, "agent", { kind: "Error", frame_id: send.sessionId, message });
     const card = page.locator(".finding.err");
-    await expect(card.locator(".finding-title")).toHaveText(message);
-    await expect(card.getByRole("button", { name: locale === "zh" ? "继续执行" : "Resume", exact: true })).toBeVisible();
+    // The plain-language summary is the headline; the raw transport error is
+    // folded into Details.
+    await expect(card.locator(".finding-title")).toHaveText(locale === "zh" ? "无法连接到模型 API" : "Could not reach the model API");
+    await expect(card.locator(".finding-raw pre")).toHaveText(message);
+    await expect(card.locator(".finding-raw")).not.toHaveAttribute("open", /.*/);
+    // Resuming a failed model request re-sends it.
+    await expect(card.getByRole("button", { name: locale === "zh" ? "重试" : "Retry", exact: true })).toBeVisible();
     await expect(card.getByRole("button", { name: locale === "zh" ? "复制" : "Copy", exact: true })).toBeVisible();
     for (const width of [1440, 820, 360]) {
       await page.setViewportSize({ width: Math.max(width, 820), height: 1200 });
@@ -1960,8 +1969,8 @@ for (const locale of ["zh", "en"]) {
       await card.scrollIntoViewIfNeeded();
       const layout = await card.evaluate(el => {
         const bounds = el.getBoundingClientRect();
-        const controls = Array.from(el.querySelectorAll(".finding-tag, button"));
-        const buttonCenters = Array.from(el.querySelectorAll("button"), button => {
+        const controls = Array.from(el.querySelectorAll(".finding-tag, .finding-actions button"));
+        const buttonCenters = Array.from(el.querySelectorAll(".finding-actions button"), button => {
           const rect = button.getBoundingClientRect();
           return rect.top + rect.height / 2;
         });
@@ -12595,7 +12604,7 @@ test("inline approval card keeps its buttons reachable with a long preview (#63)
   await page.getByRole("button", { name: "Send" }).click();
   // A very long preview must not push the allow button off-screen; the card
   // scrolls the code block internally so the actions stay in view.
-  const allow = page.getByRole("button", { name: "Allow once" });
+  const allow = page.getByRole("button", { name: "Allow", exact: true });
   await expect(allow).toBeVisible({ timeout: 10_000 });
   await expect(allow).toBeInViewport();
 });
@@ -12605,7 +12614,7 @@ test("native approval remains clickable while the agent turn is blocked", async 
   await composer(page).fill("BLOCKINGCONFIRM");
   await page.getByRole("button", { name: "Send" }).click();
 
-  const allow = page.getByRole("button", { name: "Allow once" });
+  const allow = page.getByRole("button", { name: "Allow", exact: true });
   await expect(allow).toBeVisible({ timeout: 10_000 });
   await expect.poll(() => page.evaluate(() =>
     Object.values((window as any).__nativeConfirmPending ?? {}).some(Boolean)
@@ -12629,6 +12638,11 @@ test("approval card can enable Full Permission through the warning", async ({ pa
 
   const shortcut = page.getByTestId("approval-full-permission");
   await expect(shortcut).toBeVisible({ timeout: 10_000 });
+  // Tertiary: a quiet text action after Allow / Deny, never a filled button.
+  await expect(shortcut).toHaveClass(/approval-full-permission/);
+  await expect(shortcut).not.toHaveClass(/primary/);
+  await expect(page.locator(".approval-actions button").last()).toHaveAttribute("data-testid", "approval-full-permission");
+  expect(await shortcut.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
   await shortcut.click();
   const warning = page.getByRole("heading", { name: "Enable Full Permission?" });
   await expect(warning).toBeVisible();
@@ -12647,6 +12661,34 @@ test("approval card can enable Full Permission through the warning", async ({ pa
   });
   // The backend settles the waiting request itself when the mode turns on.
   expect(await invokeArgsList(page, "confirm_response")).toHaveLength(0);
+});
+
+test("a tool waiting on approval reads Awaiting approval, not Working", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("TOOLCONFIRM");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const allow = page.getByRole("button", { name: "Allow", exact: true });
+  await expect(allow).toBeVisible({ timeout: 10_000 });
+  // Shell previews are labelled as a command, not code.
+  await expect(page.locator(".approval-code > summary")).toHaveText("Command");
+
+  const group = page.locator(".steps.is-live").last();
+  await expect(group.locator(".steps-title")).toHaveText("Awaiting approval");
+  await expect(group.getByTestId("steps-indicator")).toHaveAttribute("data-state", "awaiting");
+  await expect(group.locator(".steps-indicator")).not.toHaveClass(/running/);
+  await expect(group.locator(".steps-meta")).toHaveCount(0);
+
+  await allow.click();
+  await expect(group.locator(".steps-title")).toHaveText("Working…");
+  await expect(group.getByTestId("steps-indicator")).toHaveAttribute("data-state", "running");
+});
+
+test("code tool previews keep the Code label", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("NEEDRCONFIRM");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator(".approval-code > summary")).toHaveText("Code", { timeout: 10_000 });
 });
 
 test("background approval targets its session after switching conversations", async ({ page }) => {
@@ -13057,9 +13099,12 @@ test("inline approval scope is sent with confirmation", async ({ page }) => {
   await composer(page).fill("NEEDCONFIRM");
   await page.getByRole("button", { name: "Send" }).click();
 
-  await expect(page.getByRole("button", { name: "Allow once" })).toBeVisible({ timeout: 10_000 });
+  const allow = page.getByRole("button", { name: "Allow", exact: true });
+  await expect(allow).toBeVisible({ timeout: 10_000 });
   await page.getByLabel("Approval scope").selectOption("project");
-  await page.getByRole("button", { name: "Allow for this project" }).click();
+  // The select states the scope; the button does not repeat it.
+  await expect(allow).toHaveText("Allow");
+  await allow.click();
 
   await expect.poll(async () => page.evaluate(() => {
     const calls = ((window as any).__skillInvokeLog ?? []).map((c: any) => ({
@@ -13116,7 +13161,7 @@ test("awaiting approval marks the session dot and requests a desktop notificatio
   await expect(newSessionButton(page)).toBeVisible();
   await composer(page).fill("NEEDCONFIRM");
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByRole("button", { name: "Allow once" })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("button", { name: "Allow", exact: true })).toBeVisible({ timeout: 10_000 });
   // The waiting state shows on the sidebar session row as a circle-alert icon.
   const waiting = page.locator(".side-item.ses.attention");
   await expect(waiting).toHaveCount(1);
@@ -13136,7 +13181,7 @@ test("awaiting approval marks the session dot and requests a desktop notificatio
     body: "Long transcript · shell",
   });
   // Responding clears the badge.
-  await page.getByRole("button", { name: "Allow once" }).click();
+  await page.getByRole("button", { name: "Allow", exact: true }).click();
   await expect(page.locator(".side-item.ses.attention")).toHaveCount(0);
 });
 
@@ -17010,11 +17055,99 @@ test("a leftover proxy connect error points at General Network settings", async 
 
   const card = page.locator(".finding.err");
   await expect(card).toBeVisible();
-  await expect(card.locator(".finding-title")).toContainText("via leftover HTTPS_PROXY=http://127.0.0.1:7890");
+  await expect(card.locator(".finding-title")).toHaveText("Could not reach the model API");
+  await expect(card.locator(".finding-raw pre")).toContainText("via leftover HTTPS_PROXY=http://127.0.0.1:7890");
+  await expect(card.getByTestId("error-open-settings")).toHaveText("Open network settings");
   await expect(card.locator(".finding-body")).toContainText("Settings → Network");
   await expect(card.locator(".finding-body")).not.toContainText("Settings → General → Network");
   await expect(card.locator(".finding-body")).toContainText("Direct");
   await expect(card.locator(".finding-body")).not.toContainText("Settings → Models");
+});
+
+const LOCAL_GATEWAY_REFUSED = "http: error sending request for url (http://127.0.0.1:3999/v1/chat/completions): client error (Connect): tcp connect error: Connection refused (os error 61)";
+
+for (const locale of ["en", "zh"] as const) {
+  test(`a stopped local gateway leads with a plain summary and offers model settings (${locale})`, async ({ page, context }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.goto(`/?mockLocale=${locale}`);
+    await page.locator(".proj-card-main").first().click();
+    await composer(page).fill("hello");
+    await composer(page).press("Enter");
+    await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible();
+    const frameId = String((await lastInvokeArgs(page, "send_message")).sessionId);
+
+    await emitTauriEvent(page, "agent", { kind: "Error", frame_id: frameId, message: LOCAL_GATEWAY_REFUSED });
+
+    const card = page.locator(".finding.err");
+    await expect(card.locator(".finding-title")).toHaveText(
+      locale === "zh" ? "本地模型网关 127.0.0.1:3999 没有运行" : "The local model gateway at 127.0.0.1:3999 is not running",
+    );
+    // The explanation names the local service, not a leftover proxy.
+    await expect(card.locator(".finding-body")).toContainText("Magpie");
+    await expect(card.locator(".finding-body")).toContainText("127.0.0.1:3999");
+    await expect(card.locator(".finding-body")).not.toContainText("HTTP_PROXY");
+
+    // The raw transport error is folded into Details until asked for.
+    const details = card.getByTestId("error-details");
+    const raw = details.locator("pre");
+    await expect(raw).toBeHidden();
+    await details.locator("summary").click();
+    await expect(details.locator("summary")).toHaveText(locale === "zh" ? "详情" : "Details");
+    await expect(raw).toBeVisible();
+    await expect(raw).toHaveText(LOCAL_GATEWAY_REFUSED);
+
+    // Copy still copies the raw error.
+    await page.evaluate(() => {
+      Object.defineProperty(navigator.clipboard, "writeText", {
+        configurable: true,
+        value: async (text: string) => { (window as any).__copiedErrorText = text; },
+      });
+    });
+    await card.getByRole("button", { name: locale === "zh" ? "复制" : "Copy", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__copiedErrorText)).toBe(LOCAL_GATEWAY_REFUSED);
+
+    // Resuming a failed request re-sends it, so the action reads Retry.
+    await expect(card.getByTestId("error-resume")).toHaveText(locale === "zh" ? "重试" : "Retry");
+
+    const openSettings = card.getByTestId("error-open-settings");
+    await expect(openSettings).toHaveText(locale === "zh" ? "打开模型设置" : "Open model settings");
+    await openSettings.click();
+    await expect(page.getByTestId("settings-nav-models")).toHaveClass(/active/);
+  });
+}
+
+test("a rejected API key offers model settings; an unclassified failure keeps Resume", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("hello");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible();
+  const frameId = String((await lastInvokeArgs(page, "send_message")).sessionId);
+
+  await emitTauriEvent(page, "agent", {
+    kind: "Error",
+    frame_id: frameId,
+    message: 'api: 401 {"error":{"message":"invalid x-api-key"}}',
+  });
+  const auth = page.locator(".finding.err").last();
+  await expect(auth.locator(".finding-title")).toHaveText("The API key was rejected");
+  await expect(auth.getByTestId("error-open-settings")).toHaveText("Open model settings");
+
+  await emitTauriEvent(page, "agent", { kind: "Error", frame_id: frameId, message: "stream ended without completion" });
+  const plain = page.locator(".finding.err").last();
+  await expect(plain.locator(".finding-title")).toHaveText("stream ended without completion");
+  await expect(plain.getByTestId("error-details")).toHaveCount(0);
+  await expect(plain.getByTestId("error-open-settings")).toHaveCount(0);
+  await expect(plain.getByTestId("error-resume")).toHaveText("Resume");
+});
+
+test("a failed send shows the plain summary in the status bar", async ({ page }) => {
+  await enterApp(page);
+  await page.evaluate((message) => { (window as any).__sendMessageError = message; }, LOCAL_GATEWAY_REFUSED);
+  await composer(page).fill("hello");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator(".topbar .hint")).toHaveText(
+    "Send failed: The local model gateway at 127.0.0.1:3999 is not running",
+  );
 });
 
 test("pet stays off until the user explicitly configures its directory", async ({ page }) => {

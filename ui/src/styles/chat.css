@@ -1176,6 +1176,14 @@ button.tool-btn.card-copy { margin-left: auto; flex: 0 0 auto; padding: 2px 8px;
 }
 /* .primary fill comes from shared button primitives in base.css */
 .approval-actions button:hover { filter: brightness(0.97); }
+/* Full Permission is a session-wide escalation behind its own warning, not a
+   peer of Allow / Deny: a quiet text action at the far end of the row. */
+.approval-actions button.approval-full-permission {
+  margin-left: auto; padding: 8px 4px; border-color: transparent; background: transparent;
+  font-weight: 500; font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text-faint);
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.approval-actions button.approval-full-permission:hover { color: var(--text-muted); filter: none; }
 
 /* The current plan stays visible outside the scrolling/folded transcript. */
 .composer-plan-progress { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 0; flex: 0 0 auto; min-width: 0; max-width: var(--chat-col-max); width: 100%; box-sizing: border-box; margin: 0 auto 8px; padding: 9px 12px 12px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); }
@@ -2372,6 +2380,8 @@ button.stop:disabled { opacity: .45; cursor: default; }
 .steps-indicator { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 22px; height: 22px; color: var(--clay-strong); }
 .steps-indicator svg { width: 22px; height: 22px; stroke-width: 1.5; }
 .steps-indicator[data-state="stopped"] { color: var(--text-muted); }
+.steps-indicator[data-state="awaiting"] { color: var(--warn); }
+.steps-indicator[data-state="awaiting"] svg { width: 18px; height: 18px; }
 .steps-indicator.running svg > path { transform-origin: 12px 12px; animation: steps-orbit var(--agent-orbit-duration) linear infinite; }
 .steps-indicator.running svg > circle:last-child { transform-origin: 12px 12px; animation: steps-breathe var(--agent-pulse-duration) var(--agent-motion-ease) infinite; }
 .steps-copy { display: grid; gap: 3px; min-width: 0; white-space: normal; }

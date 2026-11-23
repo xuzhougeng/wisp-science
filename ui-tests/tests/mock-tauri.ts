@@ -6685,6 +6685,21 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                 nativeConfirmResolvers[fid] = resolve;
               });
             }
+            // A shell call announced before its approval prompt: the live
+            // step group must read "Awaiting approval", not "Working…".
+            if (String(arg("message") ?? "").includes("TOOLCONFIRM")) {
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "ToolCall", frame_id: fid, name: "shell", preview: "rm -f normal_draws.csv && ls -a" });
+                emit("confirm-request", {
+                  frame_id: fid,
+                  message: "Dangerous command detected:\nrm -f normal_draws.csv && ls -a",
+                  tool: "shell",
+                  preview: "rm -f normal_draws.csv && ls -a",
+                });
+              }, 50);
+              return fid;
+            }
             if (String(arg("message") ?? "").includes("NEEDCONFIRM")) {
               const longBody = Array.from({ length: 120 }, (_, i) => `rm -rf /mock/path/line-${i}`).join("\n");
               setTimeout(

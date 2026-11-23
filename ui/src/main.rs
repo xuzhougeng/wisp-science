@@ -71,8 +71,9 @@ use bindings::{
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
 use i18n::{
-    empty_subtitle, empty_title, localize_backend, send_failed, set_document_lang, t, tab_count,
-    tf, usage_tip, Locale, EMPTY_SUBTITLE_COUNT, EMPTY_TITLE_COUNT, TIP_COUNT,
+    empty_subtitle, empty_title, localize_backend, send_failed, send_failed_status,
+    set_document_lang, t, tab_count, tf, usage_tip, Locale, EMPTY_SUBTITLE_COUNT,
+    EMPTY_TITLE_COUNT, TIP_COUNT,
 };
 use leptos::{ev, window_event_listener, *};
 use library::{refresh_library, refresh_session_library, HighlightsPane, LibraryScreen};
@@ -5860,11 +5861,7 @@ fn App() -> impl IntoView {
                     if raw.contains(NO_API_KEY_MARK) {
                         needs_api_key.set(true);
                     }
-                    status.set(tf(
-                        locale.get(),
-                        "status.send_failed",
-                        &[("msg", &localize_backend(locale.get(), status_message))],
-                    ));
+                    status.set(send_failed_status(locale.get(), status_message));
                 }
             }
             finish_pending_turn(pending_turns, running, &id);
@@ -6610,11 +6607,7 @@ fn App() -> impl IntoView {
                         if raw.contains(NO_API_KEY_MARK) {
                             needs_api_key.set(true);
                         }
-                        status.set(tf(
-                            loc,
-                            "status.send_failed",
-                            &[("msg", &localize_backend(loc, &raw))],
-                        ));
+                        status.set(send_failed_status(loc, &raw));
                         finish_pending_turn(pending_turns, running, &id);
                         if stopping_session.get().as_deref() == Some(&id) {
                             stopping_session.set(None);
@@ -7221,6 +7214,9 @@ fn App() -> impl IntoView {
         });
     };
     let open_settings = move |_| open_settings_fn(None);
+    provide_context(chat_render::OpenErrorSettings(Callback::new(
+        move |section: String| open_settings_fn(Some(section)),
+    )));
     let open_capability_settings = Callback::new(move |section: String| {
         show_capabilities.set(false);
         open_settings_fn(Some(section));
@@ -7404,11 +7400,7 @@ fn App() -> impl IntoView {
                     if raw.contains(NO_API_KEY_MARK) {
                         needs_api_key.set(true);
                     }
-                    status.set(tf(
-                        loc,
-                        "status.send_failed",
-                        &[("msg", &localize_backend(loc, &raw))],
-                    ));
+                    status.set(send_failed_status(loc, &raw));
                     running.update(|r| {
                         r.clear();
                     });
@@ -7597,11 +7589,7 @@ fn App() -> impl IntoView {
                         if raw.contains(NO_API_KEY_MARK) {
                             needs_api_key.set(true);
                         }
-                        status.set(tf(
-                            loc,
-                            "status.send_failed",
-                            &[("msg", &localize_backend(loc, &raw))],
-                        ));
+                        status.set(send_failed_status(loc, &raw));
                         running.update(|sessions| {
                             sessions.remove(&session_id);
                         });
@@ -9109,11 +9097,7 @@ fn App() -> impl IntoView {
                     if raw.contains(NO_API_KEY_MARK) {
                         needs_api_key.set(true);
                     }
-                    status.set(tf(
-                        loc,
-                        "status.send_failed",
-                        &[("msg", &localize_backend(loc, &raw))],
-                    ));
+                    status.set(send_failed_status(loc, &raw));
                 }
             }
             finish_pending_turn(pending_turns, running, &id);

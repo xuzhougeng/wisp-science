@@ -257,4 +257,11 @@ details.step > summary .step-count { flex: 0 0 auto; font-size: calc(11.5px * va
 .finding.err .finding-tag { color: var(--err); background: color-mix(in srgb, var(--err) 12%, transparent); }
 .finding-title { font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 600; color: var(--text); flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .finding-body { padding: 0 13px 12px; font-size: calc(12.5px * var(--ui-font-scale, 1)); color: var(--text-muted); line-height: 1.58; overflow-wrap: anywhere; }
+/* Error card: settings shortcut, then the raw transport error folded away. */
+.finding-links { padding: 0 13px 10px; font-size: calc(12.5px * var(--ui-font-scale, 1)); }
+.finding-links .link-inline { display: inline-flex; align-items: center; gap: 5px; text-decoration: none; }
+.finding-links .link-inline svg { width: 14px; height: 14px; }
+.finding-raw { padding: 0 13px 11px; font-size: calc(11.5px * var(--ui-font-scale, 1)); color: var(--text-faint); }
+.finding-raw > summary { cursor: pointer; width: fit-content; }
+.finding-raw pre { margin: 6px 0 0; padding: 8px 10px; border-radius: var(--radius-xs); background: var(--bg-sunken); color: var(--text-muted); font-family: var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow-y: auto; }
 .finding-note { padding: 8px 13px; font-size: calc(11.5px * var(--ui-font-scale, 1)); color: var(--text-faint); border-top: 1px solid var(--border); background: var(--bg-sunken); font-style: italic; }

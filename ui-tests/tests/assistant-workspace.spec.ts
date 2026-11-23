@@ -61,7 +61,7 @@ test("an uncertain project operation can be confirmed from the idle assistant", 
     message: "Confirm a project operation", preview: "RNA · QC · CPU2\nRemove existing results\nReason: deletion was not requested",
   }));
   await expect(page.getByText(/deletion was not requested/)).toBeVisible();
-  await page.getByRole("button", { name: "Allow once", exact: true }).click();
+  await page.getByRole("button", { name: "Allow", exact: true }).click();
   await expect.poll(() => calls(page, "confirm_response")).toMatchObject([{ sessionId: "research-assistant", approved: true, scope: "once" }]);
   await expect(composer(page)).toHaveValue("Keep my next question");
   expect(await calls(page, "send_message")).toHaveLength(0);

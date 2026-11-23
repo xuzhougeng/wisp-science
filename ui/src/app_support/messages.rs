@@ -1479,12 +1479,47 @@ pub(crate) fn parse_plan_steps(preview: &str) -> Vec<(&'static str, String)> {
         .map(|step| (step.status.as_str(), step.content))
         .collect()
 }
-pub(crate) fn approval_allow_label_key(scope: &str) -> &'static str {
-    match scope {
-        "session" => "approval.allow_session",
-        "project" => "approval.allow_project",
-        "global" => "approval.allow_global",
-        _ => "approval.allow_once",
+/// The scope select already states how long the grant lasts, so the button
+/// beside it just says Allow. Without a select (workflow node confirmations
+/// are one-shot) the button names the only scope there is.
+pub(crate) fn approval_allow_label_key(has_scope_control: bool) -> &'static str {
+    if has_scope_control {
+        "approval.allow"
+    } else {
+        "approval.allow_once"
+    }
+}
+
+/// Field label above an approval preview: a shell tool runs a command, the
+/// other tools (python, r, …) run code.
+pub(crate) fn approval_preview_label_key(tool: &str) -> &'static str {
+    match tool {
+        "shell" | "bash" | "sh" | "powershell" | "run_in_context" | "wisp_run_in_context" => {
+            "approval.command"
+        }
+        _ => "approval.code",
+    }
+}
+
+#[cfg(test)]
+mod approval_label_tests {
+    use super::{approval_allow_label_key, approval_preview_label_key};
+
+    #[test]
+    fn allow_button_does_not_repeat_the_selected_scope() {
+        assert_eq!(approval_allow_label_key(true), "approval.allow");
+        assert_eq!(approval_allow_label_key(false), "approval.allow_once");
+    }
+
+    #[test]
+    fn shell_previews_are_labelled_as_commands() {
+        assert_eq!(approval_preview_label_key("shell"), "approval.command");
+        assert_eq!(
+            approval_preview_label_key("run_in_context"),
+            "approval.command"
+        );
+        assert_eq!(approval_preview_label_key("python"), "approval.code");
+        assert_eq!(approval_preview_label_key("r"), "approval.code");
     }
 }
 
@@ -1510,6 +1545,7 @@ pub(crate) fn ApprovalCard(
     let show_feedback = create_rw_signal(false);
     let feedback = create_rw_signal(String::new());
     let approval_scope = create_rw_signal(String::from("once"));
+    let has_scope_control = !is_plan && !is_resource_conflict && !is_image_resize && !is_workflow;
     let feedback_ready = move || !feedback.get().trim().is_empty();
     if is_plan {
         window_capture_escape(move || {
@@ -1596,6 +1632,7 @@ pub(crate) fn ApprovalCard(
                     let show_code = !preview.is_empty() && !is_resource_conflict;
                     let p = preview.clone();
                     let lang = lang.clone();
+                    let preview_label_key = approval_preview_label_key(&tool);
                     view! {
                         {(is_resource_conflict || is_image_resize).then(|| view! {
                             <p class="approval-conflict-message">{if is_image_resize && !p.is_empty() { p.clone() } else if is_image_resize { message.clone() } else { p.clone() }}</p>
@@ -1605,7 +1642,7 @@ pub(crate) fn ApprovalCard(
                         })}
                         {show_code.then(|| view! {
                             <details class="approval-code" open=true>
-                                <summary>{move || t(locale.get(), "approval.code")}</summary>
+                                <summary>{move || t(locale.get(), preview_label_key)}</summary>
                                 <pre><code class=format!("language-{lang}")>{p}</code></pre>
                             </details>
                         })}
@@ -1621,7 +1658,7 @@ pub(crate) fn ApprovalCard(
                     "approval.hint"
                 })}</p>
                 <div class="approval-actions">
-                    {(!is_plan && !is_resource_conflict && !is_image_resize && !is_workflow).then(|| view! {
+                    {has_scope_control.then(|| view! {
                         <label class="approval-scope">
                             <span>{move || t(locale.get(), "approval.scope")}</span>
                             <select
@@ -1648,7 +1685,7 @@ pub(crate) fn ApprovalCard(
                             } else if is_image_resize {
                                 t(locale.get(), "approval.image_resize_continue").to_string()
                             } else {
-                                t(locale.get(), approval_allow_label_key(&approval_scope.get())).to_string()
+                                t(locale.get(), approval_allow_label_key(has_scope_control)).to_string()
                             }
                         }}
                     </button>
@@ -1664,10 +1701,12 @@ pub(crate) fn ApprovalCard(
                             "confirm.deny"
                         })}
                     </button>
-                    {(!is_plan && !is_resource_conflict && !is_image_resize && !is_workflow).then(|| view! {
+                    {has_scope_control.then(|| view! {
                         // "full" is not a grant scope: the host opens the Full
                         // Permission warning, and enabling it settles this card.
-                        <button type="button" data-testid="approval-full-permission"
+                        // Tertiary (link-styled, pushed to the far end) so it
+                        // never reads as a peer of Allow / Deny.
+                        <button type="button" class="approval-full-permission" data-testid="approval-full-permission"
                             title=move || t(locale.get(), "full_permission.confirm_body")
                             on:click=move |_| on_decide.call((sid_full.clone(), true, None, "full".into()))>
                             {move || t(locale.get(), "composer.full_permission")}

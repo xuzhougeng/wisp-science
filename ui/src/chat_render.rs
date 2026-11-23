@@ -12,6 +12,11 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+/// Opens a Settings section from a failed-request error card (Models for a
+/// rejected key or a stopped local gateway, Network for an unreachable host).
+#[derive(Clone, Copy)]
+pub(crate) struct OpenErrorSettings(pub Callback<String>);
+
 #[derive(Clone, Copy)]
 pub(crate) struct CompactionRowActions {
     pub undo: Callback<u64>,
@@ -941,6 +946,14 @@ mod steps_title_tests {
     }
 }
 
+/// Rows that hold the turn until the user answers an approval prompt.
+pub(crate) fn awaits_approval(item: &ChatItem) -> bool {
+    matches!(
+        item,
+        ChatItem::ApprovalPending { .. } | ChatItem::AcpPermission { .. }
+    )
+}
+
 pub(crate) fn render_steps_group(
     indices: Vec<usize>,
     source: Signal<Vec<ChatItem>>,
@@ -1024,7 +1037,14 @@ pub(crate) fn render_steps_group(
             )
         })
     };
+    // A live group whose turn is blocked on an approval card is not running
+    // anything: say so instead of a spinner and a ticking duration.
+    let awaiting_approval =
+        create_memo(move |_| live && source.with(|items| items.iter().any(awaits_approval)));
     let title = move || {
+        if awaiting_approval.get() {
+            return t(locale.get(), "chat.steps_awaiting_approval");
+        }
         steps_title(
             locale.get(),
             completed_turn,
@@ -1062,20 +1082,20 @@ pub(crate) fn render_steps_group(
                 on:click=move |_| {
                 toggle_disclosure(disclosure_state, &toggle_group_id, live)
             }>
-                <span class="steps-indicator" class:running=live
+                <span class="steps-indicator" class:running=move || live && !awaiting_approval.get()
                     data-testid="steps-indicator"
-                    data-state=if live { "running" } else if settled_ok { "complete" } else { "stopped" }
+                    data-state=move || if awaiting_approval.get() { "awaiting" } else if live { "running" } else if settled_ok { "complete" } else { "stopped" }
                     aria-hidden="true">
-                    {compose_icon(if live { "activity-orbit" } else if settled_ok { "circle-check" } else { "circle-minus" })}
+                    {move || compose_icon(if awaiting_approval.get() { "circle-alert" } else if live { "activity-orbit" } else if settled_ok { "circle-check" } else { "circle-minus" })}
                 </span>
                 <span class="steps-copy">
                     <span class="steps-title">{title}</span>
-                    {waiting_for_model.then(|| view! {
+                    {move || (waiting_for_model && !awaiting_approval.get()).then(|| view! {
                         <span class="steps-note" data-testid="steps-wait-note">{model_wait_message}</span>
                     })}
                 </span>
-                {now_line.filter(|_| !waiting_for_model).map(|text| view! { <span class="steps-now">{text}</span> })}
-                {meta_label.map(|label| view! { <span class="steps-meta">{label}</span> })}
+                {move || now_line.clone().filter(|_| !waiting_for_model && !awaiting_approval.get()).map(|text| view! { <span class="steps-now">{text}</span> })}
+                {move || meta_label.clone().filter(|_| !awaiting_approval.get()).map(|label| view! { <span class="steps-meta">{label}</span> })}
                 <span class="steps-chevron" aria-hidden="true">{compose_icon("chevron-right")}</span>
             </button>
             {move || group_open.get().then(|| view! {
@@ -2858,20 +2878,38 @@ pub(crate) fn render_item(
                 .to_string();
             let copy = msg.clone();
             let hint_src = msg.clone();
+            let summary_src = msg.clone();
             let can_resume = can_modify && !msg.starts_with(crate::dto::ACP_TURN_ERROR_PREFIX);
+            // Resuming after a failed model request re-sends that request.
+            let resume_key = if i18n::is_model_request_error(&msg) {
+                "chat.retry"
+            } else {
+                "chat.resume"
+            };
+            // A classified failure leads with its plain-language summary and
+            // folds the raw transport error into Details; an unclassified one
+            // has nothing better to show than the raw text.
+            let has_summary = i18n::api_error_summary(locale.get_untracked(), &msg).is_some();
+            let settings_section = i18n::api_error_settings_section(&msg);
+            let open_settings = use_context::<OpenErrorSettings>();
+            let raw = msg.clone();
             view! {
                 <div class="finding err">
                     <div class="finding-head">
                         <div class="finding-summary">
                         <span class="finding-tag">{compose_icon("circle-alert")}{move || t(locale.get(), "chat.error")}</span>
-                        <span class="finding-title">{msg}</span>
+                        <span class="finding-title">{move || {
+                            i18n::api_error_summary(locale.get(), &summary_src)
+                                .unwrap_or_else(|| summary_src.clone())
+                        }}</span>
                         </div>
                         <div class="finding-actions">
                         {can_resume.then(|| view! {
                             <button type="button" class="tool-btn"
+                                data-testid="error-resume"
                                 disabled=move || busy.get()
                                 on:click=move |_| on_resume.call(ui_index)>
-                                {move || t(locale.get(), "chat.resume")}
+                                {move || t(locale.get(), resume_key)}
                             </button>
                         })}
                         <button type="button" class="tool-btn card-copy"
@@ -2883,6 +2921,26 @@ pub(crate) fn render_item(
                     </div>
                     {move || i18n::api_error_hint(locale.get(), &hint_src).map(|hint| view! {
                         <div class="finding-body">{hint}</div>
+                    })}
+                    {settings_section.zip(open_settings).map(|(section, open)| view! {
+                        <div class="finding-links">
+                            <button type="button" class="link-inline" data-testid="error-open-settings"
+                                data-section=section
+                                on:click=move |_| open.0.call(section.to_string())>
+                                {compose_icon("gear")}
+                                {move || t(locale.get(), if section == "network" {
+                                    "chat.open_network_settings"
+                                } else {
+                                    "chat.open_model_settings"
+                                })}
+                            </button>
+                        </div>
+                    })}
+                    {has_summary.then(|| view! {
+                        <details class="finding-raw" data-testid="error-details">
+                            <summary>{move || t(locale.get(), "chat.error_details")}</summary>
+                            <pre>{raw}</pre>
+                        </details>
                     })}
                 </div>
             }.into_view()
