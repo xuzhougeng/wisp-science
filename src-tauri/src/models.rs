@@ -242,6 +242,23 @@ pub(crate) fn is_loopback_api_url(url: &str) -> bool {
     }
 }
 
+/// Providers whose requests can go out without a key to a local gateway.
+pub(crate) fn keyless_local_gateway(provider: &str, api_url: &str) -> bool {
+    matches!(provider, "openai" | "openai_responses" | "anthropic") && is_loopback_api_url(api_url)
+}
+
+/// Whether the active model can authenticate: a stored key or token, or a
+/// local gateway that needs none. The UI's "model not set up" notice and the
+/// run-time check must agree, so both ask here.
+pub(crate) fn model_access_ready(
+    provider: &str,
+    api_url: &str,
+    model: &str,
+    api_key: &str,
+) -> bool {
+    !api_key.is_empty() || (!model.trim().is_empty() && keyless_local_gateway(provider, api_url))
+}
+
 /// A profile that can run a turn: a model id and, for API-key providers, a
 /// base URL. The fresh-install placeholder has neither.
 fn profile_is_configured(profile: &ModelProfile) -> bool {
@@ -3831,6 +3848,39 @@ mod tests {
         for bad in ["坏网关", "/my gateway", "a//b", "/v1%2F"] {
             assert!(normalize_endpoint_suffix(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_keyless_local_gateway_counts_as_set_up() {
+        let local = "http://127.0.0.1:3425/v1";
+        assert!(model_access_ready(
+            "openai",
+            local,
+            "deepseek/deepseek-flash",
+            ""
+        ));
+        assert!(model_access_ready(
+            "anthropic",
+            "http://localhost:8080",
+            "m",
+            ""
+        ));
+        // A key always counts, wherever the API lives.
+        assert!(model_access_ready(
+            "openai",
+            "https://api.deepseek.com",
+            "m",
+            "sk-x"
+        ));
+        // No key on a remote API, no model yet, or a sign-in provider: not ready.
+        assert!(!model_access_ready(
+            "openai",
+            "https://api.deepseek.com",
+            "m",
+            ""
+        ));
+        assert!(!model_access_ready("openai", local, "  ", ""));
+        assert!(!model_access_ready("openai_chatgpt", local, "m", ""));
     }
 
     #[test]

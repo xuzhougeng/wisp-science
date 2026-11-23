@@ -5821,10 +5821,7 @@ fn build_stored_provider_config(
     }
     // A local gateway (localhost, 127.0.0.1, [::1]) usually needs no key; the
     // providers then omit the auth header instead of sending an empty one.
-    let keyless_local = matches!(
-        provider.as_str(),
-        "openai" | "openai_responses" | "anthropic"
-    ) && models::is_loopback_api_url(api_url);
+    let keyless_local = models::keyless_local_gateway(provider.as_str(), api_url);
     if api_key.is_empty() && !keyless_local {
         return Err(if provider == "openai_chatgpt" {
             "Sign in with ChatGPT from Settings → Models, or run `wisp-science login chatgpt`."
@@ -7312,7 +7309,7 @@ fn list_memory_files(memory: &MemoryManager) -> Vec<MemoryFile> {
 
 async fn build_project_info(state: &AppState, label: &str) -> Result<ProjectInfo, String> {
     let ap = state.require_active(label)?;
-    let (_, _, _, api_key) = load_settings(&state.store).await;
+    let (provider, api_url, model, api_key) = load_settings(&state.store).await;
     let mcp = list_mcp_servers(&ap.root);
     // Prefer the user-set project name (Project Settings) over the folder name.
     let db_name = state
@@ -7339,7 +7336,7 @@ async fn build_project_info(state: &AppState, label: &str) -> Result<ProjectInfo
         skill_count: ap.skills.all().len(),
         mcp_server_count: mcp.len(),
         memory_file_count: count_memory_files(&ap.memory),
-        has_api_key: !api_key.is_empty(),
+        has_api_key: models::model_access_ready(&provider, &api_url, &model, &api_key),
     })
 }
 
