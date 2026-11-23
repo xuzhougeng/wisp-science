@@ -7277,6 +7277,7 @@ fn App() -> impl IntoView {
     let save_model_form = move |_| model_settings.save_model_form();
 
     let validate_model_form = move |_| model_settings.validate_model_form();
+    let fetch_endpoint_models = move |_| model_settings.fetch_endpoint_models(false);
 
     let test_reviewer_form = move |_| model_settings.test_reviewer_form();
 
@@ -9145,9 +9146,9 @@ fn App() -> impl IntoView {
         }
         let provider = "openai".to_string();
         let (api_url, _) = provider_defaults(&provider);
-        // `save_model` makes every newly created profile the active one, so
-        // the model the user should land on has to be saved last.
-        let wanted = [DEEPSEEK_PRO_MODEL, DEEPSEEK_FLASH_MODEL];
+        // `save_model` makes a new profile the default only while there is no
+        // usable default, so the model the user should land on goes first.
+        let wanted = [DEEPSEEK_FLASH_MODEL, DEEPSEEK_PRO_MODEL];
         spawn_local(async move {
             for model in wanted {
                 let arg = to_value(&serde_json::json!({
@@ -16726,7 +16727,7 @@ fn App() -> impl IntoView {
                                                             .into_iter()
                                                             .filter(ModelProfile::is_chat_model)
                                                             .map(|model| {
-                                                                (format!("http:{}", model.id), model.label)
+                                                                (format!("http:{}", model.id), model.display_label())
                                                             }),
                                                     );
                                                 }
@@ -16798,7 +16799,7 @@ fn App() -> impl IntoView {
                                                     profiles
                                                         .into_iter()
                                                         .filter(ModelProfile::is_chat_model)
-                                                        .map(|model| (Some(model.id), model.label)),
+                                                        .map(|model| (Some(model.id.clone()), model.display_label())),
                                                 );
                                                 // Subagents only run on HTTP models, so Magpie runs all of
                                                 // them; the stored choice waits for a disconnect.
@@ -17184,12 +17185,12 @@ fn App() -> impl IntoView {
                                                 let profiles = list.clone();
                                                 list.into_iter().filter(ModelProfile::is_chat_model).map(|m| {
                                                     let pick_id = m.id.clone();
-                                                    let pick_label = m.label.clone();
+                                                    let pick_label = m.display_label();
                                                     let pick_supports_vision = m.supports_vision;
                                                     let duplicate_label = profiles.iter().filter(|other| other.is_chat_model()
-                                                        && other.label.trim().eq_ignore_ascii_case(m.label.trim())).count() > 1;
+                                                        && other.display_label().eq_ignore_ascii_case(&pick_label)).count() > 1;
                                                     let detail = format!("{} · {}", m.provider, m.model);
-                                                    let tooltip = format!("{}\n{}", m.label, detail);
+                                                    let tooltip = format!("{}\n{}", pick_label, detail);
                                                     let is_active = !acp_selected
                                                         && selected.as_deref().map_or(m.active, |id| id == m.id);
                                                     view! {
@@ -17218,7 +17219,7 @@ fn App() -> impl IntoView {
                                                                 }
                                                             }>
                                                                 <span class="model-menu-text">
-                                                                    <span class="model-menu-label">{m.label.clone()}</span>
+                                                                    <span class="model-menu-label">{m.display_label()}</span>
                                                                     {duplicate_label.then(|| view! { <span class="model-menu-sub">{detail}</span> })}
                                                                 </span>
                                                                 {is_active.then(|| view! { <span class="model-menu-check">{compose_icon("check")}</span> })}
@@ -17507,7 +17508,11 @@ fn App() -> impl IntoView {
                                         .cloned()?;
                                         (
                                             profile.reasoning_effort.clone(),
-                                            composer_model_efforts.get().unwrap_or_default(),
+                                            // The catalog's exact entry first; without one, the levels
+                                            // the endpoint's own model list reported for this id.
+                                            composer_model_efforts
+                                                .get()
+                                                .unwrap_or_else(|| profile.endpoint_efforts.clone()),
                                             Some(profile.id.clone()),
                                         )
                                     }
@@ -19868,6 +19873,7 @@ fn App() -> impl IntoView {
             test_reviewer_form=Callback::new(test_reviewer_form)
             set_subagent_model=Callback::new(move |id: String| model_settings.apply_subagent_model(id))
             validate_model_form=Callback::new(validate_model_form)
+            fetch_endpoint_models=Callback::new(fetch_endpoint_models)
             start_specialist_chat=start_specialist_chat
             refresh_conns=Callback::new(move |_: ()| refresh_conns())
             refresh_skills=Callback::new(move |_: ()| refresh_skills())

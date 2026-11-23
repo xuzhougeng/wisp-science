@@ -18,6 +18,15 @@ function providerSelect(page: Page) {
   return page.getByTestId("settings-provider");
 }
 
+// Settings › Models keeps everything past address, key, protocol, model ID and
+// display name in one collapsed "Advanced" disclosure.
+async function openModelAdvanced(page: Page) {
+  const advanced = page.getByTestId("model-advanced-section");
+  if (!(await advanced.evaluate((el) => (el as HTMLDetailsElement).open))) {
+    await advanced.locator(":scope > summary").click();
+  }
+}
+
 function globalSettingsButton(page: Page) {
   // "Project settings" on landing cards also matches name: "Settings" unless exact.
   return page.getByRole("button", { name: "Settings", exact: true });
@@ -10190,6 +10199,7 @@ test("settings page shows the saved protocol", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);
   await expect(providerSelect(page)).toHaveValue("openai");
+  await openModelAdvanced(page);
   await expect(page.locator("label.settings-check", { hasText: "Supports image input" })).toHaveCSS("flex-direction", "row");
   await expect(page.locator("label.settings-check", { hasText: "Use for image analysis" })).toHaveCSS("flex-direction", "row");
   await expect(page.locator("label.settings-check", { hasText: "Use for image generation" })).toHaveCSS("flex-direction", "row");
@@ -10205,6 +10215,7 @@ for (const locale of ["en", "zh"]) {
     await page.locator(".settings-list-row").first().click();
     await providerSelect(page).selectOption("anthropic");
     await page.getByRole("textbox", { name: locale === "zh" ? "模型 ID" : "Model ID", exact: true }).fill("glm-5.3");
+    await openModelAdvanced(page);
     const form = page.locator(".model-form");
     const effort = page.getByRole("combobox", { name: locale === "zh" ? "推理强度" : "Reasoning effort", exact: true });
     await expect(effort).toHaveAccessibleDescription(/.+/);
@@ -10597,6 +10608,7 @@ test("advanced identity controls persist and validate a custom session header", 
   await enterApp(page);
   await openModelsSettings(page);
   const advanced = page.getByTestId("model-advanced-options");
+  await openModelAdvanced(page);
   await advanced.locator("summary").click();
   await expect(page.getByTestId("model-send-user-agent")).toBeChecked();
   await expect(page.getByTestId("model-send-session-id")).not.toBeChecked();
@@ -10614,6 +10626,7 @@ test("advanced identity controls persist and validate a custom session header", 
     send_user_agent: false, send_session_id: true, session_header_name: "x-custom-session",
   }});
   await page.locator(".settings-list-row").first().click();
+  await openModelAdvanced(page);
   await advanced.locator("summary").click();
   await expect(page.getByTestId("model-send-user-agent")).not.toBeChecked();
   await expect(page.getByTestId("model-send-session-id")).toBeChecked();
@@ -10629,6 +10642,7 @@ test("OpenCode defaults to session identity but permits disabling both headers",
   await enterApp(page);
   await openSettingsSection(page, "Models");
   await page.getByTestId("model-presets").getByRole("button", { name: "OpenCode", exact: true }).click();
+  await openModelAdvanced(page);
   await page.getByTestId("model-advanced-options").locator("summary").click();
   await expect(page.getByTestId("model-send-user-agent")).toBeChecked();
   await expect(page.getByTestId("model-send-session-id")).toBeChecked();
@@ -10657,6 +10671,7 @@ test("model User-Agent advanced option validates, persists, and resets", async (
   const userAgent = page.getByTestId("model-user-agent");
   await expect(advanced).not.toHaveAttribute("open", "");
   await expect(userAgent).toBeHidden();
+  await openModelAdvanced(page);
   await advanced.locator("summary").click();
   await expect(userAgent).toHaveValue("");
   await expect(userAgent).toHaveAttribute("placeholder", "wisp-science");
@@ -10668,6 +10683,7 @@ test("model User-Agent advanced option validates, persists, and resets", async (
   await expect.poll(() => lastInvokeArgs(page, "save_model"))
     .toMatchObject({ profile: { user_agent: "research-client/1.0" } });
   await page.locator(".settings-list-row").first().click();
+  await openModelAdvanced(page);
   await advanced.locator("summary").click();
   await expect(userAgent).toHaveValue("research-client/1.0");
   await userAgent.fill("");
@@ -10675,6 +10691,7 @@ test("model User-Agent advanced option validates, persists, and resets", async (
   await expect.poll(() => lastInvokeArgs(page, "save_model"))
     .toMatchObject({ profile: { user_agent: "" } });
   await page.locator(".settings-list-row").first().click();
+  await openModelAdvanced(page);
   await advanced.locator("summary").click();
   await expect(userAgent).toHaveValue("");
 });
@@ -10689,6 +10706,7 @@ test("new API access applies its advanced User-Agent to every added model", asyn
   await page.getByTestId("provider-add-model").click();
   await page.getByTestId("provider-model-row").last().getByLabel("Model ID").fill("research-two");
   await expect(page.getByTestId("model-user-agent")).toBeHidden();
+  await openModelAdvanced(page);
   await page.getByTestId("model-advanced-options").locator("summary").click();
   await page.getByTestId("model-user-agent").fill("research-client/2.0");
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
@@ -10711,6 +10729,7 @@ test("vision assignment keeps model fields and stored key placeholder untouched"
   const effort = page.getByLabel("Reasoning effort");
   const key = page.getByLabel("API key (stored in OS keyring)");
   const useForVision = page.getByLabel("Use for image analysis");
+  await openModelAdvanced(page);
 
   await providerSelect(page).selectOption("openai_responses");
   await page.getByLabel("Base URL").fill("https://api.openai-proxy.org/v1");
@@ -10765,6 +10784,7 @@ test("Fast profile toggle is available for both OpenAI HTTP protocols", async ({
     await providerSelect(page).selectOption(provider);
     await page.getByLabel("Base URL").fill("https://api.openai.com/v1");
     await page.getByRole("textbox", { name: "Model ID", exact: true }).fill("gpt-5.6-luna");
+    await openModelAdvanced(page);
     await page.getByLabel("Reasoning effort").selectOption("high");
     const row = page.getByTestId("service-tier-toggle-row");
     const toggle = page.getByTestId("service-tier-toggle");
@@ -10855,6 +10875,7 @@ for (const [label, field, value] of [
   test(`model settings keeps ${field} focused while typing and deleting (#1243)`, async ({ page }) => {
     await enterApp(page);
     await openModelsSettings(page);
+    await openModelAdvanced(page);
     const input = page.getByLabel(label, { exact: true });
     await input.click();
     await page.keyboard.press("ControlOrMeta+A");
@@ -10888,6 +10909,7 @@ test("model settings rejects max output tokens above the known ceiling", async (
   await openModelsSettings(page);
 
   // deepseek-v4-pro is in the baked catalog (384K output ceiling).
+  await openModelAdvanced(page);
   const maxTokens = page.getByLabel("Max output tokens");
   await maxTokens.fill("1000000");
   await page.getByRole("button", { name: "Save" }).click();
@@ -10956,16 +10978,16 @@ test("API access creates several models with one key, including an explicit imag
       };
     }))).toEqual([
       {
-        model: "gpt-image-2",
-        provider: "openai_responses",
-        apiUrl: "https://api.openai.com",
-        suffix: "/v1/images/generations",
-      },
-      {
         model: "gpt-5.5",
         provider: "openai_responses",
         apiUrl: "https://api.openai.com",
         suffix: "",
+      },
+      {
+        model: "gpt-image-2",
+        provider: "openai_responses",
+        apiUrl: "https://api.openai.com",
+        suffix: "/v1/images/generations",
       },
     ]);
 });
@@ -11016,14 +11038,14 @@ test("API access can paste a second key on the same Base URL", async ({ page }) 
       };
     }))).toEqual([
       {
-        model: "deepseek-v4-pro",
-        label: "pro-work",
+        model: "deepseek-v4-flash",
+        label: "flash-work",
         key: "sk-work",
         apiUrl: "https://api.deepseek.com",
       },
       {
-        model: "deepseek-v4-flash",
-        label: "flash-work",
+        model: "deepseek-v4-pro",
+        label: "pro-work",
         key: "sk-work",
         apiUrl: "https://api.deepseek.com",
       },
@@ -11057,36 +11079,36 @@ test("one DeepSeek Base URL can save Responses and Anthropic protocol models", a
       };
     }))).toEqual([
       {
-        model: "deepseek-v4-pro",
-        protocol: "anthropic",
-        baseUrl: "https://api.deepseek.com",
-        suffix: "/anthropic",
-      },
-      {
         model: "deepseek-v4-flash",
         protocol: "openai_responses",
         baseUrl: "https://api.deepseek.com",
         suffix: "",
       },
+      {
+        model: "deepseek-v4-pro",
+        protocol: "anthropic",
+        baseUrl: "https://api.deepseek.com",
+        suffix: "/anthropic",
+      },
     ]);
 });
 
-test("onboarding key setup lands on flash after adding pro", async ({ page }) => {
+test("onboarding key setup saves flash first so it becomes the default", async ({ page }) => {
   await page.goto("/?mockOnboarding=1");
   await expect(page.locator(".onboard-overlay")).toBeVisible();
   await page.locator(".onboard-overlay").getByRole("button", { name: "Next" }).click();
   await page.locator(".onboard-overlay").getByRole("button", { name: "Next" }).click();
   await page.getByLabel("API key (stored in OS keyring)").fill("sk-onboard");
   await page.keyboard.press("Enter");
-  // Order matters: save_model activates each new profile, so flash must land
-  // last for the user to start on the cheaper default.
+  // Order matters: save_model makes a new profile the default only while
+  // there is no usable default, so flash must be saved first.
   await expect.poll(() => page.evaluate(() => ((window as any).__skillInvokeLog ?? [])
     .filter((c: any) => c.cmd === "save_model")
     .map((c: any) => {
       const args = c.args instanceof Map ? Object.fromEntries(c.args) : c.args;
       const profile = args.profile instanceof Map ? Object.fromEntries(args.profile) : args.profile;
       return profile.model;
-    }))).toEqual(["deepseek-v4-pro", "deepseek-v4-flash"]);
+    }))).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
   // The built-in Reader gets bound to the flash profile so reading-heavy
   // work runs on the cheap tier out of the box.
   await expect.poll(() => page.evaluate(() => ((window as any).__skillInvokeLog ?? [])
@@ -11095,7 +11117,7 @@ test("onboarding key setup lands on flash after adding pro", async ({ page }) =>
       const args = c.args instanceof Map ? Object.fromEntries(c.args) : c.args;
       const spec = args.spec instanceof Map ? Object.fromEntries(args.spec) : args.spec;
       return { id: spec.id, model_id: spec.model_id };
-    }))).toEqual([{ id: "reader", model_id: "m2" }]);
+    }))).toEqual([{ id: "reader", model_id: "m1" }]);
 });
 
 test("API access on xAI suggests grok chat and imagine image", async ({ page }) => {
@@ -11114,6 +11136,7 @@ for (const modelId of ["gpt-image-2.5", "gateway/custom-image-v3"]) {
     await enterApp(page);
     await openSettingsSection(page, "Models");
     await page.locator(".settings-list-row", { hasText: "opus-4.8" }).click();
+    await openModelAdvanced(page);
     await providerSelect(page).selectOption("openai");
     await page.getByRole("textbox", { name: "Model ID", exact: true }).fill(modelId);
     await page.getByTestId("use-for-image-generation").check();
@@ -11125,7 +11148,7 @@ for (const modelId of ["gpt-image-2.5", "gateway/custom-image-v3"]) {
       useForImageGeneration: true,
       settings: { provider: "openai", model: modelId, supports_vision: false },
     });
-    await expect(page.locator(".settings-status")).toHaveText(`Validated openai with ${modelId}`);
+    await expect(page.locator(".settings-status")).toHaveText(`Connection OK · OpenAI Chat Completions · ${modelId}`);
     await page.getByRole("button", { name: "Save" }).click();
     await expect.poll(() => lastInvokeArgs(page, "save_model")).toMatchObject({
       useForImageGeneration: true,
@@ -11134,6 +11157,7 @@ for (const modelId of ["gpt-image-2.5", "gateway/custom-image-v3"]) {
     const row = page.locator(".settings-list-row", { hasText: "opus-4.8" });
     await expect(row.getByRole("button", { name: "Set as default" })).toHaveCount(0);
     await row.click();
+    await openModelAdvanced(page);
     await page.getByTestId("use-for-image-generation").uncheck();
     await expect(page.getByTestId("image-size")).toBeVisible();
     await page.getByRole("button", { name: "Save" }).click();
@@ -11151,6 +11175,7 @@ test("misclassified chat model can recover its role without changing identity or
   await openSettingsSection(page, "Models");
   const row = page.locator(".settings-list-row", { hasText: "deepseek-v4-pro" });
   await row.click();
+  await openModelAdvanced(page);
   await expect(page.getByTestId("use-for-image-generation")).toHaveAccessibleDescription(/Sessions using this profile/);
   await page.getByTestId("use-for-image-generation").check();
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -11159,11 +11184,14 @@ test("misclassified chat model can recover its role without changing identity or
   await expect(page.locator(".settings-list-row", { hasText: "opus-4.8" }).locator(".settings-model-default")).toBeVisible();
 
   await row.click();
+
+  await openModelAdvanced(page);
   await page.getByTestId("use-for-image-generation").uncheck();
   await expect(page.getByTestId("image-size")).toBeVisible();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(row.getByTestId("image-role-badge")).toBeVisible();
   await row.click();
+  await openModelAdvanced(page);
   await page.getByRole("button", { name: "Restore as chat model" }).click();
   // Re-selecting then deselecting the assignment must not display chat fields
   // while the backend would still inherit the original image role.
@@ -11179,6 +11207,7 @@ test("misclassified chat model can recover its role without changing identity or
 
   // A rejected save leaves both the saved role and the existing default alone.
   await row.click();
+  await openModelAdvanced(page);
   await page.getByTestId("restore-chat-model").click();
   await page.getByLabel("Supports image input").check();
   await page.getByLabel("Use for image analysis").check();
@@ -11188,6 +11217,7 @@ test("misclassified chat model can recover its role without changing identity or
   await page.locator(".settings-footer").getByRole("button", { name: "Cancel" }).click();
   await expect(row.getByTestId("image-role-badge")).toBeVisible();
   await row.click();
+  await openModelAdvanced(page);
   await expect(page.getByTestId("image-size")).toBeVisible();
   await page.getByTestId("restore-chat-model").click();
   await page.getByLabel("Supports image input").check();
@@ -11207,6 +11237,7 @@ test("misclassified chat model can recover its role without changing identity or
   await row.getByRole("button", { name: "Set as default" }).click();
   await expect(row.locator(".settings-model-default")).toBeVisible();
   await row.click();
+  await openModelAdvanced(page);
   await expect(page.getByLabel("Supports image input")).toBeChecked();
   await expect(page.getByLabel("Use for image analysis")).toBeChecked();
   await expect(page.getByLabel("Model ID", { exact: true })).toHaveValue("deepseek-v4-pro");
@@ -11223,6 +11254,7 @@ test("gpt-image-2 can be assigned for generation but not selected for chat", asy
   await openSettingsSection(page, "Models");
   const opus = page.locator(".settings-list-row", { hasText: "opus-4.8" });
   await opus.click();
+  await openModelAdvanced(page);
 
   await providerSelect(page).selectOption("openai_responses");
   await page.getByLabel("Base URL").fill("https://api.openai.com/v1");
@@ -11237,7 +11269,7 @@ test("gpt-image-2 can be assigned for generation but not selected for chat", asy
   await expect(page.getByTestId("use-for-image-generation")).toBeChecked();
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toHaveText(
-    "Validated openai_responses with gpt-image-2",
+    "Connection OK · OpenAI Responses · gpt-image-2",
   );
   await page.getByRole("button", { name: "Save" }).click();
 
@@ -11269,6 +11301,7 @@ test("grok-imagine-image-2.0 can be assigned for generation but not selected for
   await openSettingsSection(page, "Models");
   const opus = page.locator(".settings-list-row", { hasText: "opus-4.8" });
   await opus.click();
+  await openModelAdvanced(page);
 
   await providerSelect(page).selectOption("openai");
   await page.getByLabel("Base URL").fill("https://api.x.ai");
@@ -11285,7 +11318,7 @@ test("grok-imagine-image-2.0 can be assigned for generation but not selected for
   await expect(page.getByTestId("use-for-image-generation")).toBeChecked();
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toHaveText(
-    "Validated openai with grok-imagine-image-2.0",
+    "Connection OK · OpenAI Chat Completions · grok-imagine-image-2.0",
   );
   await page.getByRole("button", { name: "Save" }).click();
 
@@ -11318,6 +11351,7 @@ test("gemini image models can be configured with Gemini protocol and excluded fr
   await openSettingsSection(page, "Models");
   const opus = page.locator(".settings-list-row", { hasText: "opus-4.8" });
   await opus.click();
+  await openModelAdvanced(page);
 
   await providerSelect(page).selectOption("gemini");
   await page.getByLabel("Base URL").fill("https://generativelanguage.googleapis.com");
@@ -11334,7 +11368,7 @@ test("gemini image models can be configured with Gemini protocol and excluded fr
   await expect(page.getByTestId("use-for-image-generation")).toBeChecked();
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toHaveText(
-    "Validated gemini with gemini-3.1-flash-image-preview",
+    "Connection OK · Gemini (Image generation) · gemini-3.1-flash-image-preview",
   );
   await page.getByRole("button", { name: "Save" }).click();
 
@@ -11366,6 +11400,7 @@ test("grok-imagine-video can be assigned for generation but not selected for cha
   await openSettingsSection(page, "Models");
   const opus = page.locator(".settings-list-row", { hasText: "opus-4.8" });
   await opus.click();
+  await openModelAdvanced(page);
 
   await providerSelect(page).selectOption("openai");
   await page.getByLabel("Base URL").fill("https://api.x.ai");
@@ -11382,7 +11417,7 @@ test("grok-imagine-video can be assigned for generation but not selected for cha
   await expect(page.getByTestId("use-for-video-generation")).toBeChecked();
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toHaveText(
-    "Validated openai with grok-imagine-video",
+    "Connection OK · OpenAI Chat Completions · grok-imagine-video",
   );
   await page.getByRole("button", { name: "Save" }).click();
 
@@ -11415,7 +11450,7 @@ test("settings normalizes a blank stored provider to openai", async ({ page }) =
   await openModelsSettings(page);
   await expect(providerSelect(page)).toHaveValue("openai");
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
-  await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
+  await expect(page.locator(".settings-status")).toContainText("Connection OK · OpenAI Chat Completions · deepseek-v4-pro");
 });
 
 test("editing Base URL keeps protocol state and display aligned", async ({ page }) => {
@@ -11424,19 +11459,24 @@ test("editing Base URL keeps protocol state and display aligned", async ({ page 
   await page.getByLabel("Base URL").fill("https://api.deepseek.com");
   await expect(providerSelect(page)).toHaveValue("openai");
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
-  await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
+  await expect(page.locator(".settings-status")).toContainText("Connection OK · OpenAI Chat Completions · deepseek-v4-pro");
 });
 
 test("model Base URL explains per-model endpoint suffixes", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);
 
+  // The hint states how the request path is built, so users know whether to include /v1.
   await expect(page.getByTestId("model-api-url-hint")).toHaveText(
-    "Enter the shared API root. Put protocol-specific paths such as /anthropic or an explicit image endpoint in that model's optional suffix; Wisp then completes the protocol request path.",
+    "Enter the shared API root, with or without /v1: Wisp adds /chat/completions (or /responses, /messages) after a URL that ends in /v1, and otherwise tries the URL itself and then its /v1 path. Put protocol-specific paths such as /anthropic or an explicit image endpoint in that model's optional suffix.",
   );
   await expect(page.getByLabel("Base URL")).toHaveAttribute(
     "aria-describedby",
     "model-api-url-hint",
+  );
+  await expect(page.getByLabel("Base URL")).toHaveAttribute(
+    "placeholder",
+    "e.g. https://api.deepseek.com or http://127.0.0.1:3425/v1",
   );
 });
 
@@ -11447,12 +11487,13 @@ test("settings can validate current API config", async ({ page }) => {
   // The mock profile has "supports images" on, so validation probes with a
   // test image and says so.
   await expect(page.locator(".settings-status")).toHaveText(
-    "Validated openai with deepseek-v4-pro — the test image was accepted.",
+    "Connection OK · OpenAI Chat Completions · deepseek-v4-pro — the test image was accepted.",
   );
 
+  await openModelAdvanced(page);
   await page.getByLabel("Supports image input").uncheck();
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
-  await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
+  await expect(page.locator(".settings-status")).toHaveText("Connection OK · OpenAI Chat Completions · deepseek-v4-pro");
 });
 
 test("editing a saved model validates with that model profile id", async ({ page }) => {
@@ -11464,7 +11505,7 @@ test("editing a saved model validates with that model profile id", async ({ page
   await expect(page.getByLabel("Model ID")).toHaveValue("opus-4.8");
 
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
-  await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
+  await expect(page.locator(".settings-status")).toContainText("Connection OK · OpenAI Chat Completions · deepseek-v4-pro");
   await expect.poll(() => lastInvokeArgs(page, "validate_settings")).toMatchObject({
     profileId: "opus",
     key: "",
@@ -12543,7 +12584,10 @@ test("settings validation rejects blank required fields", async ({ page }) => {
   await openModelsSettings(page);
   await page.getByLabel("Base URL").fill("");
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
-  await expect(page.locator(".settings-status")).toHaveText("Validation failed: API URL is required.");
+  // Every missing field at once, marked and focused, not one status line at a time.
+  await expect(page.locator(".settings-status")).toHaveText("Fill in or fix the highlighted fields: Base URL.");
+  await expect(page.getByLabel("Base URL")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByLabel("Base URL")).toBeFocused();
 });
 
 test("protocol switch keeps the current Base URL, endpoint suffix, and model ID", async ({ page }) => {
@@ -12553,6 +12597,7 @@ test("protocol switch keeps the current Base URL, endpoint suffix, and model ID"
   const baseUrl = page.getByLabel("Base URL");
   const endpointSuffix = page.getByLabel("Endpoint suffix (optional)");
   const model = page.getByLabel("Model ID");
+  await openModelAdvanced(page);
   await endpointSuffix.fill("/anthropic");
 
   await providerSelect(page).selectOption("openai_responses");

@@ -85,6 +85,41 @@ with its own model batch. Use distinct **display names** when two batches use
 the same model IDs. Changing a stored key on one profile updates other profiles
 that currently share that same key and Base URL; it does not overwrite a
 different key on the same host.
+
+Adding API access never replaces a working default: the first new chat model
+becomes the default only while there is none yet, for example on a fresh
+install, whose single placeholder row reads **Not configured** (no model,
+Base URL or key) until it is filled in. A blank display name shows the model
+ID in the list, the composer picker and reply badges; the old placeholder name
+"Default" is treated the same way. Each list row also shows the API address it
+belongs to, so two rows with the same model ID on different gateways stay
+distinguishable.
+
+The add and edit forms keep **Base URL**, **API key**, **Protocol**, **Model
+ID** and **Display name** in view; endpoint suffix, token limits, reasoning
+effort, Fast mode, expert/image/video roles, the network route and request
+headers sit in a collapsed **Advanced** section. **Save** and **Test
+connection** check every required field at once: each missing or invalid field
+is outlined (and marked `aria-invalid`), the first one is focused (opening
+**Advanced** when needed), and one status line names them all. A successful
+test reads like `Connection OK · OpenAI Chat Completions · deepseek-v4-flash`.
+
+A local gateway on `localhost`, `127.0.0.1` or `[::1]` (for example Magpie's
+`http://127.0.0.1:3425/v1`) can be saved without an API key; the request then
+carries no `Authorization` / `x-api-key` header. Any placeholder key also works.
+Remote hosts still require a key, which is stored in the OS keyring, never in
+SQLite.
+
+**Fetch models** beside Model ID calls the endpoint's own `GET {Base URL}/models`
+(through the endpoint's network route and stored key) and offers the returned
+IDs as Model ID suggestions. When the catalog below has no exact entry for the
+chosen ID and the endpoint's list reports facts for that exact ID —
+`context_length` / `max_input_tokens`, `max_output_tokens`, `reasoning_levels`
+— they prefill **Context window**, **Max output tokens** and the reasoning
+effort choices (also in the composer's effort pill). A limit you typed in the
+form is never overwritten, and an exact catalog entry still wins. A successful
+**Test connection** on an uncatalogued model fetches the list quietly.
+
 A models.dev catalog baked in at build time maps exact model IDs to the
 vendor's documented ceilings: for a catalog-known model the form auto-fills
 **Max output tokens** and **Context window** and shows the ceiling next to the
@@ -539,9 +574,15 @@ metadata endpoint as image models — no billable video is generated.
 | Anthropic | Claude-compatible models through `/v1/messages` | Protocol, Model ID, optional endpoint suffix |
 | Gemini (Image generation) | Google AI Studio or Gemini-native relays through `/v1beta/models/{model}:generateContent` | Protocol, Model ID, optional endpoint suffix, aspect ratio & resolution defaults |
 
-Enter the API root as the shared Base URL. Do not append `/v1`,
+Enter the API root as the shared Base URL, with or without `/v1` (for example
+`https://api.deepseek.com` or `http://127.0.0.1:3425/v1`). Do not append
 `/chat/completions`, `/responses`, or `/v1/messages`; Wisp adds the matching
-request path for the selected protocol. If a service exposes one protocol or a
+request path for the selected protocol: a Base URL ending in `/v1` gets
+`/chat/completions` (or `/responses`, `/messages`) directly, so
+`http://127.0.0.1:3425/v1` requests `http://127.0.0.1:3425/v1/chat/completions`.
+An endpoint suffix must be a URL path such as `/anthropic` (letters, digits,
+`- . _ ~` and `/`); other text is rejected on save instead of being
+percent-encoded into a request URL no gateway serves. If a service exposes one protocol or a
 specific image model below a distinct path, put that path in the model's
 optional **Endpoint suffix**. Wisp joins the suffix to the Base URL first, then
 adds the selected protocol's request path. For OpenAI-compatible services, Wisp

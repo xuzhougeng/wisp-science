@@ -74,6 +74,7 @@ mod provider_form_tests {
             max_tokens: 0,
             context_window: 128_000,
             reasoning_effort: String::new(),
+            endpoint_efforts: Vec::new(),
             service_tier: String::new(),
             user_agent: String::new(),
             send_user_agent: true,
@@ -283,20 +284,6 @@ mod provider_form_tests {
         form.proxy_url = Some("socks5://localhost:1080".into());
         assert_eq!(model_form_proxy(&models, &form), "socks5://localhost:1080");
     }
-}
-
-pub(crate) fn settings_required_error_key(cfg: &Settings, key: &str) -> Option<&'static str> {
-    if cfg.api_url.trim().is_empty() {
-        return Some("err.api_url_required");
-    }
-    if cfg.model.trim().is_empty() {
-        return Some("err.model_required");
-    }
-    let has_new_key = !key.trim().is_empty();
-    if !cfg.has_api_key && !has_new_key {
-        return Some("err.api_key_required");
-    }
-    None
 }
 
 /// Single source of truth for `invoke` argument payloads.
@@ -909,9 +896,16 @@ mod review_tests {
 }
 
 pub(crate) fn profile_to_form(m: &ModelProfile) -> ModelForm {
+    // The fresh-install placeholder starts with an empty name (the input
+    // shows a hint); saving it then names the profile after its model id.
+    let placeholder_name = m.id == "default" && m.label.trim() == "Default";
     ModelForm {
         id: Some(m.id.clone()),
-        label: m.label.clone(),
+        label: if placeholder_name {
+            String::new()
+        } else {
+            m.label.clone()
+        },
         provider: m.provider.clone(),
         api_url: m.api_url.clone(),
         endpoint_suffix: m.endpoint_suffix.clone(),
@@ -949,6 +943,12 @@ pub(crate) fn profile_to_form(m: &ModelProfile) -> ModelForm {
         proxy_url: None,
         proxy_custom: false,
         entries: Vec::new(),
+        endpoint_efforts: m.endpoint_efforts.clone(),
+        // A saved non-default limit counts as the user's: fetched endpoint
+        // facts never overwrite it.
+        max_tokens_edited: m.max_tokens >= 16 && m.max_tokens != 8192,
+        context_window_edited: m.context_window >= 4_096 && m.context_window != 128_000,
+        ..Default::default()
     }
 }
 

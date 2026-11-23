@@ -16,6 +16,11 @@ function lastInvokeArgs(page: Page, cmd: string) {
   }, cmd);
 }
 
+// The model route lives in the form's collapsed Advanced section.
+async function openAdvanced(page: Page) {
+  await page.getByTestId("model-advanced-section").locator(":scope > summary").click();
+}
+
 async function openSettings(page: Page, section: string, locale = "en") {
   await page.addInitScript(tauriMock);
   await page.goto(`/?mockLocale=${locale}`);
@@ -27,6 +32,7 @@ test("a model API endpoint keeps its own route and new models on it start from i
   await openSettings(page, "models");
   const save = page.locator(".settings-footer").getByRole("button", { name: "Save", exact: true });
   await page.locator(".settings-list-row").first().click();
+  await openAdvanced(page);
   const mode = page.getByTestId("model-proxy-mode");
   await expect(mode).toHaveValue("inherit");
   await expect(page.getByTestId("model-proxy")).toContainText("Inherit uses Model API in Settings → Network.");
@@ -50,6 +56,7 @@ test("a model API endpoint keeps its own route and new models on it start from i
   await expect(page.getByTestId("model-proxy-mode")).toHaveValue("direct");
   await page.locator(".settings-footer").getByRole("button", { name: "Cancel", exact: true }).click();
   await page.locator(".settings-list-row").nth(1).click();
+  await openAdvanced(page);
   await expect(page.getByTestId("model-proxy-mode")).toHaveValue("inherit");
   await page.getByTestId("model-proxy-mode").selectOption("custom");
   await page.getByTestId("model-proxy-address").fill("socks5://127.0.0.1:1080");
@@ -61,6 +68,7 @@ test("a model API endpoint keeps its own route and new models on it start from i
   // Adding models on the routed DeepSeek endpoint shows its route, and an
   // explicit choice there applies to the whole endpoint.
   await page.getByTestId("add-provider").click();
+  await openAdvanced(page);
   await expect(page.getByTestId("model-proxy-mode")).toHaveValue("direct");
   await page.getByTestId("model-proxy-mode").selectOption("inherit");
   await page.getByTestId("save-provider").click();
@@ -135,6 +143,7 @@ test("a custom MCP connection saves its own route", async ({ page }) => {
 test("route choices are labelled in Chinese", async ({ page }) => {
   await openSettings(page, "models", "zh");
   await page.locator(".settings-list-row").first().click();
+  await openAdvanced(page);
   const route = page.getByTestId("model-proxy");
   await expect(route.getByText("网络代理", { exact: true })).toBeVisible();
   await expect(page.getByTestId("model-proxy-mode").locator("option")).toHaveText(["继承网络设置", "直连", "自定义代理"]);

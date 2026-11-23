@@ -225,9 +225,91 @@ pub(crate) fn endpoint_host(url: &str) -> String {
         .to_string()
 }
 
+/// Mirrors `models::is_loopback_api_url`: a model API on this machine
+/// (localhost, 127.0.0.0/8, [::1]), where a local gateway may take no key.
+pub(crate) fn is_loopback_api_url(url: &str) -> bool {
+    let url = url.trim();
+    let Some(rest) = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.contains('@') {
+        return false;
+    }
+    let host = if let Some(v6) = authority.strip_prefix('[') {
+        return v6.split(']').next() == Some("::1");
+    } else {
+        authority
+            .split(':')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+    };
+    if host == "localhost" || host.ends_with(".localhost") {
+        return true;
+    }
+    let octets: Vec<_> = host.split('.').collect();
+    octets.len() == 4
+        && octets[0] == "127"
+        && octets.iter().all(|octet| octet.parse::<u8>().is_ok())
+}
+
+/// Mirrors `models::normalize_endpoint_suffix`: `Some(i18n key)` when the
+/// suffix is not a URL path such as `/anthropic`.
+pub(crate) fn endpoint_suffix_error(suffix: &str) -> Option<&'static str> {
+    let value = suffix.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let path = value.trim_matches('/');
+    let bad_byte = !path.bytes().all(|byte| {
+        byte.is_ascii_alphanumeric()
+            || matches!(byte, b'/' | b'-' | b'.' | b'_' | b'~' | b':' | b'@')
+    });
+    (value.contains("://")
+        || value.starts_with("//")
+        || path.contains("//")
+        || path.split('/').any(|segment| segment == "..")
+        || bad_byte)
+        .then_some("err.endpoint_suffix_invalid")
+}
+
 #[cfg(test)]
 mod endpoint_tests {
-    use super::{endpoint_host, join_api_url, normalize_endpoint, same_endpoint};
+    use super::{
+        endpoint_host, endpoint_suffix_error, is_loopback_api_url, join_api_url,
+        normalize_endpoint, same_endpoint,
+    };
+
+    #[test]
+    fn loopback_and_suffix_rules_match_the_backend() {
+        for url in [
+            "http://127.0.0.1:3425/v1",
+            "http://localhost:11434",
+            "http://[::1]:8080/v1",
+            "http://gw.localhost",
+        ] {
+            assert!(is_loopback_api_url(url), "{url}");
+        }
+        for url in [
+            "https://api.deepseek.com",
+            "http://localhost.example.com",
+            "http://127.0.0.1.evil.test",
+            "http://user@127.0.0.1",
+            "127.0.0.1:3425",
+        ] {
+            assert!(!is_loopback_api_url(url), "{url}");
+        }
+        assert_eq!(endpoint_suffix_error(""), None);
+        assert_eq!(endpoint_suffix_error("anthropic"), None);
+        assert_eq!(endpoint_suffix_error("/v1/images/generations"), None);
+        for bad in ["坏网关", "/my gateway", "https://x/y", "a//b", "../x"] {
+            assert!(endpoint_suffix_error(bad).is_some(), "{bad}");
+        }
+    }
 
     #[test]
     fn normalize_endpoint_strips_version_and_api_suffixes() {
