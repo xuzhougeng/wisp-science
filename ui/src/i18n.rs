@@ -1002,6 +1002,8 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "sidebar.publication") => Some("Publication"),
         (Locale::En, "sidebar.library") => Some("Library"),
         (Locale::En, "sidebar.more") => Some("More"),
+        (Locale::En, "sidebar.nav_collapse") => Some("Collapse navigation"),
+        (Locale::En, "sidebar.nav_expand") => Some("Expand navigation"),
         (Locale::En, "sidebar.new_folder") => Some("New group"),
         (Locale::En, "sidebar.sessions") => Some("Sessions"),
         (Locale::En, "sidebar.search_sessions") => Some("Search sessions"),
@@ -4831,6 +4833,8 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "sidebar.publication") => Some("论文整理"),
         (Locale::Zh, "sidebar.library") => Some("收藏库"),
         (Locale::Zh, "sidebar.more") => Some("更多"),
+        (Locale::Zh, "sidebar.nav_collapse") => Some("收起导航"),
+        (Locale::Zh, "sidebar.nav_expand") => Some("展开导航"),
         (Locale::Zh, "sidebar.new_folder") => Some("新建分组"),
         (Locale::Zh, "sidebar.sessions") => Some("会话"),
         (Locale::Zh, "sidebar.search_sessions") => Some("搜索会话"),
@@ -9545,6 +9549,14 @@ mod queue_label_tests {
             ),
             "轨迹已保存到 /tmp/a.html"
         );
+    }
+
+    #[test]
+    fn sidebar_nav_fold_labels_exist_in_both_locales() {
+        assert_eq!(t(Locale::En, "sidebar.nav_collapse"), "Collapse navigation");
+        assert_eq!(t(Locale::Zh, "sidebar.nav_collapse"), "收起导航");
+        assert_eq!(t(Locale::En, "sidebar.nav_expand"), "Expand navigation");
+        assert_eq!(t(Locale::Zh, "sidebar.nav_expand"), "展开导航");
     }
 }
 

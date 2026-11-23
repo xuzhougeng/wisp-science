@@ -124,6 +124,34 @@ type NavEntry = (
     Callback<web_sys::MouseEvent>,
 );
 
+const SIDEBAR_NAV_FOLD_PREF_KEY: &str = "wisp-sidebar-nav";
+
+fn parse_nav_folded_pref(value: &str) -> bool {
+    value == "folded"
+}
+
+fn nav_folded_pref_value(folded: bool) -> &'static str {
+    if folded {
+        "folded"
+    } else {
+        "auto"
+    }
+}
+
+#[cfg(test)]
+mod nav_fold_pref_tests {
+    use super::{nav_folded_pref_value, parse_nav_folded_pref};
+
+    #[test]
+    fn nav_fold_pref_round_trips_and_defaults_to_auto() {
+        assert!(!parse_nav_folded_pref("auto"));
+        assert!(!parse_nav_folded_pref(""));
+        assert!(!parse_nav_folded_pref("unknown"));
+        assert!(parse_nav_folded_pref(nav_folded_pref_value(true)));
+        assert!(!parse_nav_folded_pref(nav_folded_pref_value(false)));
+    }
+}
+
 fn nav_entry_button(locale: RwSignal<Locale>, entry: NavEntry) -> impl IntoView {
     let (icon, label_key, tier, active, on_click) = entry;
     view! {
@@ -260,6 +288,11 @@ pub(super) fn Sidebar(
         "folder",
         &["folder", "date", "none"],
     ));
+    let nav_folded = create_rw_signal(parse_nav_folded_pref(&load_view_pref(
+        SIDEBAR_NAV_FOLD_PREF_KEY,
+        "auto",
+        &["auto", "folded"],
+    )));
     let sort_menu_open = create_rw_signal(false);
     // Nested explorations / branches / subagents fold under their parent. A nest is
     // open while its family is in use; a manual toggle (keyed by parent id) overrides that.
@@ -434,7 +467,7 @@ pub(super) fn Sidebar(
                 // Fresh per render: this closure rebuilds the nav whenever demo_mode is set.
                 let nav_more_ref = create_node_ref::<html::Button>();
                 view! {
-                    <nav class="nav">
+                    <nav class="nav" class:folded=move || nav_folded.get()>
                         <button class="side-btn primary" title=move || t(locale.get(), "sidebar.new_session")
                             aria-label=move || t(locale.get(), "sidebar.new_session")
                             on:click=move |ev| new_session.call(ev)>
@@ -467,6 +500,42 @@ pub(super) fn Sidebar(
                             <span class="nav-more-caret" aria-hidden="true">{compose_icon("chevron-right")}</span>
                         </button>
                     </nav>
+                    <div class="nav-fold-bar" class:folded=move || nav_folded.get()>
+                        <button type="button" class="nav-fold-btn"
+                            data-testid="sidebar-nav-fold"
+                            aria-expanded=move || (!nav_folded.get()).to_string()
+                            title=move || t(
+                                locale.get(),
+                                if nav_folded.get() {
+                                    "sidebar.nav_expand"
+                                } else {
+                                    "sidebar.nav_collapse"
+                                },
+                            )
+                            aria-label=move || t(
+                                locale.get(),
+                                if nav_folded.get() {
+                                    "sidebar.nav_expand"
+                                } else {
+                                    "sidebar.nav_collapse"
+                                },
+                            )
+                            on:click=move |_| {
+                                nav_more_at.set(None);
+                                let next = !nav_folded.get_untracked();
+                                nav_folded.set(next);
+                                save_view_pref(
+                                    SIDEBAR_NAV_FOLD_PREF_KEY,
+                                    nav_folded_pref_value(next),
+                                );
+                            }>
+                            {move || compose_icon(if nav_folded.get() {
+                                "chevron-down"
+                            } else {
+                                "chevron-up"
+                            })}
+                        </button>
+                    </div>
                 }
             })}
             {move || (!demo_mode.get()).then(|| {
@@ -1422,7 +1491,8 @@ pub(super) fn Sidebar(
         // hiding does not reach the flyout's labels.
         {move || nav_more_at.get().map(|(left, top)| view! {
             <div class="nav-more-backdrop" on:click=move |_| nav_more_at.set(None)></div>
-            <div class="nav-more-menu" role="menu" data-testid="sidebar-more-menu"
+            <div class="nav-more-menu" class:folded=move || nav_folded.get()
+                role="menu" data-testid="sidebar-more-menu"
                 style=format!("left:{left}px;top:{top}px")
                 on:click=move |_| nav_more_at.set(None)>
                 {nav_entries.into_iter().map(|entry| nav_entry_button(locale, entry)).collect_view()}
