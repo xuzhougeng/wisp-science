@@ -18,6 +18,7 @@ const MAX_IMAGE_BYTES: usize = 50 * 1024 * 1024;
 const MAX_ERROR_BYTES: usize = 1024 * 1024;
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
+#[derive(Debug)]
 enum ImageSource {
     Base64(String),
     Url(String),
