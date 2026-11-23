@@ -623,6 +623,8 @@
 .inbox-item:hover { background: var(--bg-sunken); }
 .inbox-item-project { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); }
 .inbox-item-title { font-size: calc(13px * var(--ui-font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-item-reason { font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--info); }
+.inbox-item-approval .inbox-item-reason { color: var(--warn); font-weight: 600; }
 
 /* No scroll-behavior:smooth here: streaming row rebuilds clamp scrollTop
    instantly while the follow snap-back would animate, so the view visibly
@@ -1744,6 +1746,17 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse var(--a
   padding: 11px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--bg-input); color: var(--text-muted); font-size: calc(12.5px * var(--ui-font-scale, 1)); text-align: center;
 }
+/* No model can answer yet: shown on the home screen and above the composer. */
+.model-missing-notice {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  box-sizing: border-box; padding: 10px 14px; border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
+  background: color-mix(in srgb, var(--warn) 7%, var(--bg-elev));
+  color: var(--text); font-size: calc(13px * var(--ui-font-scale, 1));
+}
+.model-missing-notice > span { flex: 1 1 260px; min-width: 0; }
+.model-missing-notice > button { flex: 0 0 auto; }
+.composer-model-missing { max-width: var(--chat-col-max); width: 100%; margin: 0 auto 8px; }
 .composer-inner, .sidechat-composer-inner {
   position: relative; display: flex; flex-direction: column;
   max-width: var(--chat-col-max); width: 100%; margin: 0 auto;

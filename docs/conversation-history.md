@@ -4,7 +4,11 @@ Project cards show separate **Needs you** and **Running** counts. **Needs you**
 (**待处理** in Chinese) includes unread assistant replies and requests waiting for
 your confirmation; it does not mean every listed conversation is still running.
 
-The sidebar marks these conversations with an icon and a visible status label.
+The sidebar marks these conversations with an icon and a visible status label
+that says why: **New reply** (**有新回复**) for a finished reply you have not
+opened yet, and **Needs you** (**待处理**) for a conversation waiting for your
+approval. Recent sessions on the home screen use the same labels, and each entry
+in the topbar inbox shows its reason under the title.
 Choose **Needs you** above the conversation list to see all pending conversations
 in the current project, including older history and sessions in collapsed groups
 or branches. **All sessions** restores the normal grouping and sort order. The

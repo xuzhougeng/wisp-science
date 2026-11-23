@@ -3397,12 +3397,13 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               .sort((a, b) => Number(b.starred) - Number(a.starred));
 
           case "list_recent_sessions":
+            if (query.get("mockNoRecentSessions") === "1") return [];
             return [
               {
                 id: "s-needs-you",
                 project_id: "default",
                 title: "帮我找一篇单细胞的文章",
-                ts: 1,
+                ts: (window as any).__mockRecentSessionTs ?? 1,
                 status: "needs_you",
               },
               {
@@ -5197,6 +5198,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return null;
           }
           case "get_onboarding_state":
+            if (query.get("mockNoModel") === "1") return { show: false, has_api_key: false };
             return mockOnboarding ? { show: true, has_api_key: false } : { show: false, has_api_key: true };
           case "get_capabilities":
             return {
@@ -5614,6 +5616,11 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             }
             return rows;
           }
+          case "list_awaiting_sessions":
+            // Sessions blocked on an approval; other needs-you rows are unread replies.
+            return query.get("mockNeedsYou") === "1"
+              ? mockSessions.filter((session) => session.awaiting).map((session) => session.id)
+              : [];
           case "search_sessions": {
             const q = String(arg("query") ?? "").toLowerCase();
             const requestedProject = arg("projectId");

@@ -83,3 +83,22 @@ pub(crate) use settings::*;
 pub(crate) use share::*;
 pub(crate) use ssh::*;
 pub(crate) use transcript::*;
+
+/// How long a success message stays in the centre title-bar status.
+pub(crate) const TRANSIENT_STATUS_MS: u64 = 4_000;
+
+/// Show a success message (e.g. "Settings saved") in the title-bar status and
+/// clear it after a few seconds, unless something else replaced it meanwhile.
+/// Errors and progress use `status.set` and stay until the next action.
+pub(crate) fn flash_status(status: RwSignal<String>, text: impl Into<String>) {
+    let text = text.into();
+    status.set(text.clone());
+    set_timeout(
+        move || {
+            if status.try_get_untracked().as_deref() == Some(text.as_str()) {
+                status.set(String::new());
+            }
+        },
+        std::time::Duration::from_millis(TRANSIENT_STATUS_MS),
+    );
+}

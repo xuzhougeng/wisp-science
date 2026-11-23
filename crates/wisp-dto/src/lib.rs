@@ -4708,6 +4708,10 @@ pub struct CapabilitySourceCounts {
 #[derive(Deserialize, Clone)]
 pub struct OnboardingState {
     pub show: bool,
+    /// Whether the active model (or a Magpie connection) has a credential, so
+    /// a first message can be answered. `None` from hosts that do not say.
+    #[serde(default)]
+    pub has_api_key: Option<bool>,
 }
 
 /// Mirrors `wisp_store::ResearchNode`. `kind` stays a plain string because the

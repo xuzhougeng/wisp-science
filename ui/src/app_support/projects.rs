@@ -15,6 +15,8 @@ pub(crate) fn ProjectsScreen(
     on_open_journey: Callback<(String, i64)>,
     on_open_artifact: Callback<(String, String, String)>,
     on_open_settings: Callback<()>,
+    model_missing: ReadSignal<bool>,
+    on_open_model_settings: Callback<()>,
     on_open_library: Callback<()>,
     on_open_demo: Callback<()>,
     on_open_assistant: Callback<()>,
@@ -32,6 +34,17 @@ pub(crate) fn ProjectsScreen(
     let projects = create_rw_signal(Vec::<ProjectSummary>::new());
     let starring_projects = create_rw_signal(HashSet::<String>::new());
     let recent = create_rw_signal(Vec::<RecentSession>::new());
+    // The empty-state line waits for the first answer so it never flashes
+    // before real rows arrive.
+    let recent_loaded = create_rw_signal(false);
+    // Sessions blocked on an approval, from the backend (every project) plus
+    // this window's live approval events. Other needs-you rows are unread
+    // finished replies and read "New reply".
+    let awaiting_backend = create_rw_signal(HashSet::<String>::new());
+    let awaiting_approval = move |id: &str| {
+        awaiting_backend.with(|ids| ids.contains(id))
+            || approval_pending.with(|ids| ids.contains(id))
+    };
     let artifact_hits = create_rw_signal(Vec::<ArtifactInfo>::new());
     let search_open = create_rw_signal(false);
     let search_query = create_rw_signal(String::new());
@@ -46,6 +59,19 @@ pub(crate) fn ProjectsScreen(
     let new_dir = create_rw_signal(String::new());
     let new_desc = create_rw_signal(String::new());
     let new_ctx = create_rw_signal(String::new());
+    // Offered, never applied silently: a folder named after the project,
+    // beside the default workspace (on a fresh install, ~/Documents/<name>).
+    let suggested_dir = create_memo(move |_| {
+        let name = new_name.get();
+        projects.with(|all| {
+            let base = all
+                .iter()
+                .find(|project| project.id == "default")
+                .or_else(|| all.first())?;
+            let path = suggested_project_dir(&base.workspace_dir, &name)?;
+            (!all.iter().any(|project| project.workspace_dir == path)).then_some(path)
+        })
+    });
     let import_options_open = create_rw_signal(false);
     let recovery_preview = create_rw_signal(None::<WorkspaceSessionRecoveryPreview>);
     let recovery_name = create_rw_signal(String::new());
@@ -114,6 +140,14 @@ pub(crate) fn ProjectsScreen(
             let r = invoke("list_recent_sessions", JsValue::UNDEFINED).await;
             if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<RecentSession>>(r) {
                 recent.set(list);
+            }
+            recent_loaded.set(true);
+            let awaiting = invoke("list_awaiting_sessions", JsValue::UNDEFINED).await;
+            let awaiting = serde_wasm_bindgen::from_value::<Vec<String>>(awaiting)
+                .map(|ids| ids.into_iter().collect::<HashSet<_>>())
+                .unwrap_or_default();
+            if awaiting_backend.with_untracked(|current| current != &awaiting) {
+                awaiting_backend.set(awaiting);
             }
             let dm = invoke("list_demos", JsValue::UNDEFINED).await;
             if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<DemoInfo>>(dm) {
@@ -753,6 +787,16 @@ pub(crate) fn ProjectsScreen(
             {move || open_error.get().map(|message| view! {
                 <div class="project-open-error" role="alert">{message}</div>
             })}
+            {move || model_missing.get().then(|| view! {
+                <div class="model-missing-notice projects-model-missing" role="status"
+                    data-testid="home-model-missing" prop:inert=move || calendar_open.get()>
+                    <span>{move || t(locale.get(), "projects.model_missing")}</span>
+                    <button type="button" class="btn-primary"
+                        on:click=move |_| on_open_model_settings.call(())>
+                        {move || t(locale.get(), "projects.model_missing_action")}
+                    </button>
+                </div>
+            })}
             {move || search_open.get().then(|| view! {
                 <div class="project-search-overlay" on:click=move |_| search_open.set(false)>
                     <div class="project-search-dialog" role="dialog" aria-label=move || t(locale.get(), "projects.search")
@@ -861,6 +905,7 @@ pub(crate) fn ProjectsScreen(
                                         idx += 1;
                                         let open = run_search_action;
                                         let status = SessionStatusKind::from_str(&s.status);
+                                        let new_reply = !awaiting_approval(&s.id);
                                         view! {
                                             <button type="button" class="project-search-row" class:active=move || search_active.get() == row_idx
                                                 on:click=move |_| open.call(row_idx)>
@@ -869,7 +914,7 @@ pub(crate) fn ProjectsScreen(
                                                     <span class="project-search-title">{s.title.clone()}</span>
                                                     <span class="project-search-sub">{format_relative_time(s.ts, loc)}</span>
                                                 </span>
-                                                <SessionStatusBadge status=status locale=locale />
+                                                <SessionStatusBadge status=status locale=locale new_reply=new_reply />
                                             </button>
                                         }
                                     })
@@ -1067,6 +1112,22 @@ pub(crate) fn ProjectsScreen(
                                 <span class="path">{move || new_dir.get()}</span>
                             </div>
                         </label>
+                        {move || new_dir.with(|dir| dir.trim().is_empty()).then(|| {
+                            suggested_dir.get().map(|path| {
+                                let chosen = path.clone();
+                                view! {
+                                    <div class="pn-suggest" data-testid="new-project-suggested-dir">
+                                        <span class="pn-suggest-path" title=path.clone()>
+                                            {tf(locale.get(), "projects.suggested_dir", &[("path", &path)])}
+                                        </span>
+                                        <button type="button" class="btn-ghost"
+                                            on:click=move |_| new_dir.set(chosen.clone())>
+                                            {move || t(locale.get(), "projects.use_suggested_dir")}
+                                        </button>
+                                    </div>
+                                }
+                            })
+                        })}
                         <label>
                             {move || t(locale.get(), "proj_settings.description")}
                             <span class="ps-hint">{move || t(locale.get(), "proj_settings.description_hint")}</span>
@@ -1083,6 +1144,9 @@ pub(crate) fn ProjectsScreen(
                             <span>
                                 {move || t(locale.get(), "projects.standard_layout")}
                                 <span class="ps-hint">{move || t(locale.get(), "projects.standard_layout_hint")}</span>
+                                <span class="pn-layout-dirs" data-testid="standard-layout-dirs">
+                                    {STANDARD_LAYOUT_DIRS.iter().map(|dir| view! { <code>{format!("{dir}/")}</code> }).collect_view()}
+                                </span>
                             </span>
                         </label>
                         <label>
@@ -1092,6 +1156,20 @@ pub(crate) fn ProjectsScreen(
                                 prop:value=move || new_ctx.get()
                                 on:input=move |ev| new_ctx.set(event_target_value(&ev))></textarea>
                         </label>
+                        {move || {
+                            let missing = if new_name.with(|name| name.trim().is_empty()) {
+                                Some("projects.need_name")
+                            } else if new_dir.with(|dir| dir.trim().is_empty()) {
+                                Some("projects.need_dir")
+                            } else {
+                                None
+                            };
+                            missing.map(|key| view! {
+                                <p class="pn-missing" role="status" data-testid="new-project-missing">
+                                    {move || t(locale.get(), key)}
+                                </p>
+                            })
+                        }}
                         <div class="row">
                             <button type="button" on:click=move |_| {
                                 creating.set(false);
@@ -1474,12 +1552,23 @@ pub(crate) fn ProjectsScreen(
                 </div>
                 <div class="projects-col">
                     <h2>{move || t(locale.get(), "projects.recent")}</h2>
+                    {move || {
+                        let visible = recent.with(|rows| {
+                            rows.iter().any(|session| !project_is_hidden(&session.project_id))
+                        });
+                        (recent_loaded.get() && privacy_ready.get() && !visible).then(|| view! {
+                            <p class="projects-recent-empty" data-testid="recent-sessions-empty">
+                                {move || t(locale.get(), "projects.recent_empty")}
+                            </p>
+                        })
+                    }}
                     {move || recent.get().into_iter().filter(|session| {
                         !project_is_hidden(&session.project_id)
                     }).map(|s| {
                         let (pid, sid) = (s.project_id.clone(), s.id.clone());
                         let transfer_pid = s.project_id.clone();
                         let status = SessionStatusKind::from_str(&s.status);
+                        let new_reply = !awaiting_approval(&s.id);
                         // Where the session lives and how recent it is. "Complete"
                         // is the resting state of every row, so only the states
                         // that ask for attention get a badge.
@@ -1497,7 +1586,7 @@ pub(crate) fn ProjectsScreen(
                                     <div class="pc-name-row">
                                         <div class="pc-name">{s.title.clone()}</div>
                                         {(status != SessionStatusKind::Complete).then(|| view! {
-                                            <SessionStatusBadge status=status locale=locale />
+                                            <SessionStatusBadge status=status locale=locale new_reply=new_reply />
                                         })}
                                     </div>
                                 </div>
@@ -1652,5 +1741,120 @@ pub(crate) fn ProjectsScreen(
                 }
             })}}
         </div>
+    }
+}
+
+/// Whether to warn that no model is set up: only when the host says the
+/// active model has no credential and no Magpie connection replaces it. An
+/// unknown answer never warns.
+pub(crate) fn model_setup_missing(has_api_key: Option<bool>, magpie_connected: bool) -> bool {
+    has_api_key == Some(false) && !magpie_connected
+}
+
+/// Folders the standard research layout creates, shown beside the toggle.
+/// Mirrors `WORKSPACE_DIRS` in src-tauri/src/workspace_manifest.rs, minus the
+/// hidden `.wisp` metadata folder.
+pub(crate) const STANDARD_LAYOUT_DIRS: &[&str] = &[
+    "data/raw",
+    "data/external",
+    "data/processed",
+    "remote",
+    "analysis/scripts",
+    "analysis/notebooks",
+    "analysis/workflows",
+    "runs",
+    "results/tables",
+    "results/models",
+    "results/reports",
+    "figures",
+    "literature",
+    "docs",
+];
+
+/// A folder for a new project named `name`, beside `base_project_dir` (the
+/// default workspace). Keeps the separator style of `base_project_dir`, so a
+/// Windows path stays a Windows path, and replaces characters Windows or macOS
+/// reject in folder names. `None` when there is no usable parent or name.
+pub(crate) fn suggested_project_dir(base_project_dir: &str, name: &str) -> Option<String> {
+    let base = base_project_dir
+        .trim()
+        .trim_end_matches(|c| c == '/' || c == '\\');
+    let cut = base.rfind(|c| c == '/' || c == '\\')?;
+    let separator = &base[cut..=cut];
+    let parent = &base[..cut];
+    if parent.is_empty() {
+        return None;
+    }
+    let folder: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    // Windows drops trailing dots and spaces; a name made only of them is unusable.
+    let folder = folder.trim().trim_end_matches(['.', ' ']);
+    if folder.is_empty() || folder.chars().all(|c| c == '-') {
+        return None;
+    }
+    Some(format!("{parent}{separator}{folder}"))
+}
+
+#[cfg(test)]
+mod model_setup_missing_tests {
+    use super::model_setup_missing;
+
+    #[test]
+    fn warns_only_when_no_key_and_no_magpie() {
+        assert!(model_setup_missing(Some(false), false));
+        assert!(!model_setup_missing(Some(false), true));
+        assert!(!model_setup_missing(Some(true), false));
+        assert!(!model_setup_missing(None, false));
+    }
+}
+
+#[cfg(test)]
+mod suggested_project_dir_tests {
+    use super::suggested_project_dir;
+
+    #[test]
+    fn suggests_a_sibling_of_the_default_workspace() {
+        assert_eq!(
+            suggested_project_dir("/Users/me/Documents/wisp-science", "Liver scRNA").as_deref(),
+            Some("/Users/me/Documents/Liver scRNA")
+        );
+        assert_eq!(
+            suggested_project_dir("/Users/me/Documents/wisp-science/", "单细胞").as_deref(),
+            Some("/Users/me/Documents/单细胞")
+        );
+    }
+
+    #[test]
+    fn keeps_windows_separators_and_strips_forbidden_characters() {
+        assert_eq!(
+            suggested_project_dir(r"C:\Users\me\Documents\wisp-science", "a/b: c?.").as_deref(),
+            Some(r"C:\Users\me\Documents\a-b- c-")
+        );
+    }
+
+    #[test]
+    fn gives_up_without_a_name_or_a_parent() {
+        assert_eq!(
+            suggested_project_dir("/Users/me/Documents/wisp-science", "  "),
+            None
+        );
+        assert_eq!(
+            suggested_project_dir("/Users/me/Documents/wisp-science", "..."),
+            None
+        );
+        assert_eq!(
+            suggested_project_dir("/Users/me/Documents/wisp-science", "///"),
+            None
+        );
+        assert_eq!(suggested_project_dir("/wisp-science", "Study"), None);
+        assert_eq!(suggested_project_dir("", "Study"), None);
     }
 }
