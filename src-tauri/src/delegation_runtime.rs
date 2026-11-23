@@ -1225,7 +1225,7 @@ async fn build_dynamic_delegation_policy(
                 .collect(),
             external: model_endpoint_is_external(&api_url),
             enabled: supported_provider
-                && has_key
+                && (has_key || crate::models::is_loopback_api_url(&api_url))
                 && !api_url.trim().is_empty()
                 && !model.trim().is_empty(),
         });

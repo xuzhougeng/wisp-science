@@ -468,6 +468,66 @@ body:has(.settings-page) .projects-screen { display: none; }
   white-space: nowrap;
 }
 .settings-model-default svg { width: 14px; height: 14px; }
+/* Fresh-install placeholder: no model or address yet, so it must not read
+   like a working default. */
+.settings-model-unconfigured,
+.settings-model-inactive {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  white-space: nowrap;
+}
+.settings-model-unconfigured { color: var(--warn); background: var(--warn-soft); }
+.settings-model-unconfigured svg { width: 14px; height: 14px; }
+/* Personal profiles while Magpie runs every HTTP turn. */
+.settings-model-inactive { color: var(--text-muted); background: var(--bg-elev); border: 1px solid var(--border); }
+.settings-list-row-inactive .settings-list-title { color: var(--text-muted); }
+.settings-list-untitled { color: var(--text-faint); font-style: italic; }
+.settings-callout {
+  display: flex;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--info) 35%, var(--border));
+  border-radius: 10px;
+  background: var(--info-soft);
+  color: var(--text);
+}
+.settings-callout-icon { flex-shrink: 0; display: inline-flex; color: var(--info); padding-top: 1px; }
+.settings-callout-icon svg { width: 18px; height: 18px; }
+.settings-callout-body { min-width: 0; }
+.settings-callout-body p { margin: 0 0 6px; line-height: 1.55; overflow-wrap: anywhere; }
+.settings-callout-command {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 3px 3px 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+.settings-callout-command code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  overflow-wrap: anywhere;
+}
+.settings-callout-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.settings-callout-copy:hover { color: var(--text); background: var(--bg-elev); }
+.settings-callout-copy svg { width: 14px; height: 14px; }
 .settings-pane-list.quick-actions-pane { overflow-y: auto; }
 .quick-actions-hero,
 .workflow-studio-editor-head,
@@ -2702,6 +2762,34 @@ button.workflow-graph-port.output {
 .model-capability-checks { display: flex; flex-wrap: wrap; gap: 10px 28px; }
 .settings-pane .model-capability > .hint { margin: 0; padding-left: 24px; line-height: 1.6; overflow-wrap: anywhere; }
 .model-advanced-options summary { cursor: pointer; padding: 8px 0; color: var(--text-muted); }
+/* Everything beyond address, key, protocol, model ID and name. */
+.model-advanced-section {
+  margin-top: 12px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.model-advanced-section[open] { padding-bottom: 12px; }
+.model-advanced-section > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 10px 0;
+  cursor: pointer;
+}
+.model-advanced-title { font-weight: 500; color: var(--text); }
+.settings-pane .model-advanced-section > summary .hint { margin: 0; }
+.model-id-field { display: flex; align-items: flex-end; gap: 8px; min-width: 0; }
+.model-id-field > label { flex: 1; min-width: 0; }
+.model-fetch-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.model-fetch-btn svg { width: 14px; height: 14px; }
+.provider-models-head .model-fetch-btn { align-self: flex-start; margin-top: 4px; }
+.model-fetch-status.fail { color: var(--err); }
+.model-form input.invalid {
+  border-color: var(--err);
+  box-shadow: 0 0 0 1px var(--err);
+}
 .settings-pane .model-request-intro { margin: 4px 0 16px; line-height: 1.6; }
 .model-request-headers { display: grid; gap: 14px; }
 .model-request-header {

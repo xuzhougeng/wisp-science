@@ -13,6 +13,8 @@ for (const locale of ["en", "zh"]) {
       } else {
         await page.locator(".settings-list-row").first().click();
       }
+      // Request headers sit inside the form's collapsed Advanced section.
+      await page.getByTestId("model-advanced-section").locator(":scope > summary").click();
       const advanced = page.getByTestId("model-advanced-options");
       await expect(advanced.locator("summary")).toHaveText(
         locale === "zh" ? "请求附加信息（高级）" : "Request headers (advanced)",

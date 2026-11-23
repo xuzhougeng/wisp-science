@@ -44,6 +44,11 @@ pub struct ModelProfile {
     pub context_window: u64,
     #[serde(default)]
     pub reasoning_effort: String,
+    /// Reasoning levels the API endpoint's own model list reported for this
+    /// exact model id (for example a local gateway's `reasoning_levels`). Used
+    /// only when the baked catalog has no exact entry for the model.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub endpoint_efforts: Vec<String>,
     /// OpenAI-compatible HTTP `service_tier`. Empty = omit (provider default);
     /// `priority` = Fast. Ignored for unsupported providers.
     #[serde(default)]
@@ -201,8 +206,62 @@ fn normalize_endpoint_suffix(value: &str) -> Result<String, String> {
     if value.split('/').any(|segment| segment == "..") {
         return Err("Endpoint suffix cannot contain '..' path segments.".into());
     }
+    // A protocol path such as `/anthropic` or `/v1/images/generations`. Any
+    // other text (spaces, non-ASCII words) would only be percent-encoded into
+    // a request URL that no gateway serves.
+    if !value.bytes().all(endpoint_suffix_byte) || value.contains("//") {
+        return Err(
+            "Endpoint suffix must be a URL path such as /anthropic (letters, digits, - . _ ~ and /)."
+                .into(),
+        );
+    }
     Ok(format!("/{value}"))
 }
+
+fn endpoint_suffix_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'.' | b'_' | b'~' | b':' | b'@')
+}
+
+/// A model API on this machine: localhost, 127.0.0.0/8 or [::1]. Local
+/// gateways usually take any key or none, so an empty key is allowed there.
+pub(crate) fn is_loopback_api_url(url: &str) -> bool {
+    let Ok(url) = url::Url::parse(url.trim()) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https") || !url.username().is_empty() {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Domain(host)) => {
+            host.eq_ignore_ascii_case("localhost")
+                || host.to_ascii_lowercase().ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
+/// A profile that can run a turn: a model id and, for API-key providers, a
+/// base URL. The fresh-install placeholder has neither.
+fn profile_is_configured(profile: &ModelProfile) -> bool {
+    !profile.model.trim().is_empty()
+        && (is_subscription_provider(&profile.provider) || !profile.api_url.trim().is_empty())
+}
+
+/// The fresh-install placeholder used to be named "Default", which then read
+/// like a model name in the composer and on replies. Its display name falls
+/// back to the model id (empty until configured).
+fn without_placeholder_label(mut profile: ModelProfile) -> ModelProfile {
+    if profile.label.trim().is_empty()
+        || (profile.id == "default" && profile.label == PLACEHOLDER_LABEL)
+    {
+        profile.label = profile.model.trim().to_string();
+    }
+    profile
+}
+
+const PLACEHOLDER_LABEL: &str = "Default";
 
 pub(crate) fn join_api_url(base_url: &str, endpoint_suffix: &str) -> String {
     let base_url = base_url.trim().trim_end_matches('/');
@@ -783,7 +842,11 @@ pub(crate) async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
     let profiles = load_raw(store).await;
     if !profiles.is_empty() {
         remember_routes(&profiles);
-        return profiles.into_iter().map(with_subscription_window).collect();
+        return profiles
+            .into_iter()
+            .map(without_placeholder_label)
+            .map(with_subscription_window)
+            .collect();
     }
     let provider = store
         .get_setting("provider")
@@ -818,11 +881,9 @@ pub(crate) async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
         .unwrap_or_default();
     let default = ModelProfile {
         id: "default".into(),
-        label: if model.trim().is_empty() {
-            "Default".into()
-        } else {
-            model.clone()
-        },
+        // Empty until configured: the list shows "Not configured" and every
+        // picker falls back to the model id.
+        label: model.trim().to_string(),
         provider,
         api_url,
         endpoint_suffix: String::new(),
@@ -832,6 +893,7 @@ pub(crate) async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
         max_tokens,
         context_window: DEFAULT_CONTEXT_WINDOW,
         reasoning_effort,
+        endpoint_efforts: Vec::new(),
         service_tier: String::new(),
         user_agent: String::new(),
         send_user_agent: true,
@@ -2187,6 +2249,33 @@ pub async fn save_model(
     Ok(result)
 }
 
+/// Endpoint-reported effort names, kept only when they look like effort
+/// identifiers (`high`, `x-high`), deduplicated and bounded.
+fn sanitized_efforts(efforts: &[String]) -> Vec<String> {
+    let mut kept: Vec<String> = Vec::new();
+    for effort in efforts.iter().map(|effort| effort.trim()) {
+        let valid = (1..=32).contains(&effort.len())
+            && effort.as_bytes()[0].is_ascii_lowercase()
+            && effort
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'));
+        if valid && kept.len() < 16 && !kept.iter().any(|known| known == effort) {
+            kept.push(effort.to_string());
+        }
+    }
+    kept
+}
+
+/// Whether the default that `active_id` would resolve to, ignoring the
+/// profile being saved, can already run a turn.
+fn has_usable_default(profiles: &[ModelProfile], active: &str, saving_id: &str) -> bool {
+    let others = || profiles.iter().filter(|p| p.id != saving_id);
+    others()
+        .find(|p| p.id == active && is_chat_model(p))
+        .or_else(|| others().find(|p| is_default_chat_model(p)))
+        .is_some_and(profile_is_configured)
+}
+
 // Keep the persistence path independent of Tauri so role transitions and
 // failed saves can be exercised against a temporary store.
 async fn save_model_profile(
@@ -2211,6 +2300,7 @@ async fn save_model_profile(
     profile.api_url = profile.api_url.trim().trim_end_matches('/').to_string();
     profile.endpoint_suffix = normalize_endpoint_suffix(&profile.endpoint_suffix)?;
     profile.service_tier = normalize_service_tier(&profile.service_tier);
+    profile.endpoint_efforts = sanitized_efforts(&profile.endpoint_efforts);
     profile.user_agent = wisp_llm::provider::normalize_user_agent(&profile.user_agent)?;
     profile.session_header_name =
         wisp_llm::provider::normalize_session_header_name(&profile.session_header_name)?;
@@ -2303,8 +2393,11 @@ async fn save_model_profile(
         .await
         .map_err(|error| error.to_string())?
         .unwrap_or_default();
+    // Adding a model never replaces a usable default: it becomes the default
+    // only when there is none yet (for example the fresh-install placeholder).
     // Restoring an existing chat profile does not change the current default.
     if is_new
+        && !has_usable_default(&profiles, &active, &id)
         && profiles
             .iter()
             .any(|p| p.id == id && is_default_chat_model(p))
@@ -2860,6 +2953,7 @@ mod tests {
             max_tokens: 0,
             context_window: DEFAULT_CONTEXT_WINDOW,
             reasoning_effort: String::new(),
+            endpoint_efforts: Vec::new(),
             service_tier: String::new(),
             user_agent: String::new(),
             send_user_agent: true,
@@ -3646,6 +3740,129 @@ mod tests {
         // A Specialist or session still naming the deleted id resolves to
         // nothing instead of adopting the unrelated new profile.
         assert!(profile_owned(&store, &old_id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn adding_api_access_keeps_a_usable_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = wisp_store::Store::open(&dir.path().join("default.sqlite"))
+            .await
+            .unwrap();
+        save_raw(&store, &[test_profile("daily", "Everyday", "daily-model")])
+            .await
+            .unwrap();
+        store.set_setting(ACTIVE_KEY, "daily").await.unwrap();
+        // The add form saves each new model in turn, as "Add API access" does.
+        for model in ["deepseek-v4-flash", "deepseek-v4-pro"] {
+            let mut added = test_profile("", "", model);
+            added.api_url = "http://127.0.0.1:9/v1".into();
+            save_model_profile(&store, added, None, false)
+                .await
+                .unwrap();
+        }
+        assert_eq!(active_profile_id(&store).await, "daily");
+        // A stale active id still resolves to the usable everyday model.
+        store.set_setting(ACTIVE_KEY, "deleted").await.unwrap();
+        save_model_profile(&store, test_profile("", "", "third"), None, false)
+            .await
+            .unwrap();
+        assert_eq!(active_profile_id(&store).await, "daily");
+    }
+
+    #[tokio::test]
+    async fn first_real_model_replaces_the_unconfigured_placeholder_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = wisp_store::Store::open(&dir.path().join("fresh.sqlite"))
+            .await
+            .unwrap();
+        let placeholder = ensure(&store).await;
+        assert_eq!(placeholder.len(), 1);
+        assert_eq!(placeholder[0].id, "default");
+        assert!(placeholder[0].label.is_empty());
+        assert_eq!(active_profile_id(&store).await, "default");
+        let saved = save_model_profile(&store, test_profile("", "", "first"), None, false)
+            .await
+            .unwrap();
+        let first = saved
+            .iter()
+            .find(|p| p.model == "first")
+            .unwrap()
+            .id
+            .clone();
+        assert_eq!(active_profile_id(&store).await, first);
+        // The next one leaves the now usable default alone.
+        save_model_profile(&store, test_profile("", "", "second"), None, false)
+            .await
+            .unwrap();
+        assert_eq!(active_profile_id(&store).await, first);
+    }
+
+    #[tokio::test]
+    async fn untouched_placeholder_name_reads_as_the_model_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = wisp_store::Store::open(&dir.path().join("label.sqlite"))
+            .await
+            .unwrap();
+        // Older installs stored the placeholder as "Default" and kept it
+        // after the user filled in the model.
+        let mut legacy = test_profile("default", "Default", "deepseek/deepseek-flash");
+        legacy.api_url = "http://127.0.0.1:3425/v1".into();
+        let renamed = test_profile("other", "Default", "gpt-5.5");
+        save_raw(&store, &[legacy, renamed]).await.unwrap();
+        store.set_setting(ACTIVE_KEY, "default").await.unwrap();
+        assert_eq!(active_label(&store).await, "deepseek/deepseek-flash");
+        let profiles = ensure(&store).await;
+        // Only the placeholder id is rewritten; a user may name a model "Default".
+        assert_eq!(profiles[1].label, "Default");
+        let unconfigured = without_placeholder_label(test_profile("default", "Default", ""));
+        assert!(unconfigured.label.is_empty());
+    }
+
+    #[test]
+    fn endpoint_suffix_rejects_text_that_is_not_a_url_path() {
+        assert_eq!(
+            normalize_endpoint_suffix("anthropic").unwrap(),
+            "/anthropic"
+        );
+        assert_eq!(
+            normalize_endpoint_suffix("/v1/images/generations/").unwrap(),
+            "/v1/images/generations"
+        );
+        for bad in ["坏网关", "/my gateway", "a//b", "/v1%2F"] {
+            assert!(normalize_endpoint_suffix(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn loopback_api_urls_are_recognized_exactly() {
+        for url in [
+            "http://127.0.0.1:3425/v1",
+            "http://127.1.2.3",
+            "http://localhost:11434/v1",
+            "http://LOCALHOST",
+            "http://gateway.localhost/v1",
+            "http://[::1]:8080/v1",
+        ] {
+            assert!(is_loopback_api_url(url), "{url}");
+        }
+        for url in [
+            "https://api.deepseek.com",
+            "http://localhost.example.com",
+            "http://10.0.0.2:3425/v1",
+            "127.0.0.1:3425",
+            "",
+        ] {
+            assert!(!is_loopback_api_url(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn endpoint_efforts_are_sanitized_identifiers() {
+        let raw: Vec<String> = ["none", "low", "low", "High", "x-high", "", "max"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(sanitized_efforts(&raw), ["none", "low", "x-high", "max"]);
     }
 
     #[test]

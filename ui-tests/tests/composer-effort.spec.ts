@@ -150,6 +150,8 @@ test("settings uses exact catalog support and ignores a late previous-model look
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Models", exact: true }).click();
   await page.locator(".settings-list-row").first().click();
+  // Reasoning effort lives in the collapsed Advanced section.
+  await page.getByTestId("model-advanced-section").locator(":scope > summary").click();
   const effort = page.getByRole("combobox", { name: "Reasoning effort", exact: true });
   await expect(effort.locator("option:not([disabled])")).toHaveText(["Default (provider)", "High", "Max"]);
   const model = page.getByRole("textbox", { name: "Model ID", exact: true });

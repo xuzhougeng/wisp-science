@@ -111,10 +111,39 @@ test("Settings says personal models apply again after a Magpie disconnect", asyn
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByTestId("settings-nav-models").click();
   const notice = page.getByTestId("models-magpie-notice");
+  await expect(notice).toHaveClass(/settings-callout-info/);
+  await expect(notice).toHaveAttribute("role", "note");
   await expect(notice).toContainText(MAGPIE);
-  await expect(notice).toContainText("magpie wisp-science default");
-  // The profiles themselves stay editable.
-  await expect(page.locator(".settings-list-row").filter({ hasText: "opus-4.8" })).toBeVisible();
+  // The command is code, not prose with literal backticks, and copies in one click.
+  await expect(notice.getByTestId("models-magpie-command")).toHaveText("magpie wisp-science default");
+  await expect(notice).not.toContainText("`");
+  await page.evaluate(() => {
+    (window as any).__copied = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text: string) => { (window as any).__copied.push(text); } },
+    });
+  });
+  await notice.getByTestId("models-magpie-copy").click();
+  await expect.poll(() => page.evaluate(() => (window as any).__copied)).toEqual(["magpie wisp-science default"]);
+  // The profiles themselves stay editable, but none of them claims to be in effect.
+  const rows = page.getByTestId("model-profile-row");
+  await expect(rows.filter({ hasText: "opus-4.8" })).toBeVisible();
+  await expect(rows.first().getByTestId("model-not-in-effect")).toHaveText("Not in effect");
+  await expect(page.locator(".model-settings-pane .settings-model-default")).toHaveCount(0);
+  await expect(rows.getByRole("button", { name: "Set as default" })).toHaveCount(0);
+});
+
+test("the Magpie callout and the not-in-effect marks are translated", async ({ page }) => {
+  await page.goto("/?mockMagpie=1&mockLocale=zh");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByTestId("settings-nav-models").click();
+  const notice = page.getByTestId("models-magpie-notice");
+  await expect(notice).toContainText("已接入 Magpie");
+  await expect(notice.getByTestId("models-magpie-copy")).toHaveAttribute("aria-label", "复制命令");
+  await expect(page.getByTestId("model-not-in-effect").first()).toHaveText("未生效");
+  await expect(page.getByText("当前默认", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("设为默认模型", { exact: true })).toHaveCount(0);
 });
 
 test("Settings shows no Magpie notice when Magpie is not connected", async ({ page }) => {

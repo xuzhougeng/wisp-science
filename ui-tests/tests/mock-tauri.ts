@@ -987,6 +987,23 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
       { ...mockModels[1], id: "long-name", label: "A very long custom model configuration name that should be truncated", model: "custom-reasoner" },
     );
   }
+  if (query.get("mockFreshInstall") === "1") {
+    // A fresh data directory: one empty placeholder profile (src-tauri models.rs `ensure`).
+    mockModels = [{
+      id: "default", label: "", provider: "", api_url: "", model: "", has_api_key: false, active: true,
+      max_tokens: 0, context_window: 128000, reasoning_effort: "", service_tier: "",
+      supports_vision: false, use_for_vision: false, use_for_image_generation: false, use_for_video_generation: false,
+    }];
+  }
+  if (query.get("mockLegacyPlaceholder") === "1") {
+    // Older builds kept the placeholder name "Default" after it was filled in.
+    mockModels[0].label = "Default";
+    mockModels[0].model = "deepseek/deepseek-flash";
+    mockModels[0].api_url = "http://127.0.0.1:3425/v1";
+    // The form defaults, as saved before the gateway's facts were known.
+    mockModels[0].max_tokens = 8192;
+    mockModels[0].context_window = 128000;
+  }
   const activeHttpModelId = () => mockModels.find((model) => model.active)?.id ?? mockModels[0]?.id ?? "";
   // Baked model catalog (mirrors src-tauri model_catalog): exact id match
   // within vendor namespaces, never prefix matching.
@@ -3801,6 +3818,28 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               ? { model: "fixture/reasoner", context_window: 400000, max_tokens: 64000,
                   efforts: ["low", "medium", "high"], default_effort: "medium" }
               : null;
+          case "list_endpoint_models": {
+            // GET {base}/models (src-tauri settings_commands.rs). A Magpie-style
+            // gateway on 127.0.0.1:3425 reports per-model facts.
+            const call = {
+              provider: String(arg("provider") ?? ""),
+              apiUrl: String(arg("apiUrl") ?? ""),
+              key: arg("key") ?? null,
+              profileId: arg("profileId") ?? null,
+              proxyUrl: arg("proxyUrl") ?? null,
+            };
+            (window as any).__endpointModelCalls = [...((window as any).__endpointModelCalls ?? []), call];
+            if (call.apiUrl.includes("127.0.0.1:3425")) {
+              return [
+                { id: "deepseek/deepseek-flash", context_window: 1000000, max_output_tokens: 384000,
+                  reasoning_levels: ["none", "low", "high", "max"] },
+                { id: "deepseek/deepseek-pro", context_window: 1000000, max_output_tokens: 384000,
+                  reasoning_levels: ["none", "high"] },
+              ];
+            }
+            if (call.apiUrl.includes("unreachable")) throw new Error("Could not reach http://unreachable.test/v1/models");
+            return [{ id: "deepseek-v4-flash" }, { id: "deepseek-v4-pro" }];
+          }
           case "model_catalog_lookup": {
             if (query.get("mockSlowCatalog") === "1" && arg("model") === "gpt-5.6-luna") {
               await new Promise(resolve => setTimeout(resolve, 700));
@@ -4970,13 +5009,21 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             const useForVideoGeneration = Boolean(
               arg("useForVideoGeneration") ?? profile.use_for_video_generation,
             );
-            // Mirror the backend: an empty id creates a fresh profile.
+            // Mirror the backend: an empty id creates a fresh profile, which
+            // becomes the default only while there is no usable default.
             if (!profile.id) {
               let n = 1;
               while (mockModels.some((m) => m.id === `m${n}`)) n += 1;
               profile.id = `m${n}`;
               if (!profile.label) profile.label = profile.model;
+              const hasUsableDefault = mockModels.some((m: any) => m.active
+                && String(m.model ?? "").trim() && String(m.api_url ?? "").trim());
+              const everydayChat = !useForImageGeneration && !useForVideoGeneration && !profile.use_for_expert;
               mockModels = [...mockModels, profile];
+              if (!hasUsableDefault && everydayChat) {
+                mockModels = mockModels.map((m: any) => ({ ...m, active: m.id === profile.id }));
+              }
+              (window as any).__savedNewProfiles = [...((window as any).__savedNewProfiles ?? []), profile];
             }
             mockModels = mockModels.map((m) => m.id === profile.id ? {
               ...m,

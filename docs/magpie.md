@@ -51,8 +51,11 @@ their own model management. A model must support any requested tools or images.
 The desktop app shows the override wherever a model is picked. The composer,
 side chat, reviewer and subagent pickers offer only `Magpie · <model>`, plus
 any ACP agents, and the Fast toggle is hidden because Magpie turns send no
-service tier. Switch models in Magpie. Settings → Models keeps the personal
-profiles editable and says they apply again after a disconnect. Stored
+service tier. Switch models in Magpie. Settings → Models shows an info callout
+with the disconnect command `magpie wisp-science default` as code and a copy
+button, and marks every personal profile **Not in effect** (no **Default**
+badge or **Set as default** button) while keeping it editable; they apply
+again after a disconnect and restart. Stored
 per-conversation, reviewer and subagent choices are left as they were, so they
 return after you disconnect.
 

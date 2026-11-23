@@ -41,8 +41,11 @@ impl AnthropicProvider {
             reqwest::header::CONTENT_TYPE,
             reqwest::header::HeaderValue::from_static("application/json"),
         );
-        if let Ok(v) = reqwest::header::HeaderValue::from_str(&self.cfg.api_key) {
-            h.insert("x-api-key", v);
+        // Keyless local gateways: omit the header rather than send it empty.
+        if !self.cfg.api_key.is_empty() {
+            if let Ok(v) = reqwest::header::HeaderValue::from_str(&self.cfg.api_key) {
+                h.insert("x-api-key", v);
+            }
         }
         if let Ok(v) = reqwest::header::HeaderValue::from_str(&self.cfg.anthropic_version) {
             h.insert("anthropic-version", v);
@@ -705,6 +708,22 @@ mod tests {
         ));
         let (_, out, _) = provider.build_body(messages, &[], false);
         out
+    }
+
+    #[test]
+    fn empty_key_omits_the_api_key_header_for_keyless_gateways() {
+        let keyless = AnthropicProvider::new(crate::ProviderConfig::anthropic(
+            "http://127.0.0.1:3425",
+            "",
+            "claude-test",
+        ));
+        assert!(!keyless.headers().contains_key("x-api-key"));
+        let keyed = AnthropicProvider::new(crate::ProviderConfig::anthropic(
+            "https://api.anthropic.com",
+            "sk-test",
+            "claude-test",
+        ));
+        assert_eq!(keyed.headers()["x-api-key"], "sk-test");
     }
 
     fn image_tool_result(id: &str) -> Message {
