@@ -1255,11 +1255,28 @@ pub(super) fn StoragePrefsOverlay(
     }
 }
 
+/// Display label and Local path key, everyday tools first.
+const LOCAL_ENVIRONMENT_TOOLS: [(&str, &str); 8] = [
+    ("Python", "python_executable"),
+    ("Rscript", "rscript_executable"),
+    ("uv", "uv_executable"),
+    ("Node", "node_executable"),
+    ("npm", "npm_executable"),
+    ("sci", "sci_executable"),
+    ("pixi", "pixi_executable"),
+    ("Cua Driver", "cua_driver_executable"),
+];
+/// How many leading entries the first-run guide shows.
+const ESSENTIAL_LOCAL_TOOLS: usize = 4;
+
 #[component]
 pub(super) fn LocalEnvironmentPanel(
     locale: RwSignal<Locale>,
     bootstrap: RwSignal<Option<BootstrapStatus>>,
     #[prop(default = false)] hide_title: bool,
+    // The first-run guide lists only the everyday tools; Settings and
+    // Capabilities keep the full list, including npm, sci, pixi and Cua Driver.
+    #[prop(default = false)] essentials_only: bool,
 ) -> impl IntoView {
     let checking = create_rw_signal(false);
     let editing = create_rw_signal(false);
@@ -1307,12 +1324,8 @@ pub(super) fn LocalEnvironmentPanel(
             {(!hide_title).then(|| view! { <h3>{move || t(locale.get(), "env.title")}</h3> })}
             <p class="hint">{move || t(locale.get(), "env.optional")}</p>
             <dl class="environment-paths">
-                {[
-                    ("Python", "python_executable"), ("Rscript", "rscript_executable"),
-                    ("uv", "uv_executable"), ("Node", "node_executable"),
-                    ("npm", "npm_executable"), ("sci", "sci_executable"), ("pixi", "pixi_executable"),
-                    ("Cua Driver", "cua_driver_executable"),
-                ].into_iter().map(|(label, key)| {
+                {LOCAL_ENVIRONMENT_TOOLS[..if essentials_only { ESSENTIAL_LOCAL_TOOLS } else { LOCAL_ENVIRONMENT_TOOLS.len() }]
+                    .iter().copied().map(|(label, key)| {
                     view! {
                         <div><dt>{label}</dt><dd>
                             {move || if editing.get() {
@@ -1330,6 +1343,7 @@ pub(super) fn LocalEnvironmentPanel(
                     }
                 }).collect_view()}
             </dl>
+            {essentials_only.then(|| view! { <p class="hint" data-testid="env-more-tools">{move || t(locale.get(), "env.more_tools")}</p> })}
             {move || bootstrap.get().and_then(|b| b.local_environment).and_then(|report| report.warning)
                 .map(|warning| view! { <p class="hint">{warning}</p> })}
             {move || error.get().map(|message| view! { <p class="settings-status fail" role="alert">{message}</p> })}
@@ -1473,6 +1487,10 @@ pub(super) fn OnboardingOverlay(
     onboard_key: RwSignal<String>,
     save_onboard_key: Callback<()>,
     dismiss_onboard: Callback<()>,
+    // A connected Magpie supplies the model, so the model step asks for no key.
+    magpie_model: RwSignal<Option<MagpieModelDto>>,
+    // Puts the guide away and opens Settings › Models for other providers.
+    open_model_settings: Callback<()>,
 ) -> impl IntoView {
     let modal_ref = create_node_ref::<html::Div>();
     // Focus the dialog on opening and after changing pages, including when the
@@ -1486,6 +1504,8 @@ pub(super) fn OnboardingOverlay(
             }
         }
     });
+    // The model step asks for a DeepSeek key unless Magpie supplies the model.
+    let asks_for_key = move || onboard_step.get() == 2 && magpie_model.with(Option::is_none);
     let advance = Callback::new(move |()| {
         let step = onboard_step.get_untracked();
         if step < 3 {
@@ -1539,6 +1559,12 @@ pub(super) fn OnboardingOverlay(
                 {move || {
                     let loc = locale.get();
                     match onboard_step.get() {
+                    2 if magpie_model.with(Option::is_some) => view! {
+                        <h2 id="onboard-title">{t(loc, "onboard.apikey.title")}</h2>
+                        <p class="hint" data-testid="onboard-magpie">{move || tf(locale.get(), "onboard.magpie.body", &[
+                            ("model", &magpie_model.get().map(|magpie| magpie.model).unwrap_or_default()),
+                        ])}</p>
+                    }.into_view(),
                     2 => view! {
                         <h2 id="onboard-title">{t(loc, "onboard.apikey.title")}</h2>
                         <ol class="onboard-steps">
@@ -1553,11 +1579,17 @@ pub(super) fn OnboardingOverlay(
                                 <p class="hint">{t(loc, "onboard.apikey.body")}</p>
                                 <label>{t(loc, "settings.api_key")}
                                     <input type="password" autocomplete="new-password"
+                                        placeholder=t(loc, "onboard.apikey.placeholder")
                                         prop:value=move || onboard_key.get()
                                         on:input=move |ev| onboard_key.set(event_target_value(&ev)) />
                                 </label>
                             </li>
                         </ol>
+                        <button type="button" class="linklike onboard-other-provider"
+                            data-testid="onboard-other-provider"
+                            on:click=move |_| open_model_settings.call(())>
+                            {t(loc, "onboard.apikey.other_provider")}
+                        </button>
                     }.into_view(),
                     0 => view! {
                         <h2 id="onboard-title">{t(loc, "onboard.welcome.title")}</h2>
@@ -1569,7 +1601,7 @@ pub(super) fn OnboardingOverlay(
                     }.into_view(),
                     _ => view! {
                         <h2 id="onboard-title">{t(loc, "env.title")}</h2>
-                        <LocalEnvironmentPanel locale=locale bootstrap=bootstrap hide_title=true />
+                        <LocalEnvironmentPanel locale=locale bootstrap=bootstrap hide_title=true essentials_only=true />
                     }.into_view(),
                 }}}
                 </div>
@@ -1582,11 +1614,22 @@ pub(super) fn OnboardingOverlay(
                     {move || if onboard_step.get() > 0 {
                         view! { <button on:click=move |_| onboard_step.update(|s| *s = s.saturating_sub(1))>{move || t(locale.get(), "onboard.back")}</button> }.into_view()
                     } else { view! { <span></span> }.into_view() }}
-                    <button class="primary" on:click=move |_| advance.call(())>
+                    // Skipping the key is the secondary choice; the primary
+                    // button continues with a key and waits for one.
+                    {move || asks_for_key().then(|| view! {
+                        <button class="onboard-later" on:click=move |_| {
+                            // Skipping must not save a half-typed key.
+                            onboard_key.set(String::new());
+                            advance.call(());
+                        }>
+                            {move || t(locale.get(), "onboard.apikey.later")}
+                        </button>
+                    })}
+                    <button class="primary"
+                        disabled=move || asks_for_key() && onboard_key.with(|key| key.trim().is_empty())
+                        on:click=move |_| advance.call(())>
                         {move || t(locale.get(), if onboard_step.get() == 3 {
                             "onboard.start"
-                        } else if onboard_step.get() == 2 && onboard_key.get().trim().is_empty() {
-                            "onboard.apikey.later"
                         } else { "onboard.next" })}
                     </button>
                 </div>

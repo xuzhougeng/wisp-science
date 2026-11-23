@@ -11098,6 +11098,49 @@ test("onboarding key setup lands on flash after adding pro", async ({ page }) =>
     }))).toEqual([{ id: "reader", model_id: "m2" }]);
 });
 
+test("onboarding model step keeps skipping secondary and offers other providers", async ({ page }) => {
+  await page.goto("/?mockOnboarding=1");
+  const onboard = page.locator(".onboard-overlay");
+  await onboard.getByRole("button", { name: "Next" }).click();
+  await onboard.getByRole("button", { name: "Next" }).click();
+  await expect(onboard.getByRole("heading")).toHaveText("Set up your model");
+  const key = onboard.getByLabel("API key (stored in OS keyring)");
+  await expect(key).toHaveAttribute("placeholder", /DeepSeek API key/);
+  // With no key, skipping is offered as a plain button and the primary one waits.
+  const later = onboard.getByRole("button", { name: "Set up later" });
+  const next = onboard.locator(".row > .primary");
+  await expect(later).toBeVisible();
+  await expect(later).not.toHaveClass(/primary/);
+  await expect(next).toHaveText("Next");
+  await expect(next).toBeDisabled();
+  await key.fill("sk-onboard");
+  await expect(next).toBeEnabled();
+  await key.fill("");
+  // Other providers: the guide steps aside for Settings › Models.
+  await onboard.getByTestId("onboard-other-provider").click();
+  await expect(onboard).toBeHidden();
+  await expect(page.locator(".settings-page")).toBeVisible();
+  await expect(page.locator(".settings-nav button.active")).toHaveText("Models");
+  await expect.poll(() => page.evaluate(() => ((window as any).__skillInvokeLog ?? [])
+    .filter((call: any) => call.cmd === "dismiss_onboarding").length)).toBe(1);
+  expect(await lastInvokeArgs(page, "save_model")).toBeNull();
+});
+
+test("onboarding model step says Magpie provides the model and asks for no key", async ({ page }) => {
+  await page.goto("/?mockOnboarding=1&mockMagpie=1&mockLocale=zh");
+  const onboard = page.locator(".onboard-overlay");
+  await onboard.getByRole("button", { name: "下一步" }).click();
+  await onboard.getByRole("button", { name: "下一步" }).click();
+  await expect(onboard.getByRole("heading")).toHaveText("配置模型");
+  await expect(onboard.getByTestId("onboard-magpie")).toContainText("Magpie");
+  await expect(onboard.getByTestId("onboard-magpie")).toContainText("fixture/reasoner");
+  await expect(onboard.locator('input[type="password"]')).toHaveCount(0);
+  await expect(onboard.getByRole("button", { name: "稍后配置" })).toHaveCount(0);
+  await onboard.locator(".row > .primary").click();
+  await expect(onboard.getByRole("heading")).toHaveText("本地环境（可选）");
+  expect(await lastInvokeArgs(page, "save_model")).toBeNull();
+});
+
 test("API access on xAI suggests grok chat and imagine image", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Models");
@@ -19172,8 +19215,10 @@ test("optional environment detection does not block first-run model setup", asyn
   await onboard.getByRole("button", { name: "Set up later" }).click();
   const environment = onboard.getByTestId("local-environment");
   await expect(environment).toContainText("local-env-setup");
-  await expect(environment.locator("dd")).toHaveCount(8);
-  await expect(environment.locator("dd").first()).toContainText("Not found");
+  // The guide lists only the everyday tools; the rest live in Settings.
+  await expect(environment.locator("dt")).toHaveText(["Python", "Rscript", "uv", "Node"]);
+  await expect(environment.locator("dd").first()).toContainText("Not found · optional");
+  await expect(environment.getByTestId("env-more-tools")).toContainText("Settings → General → Local environment");
   await expect(onboard.getByRole("button", { name: "Get started" })).toBeEnabled();
   const viewport = page.viewportSize()!;
   await expectInsideViewport(onboard.getByRole("button", { name: "Get started" }), viewport.width, viewport.height);
@@ -19186,6 +19231,8 @@ test("general settings show discovered paths and can recheck without installing"
   await enterApp(page);
   await openSettingsSection(page, "General");
   const environment = page.getByTestId("local-environment");
+  await expect(environment.locator("dt")).toHaveCount(8);
+  await expect(environment.getByTestId("env-more-tools")).toHaveCount(0);
   await expect(environment).toContainText("/mock/bin/python3");
   await expect(environment).toContainText("/mock/bin/Rscript");
   await expect(environment).toContainText("/mock/bin/uv");
