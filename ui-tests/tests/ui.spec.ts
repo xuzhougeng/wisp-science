@@ -5742,12 +5742,11 @@ test("Generated artifacts survive follow-up tool commentary and ignore mentioned
   });
   await expect(reply).toBeVisible({ timeout: 10_000 });
   await expect(reply.locator(".message-artifacts-label")).toHaveText("Generated · 1");
-  await reply.locator(".message-artifacts-label").click();
-  await reply.locator(".generated-directory > summary").filter({ hasText: "results" }).click();
-  await expect(reply.locator('.message-artifact-card[data-artifact-name="new.png"]')).toBeVisible();
-  await expect(reply.locator('.message-artifact-card[data-artifact-name="old.csv"]')).toHaveCount(0);
-  await expect(reply.locator('.message-artifact-card[data-artifact-name="old.png"]')).toHaveCount(0);
-  await expect(reply.locator('.message-artifact-card[data-artifact-name="old-report.md"]')).toHaveCount(0);
+  // A single generated image is shown inline, expanded, without any click.
+  await expect(reply.locator('.message-artifact-image[data-artifact-name="new.png"]')).toBeVisible();
+  await expect(reply.locator('[data-artifact-name="old.csv"]')).toHaveCount(0);
+  await expect(reply.locator('[data-artifact-name="old.png"]')).toHaveCount(0);
+  await expect(reply.locator('[data-artifact-name="old-report.md"]')).toHaveCount(0);
   // Suggested/mentioned filenames are not workspace files unless they exist.
   // Deleted temp paths stay as code even when they look like project files.
   await expect(reply.locator('a.workspace-path-link[href="old.csv"]')).toHaveCount(0);
@@ -5818,7 +5817,7 @@ test("Generated artifacts survive follow-up tool commentary and ignore mentioned
 
   // The backing artifact path remains absolute for loading, but project UI
   // must present the portable project-relative form.
-  await reply.locator('.message-artifact-card[data-artifact-name="new.png"]').click();
+  await reply.locator('.message-artifact-image[data-artifact-name="new.png"]').click();
   const modal = page.locator(".artifact-modal");
   await expect(modal).toBeVisible();
   await modal.getByRole("button", { name: "Open in center" }).click();
@@ -19757,7 +19756,9 @@ test("Generated folders stay open when another reply updates an existing artifac
   await page.keyboard.press("Space");
   await expect(output).toBeVisible();
   const newReply = page.locator(".msg.assistant", { hasText: "Result updated." });
-  await expect(newReply.locator(".generated-artifact-tree")).not.toBeVisible();
+  // A reply with a single output shows it expanded, folders included.
+  await expect(newReply.locator(".generated-artifact-tree")).toBeVisible();
+  await expect(newReply.locator('[data-artifact-name="output-0.csv"]')).toBeVisible();
   await page.locator("#chat-scroller").evaluate(el => el.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 })));
   await reply.locator(".message-artifacts").screenshot({ path: test.info().outputPath("generated-folders-after-update.png") });
 });

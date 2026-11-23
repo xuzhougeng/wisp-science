@@ -445,9 +445,10 @@ test("Files panel keeps one toolbar row, no hint paragraph, and dense rows", asy
 
 test("generated artifact cards render as compact rows", async ({ page }) => {
   await enterApp(page);
-  await page.locator(".composer-inner textarea").first().fill("ARTIFACTATTRIBUTION");
+  await page.locator(".composer-inner textarea").first().fill("GENERATEDTREE");
   await page.getByRole("button", { name: "Send" }).click();
 
+  // A long output list stays collapsed into the folder tree.
   await page.locator(".message-artifacts-label").click();
   await page.locator(".generated-directory > summary").filter({ hasText: "results" }).click();
   const card = page.locator('.message-artifact-card[data-artifact-name="new.png"]');
@@ -461,6 +462,69 @@ test("generated artifact cards render as compact rows", async ({ page }) => {
   expect(metrics.thumbSize).toBe(24);
   // Compact row: thumb + one or two text lines, not the old ~140px tile.
   expect(metrics.cardHeight).toBeLessThan(72);
+});
+
+test("a reply's generated image shows inline and its preview opens fitted", async ({ page }) => {
+  await enterApp(page);
+  await page.locator(".composer-inner textarea").first().fill("ARTIFACTATTRIBUTION");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  // One output: expanded by default, the image as an inline thumbnail.
+  const outputs = page.locator(".message-artifacts");
+  await expect(outputs).toHaveJSProperty("open", true, { timeout: 10_000 });
+  const tile = page.getByTestId("generated-image-gallery").locator('.message-artifact-image[data-artifact-name="new.png"]');
+  await expect(tile).toBeVisible();
+  await expect(tile).toHaveAccessibleName("new.png");
+  await expect.poll(() => tile.locator(".message-artifact-thumb").evaluate(el => el.getBoundingClientRect().height)).toBeGreaterThan(100);
+  await expect.poll(() => tile.locator("img").first().getAttribute("src").catch(() => "")).toContain("blob:");
+  // Still collapsible on request.
+  await page.locator(".message-artifacts-label").click();
+  await expect(tile).not.toBeVisible();
+  await page.locator(".message-artifacts-label").click();
+  await expect(tile).toBeVisible();
+
+  // The preview opens fitted inside its viewport; 100% and zoom stay available.
+  await tile.click();
+  const modal = page.locator(".artifact-modal");
+  const viewport = modal.locator(".file-preview-zoom-viewport");
+  const image = modal.locator(".rp-img");
+  await expect(image).toBeVisible();
+  const reset = modal.getByRole("button", { name: "Reset zoom" });
+  await expect(reset).toHaveText("Fit");
+  await expect(viewport).toHaveClass(/is-fit/);
+  await expect.poll(() => viewport.evaluate(el => el.scrollHeight <= el.clientHeight && el.scrollWidth <= el.clientWidth)).toBe(true);
+  const fits = () => image.evaluate(el => {
+    const box = el.getBoundingClientRect();
+    const port = el.closest(".file-preview-zoom-viewport")!.getBoundingClientRect();
+    return box.height <= port.height + 1 && box.width <= port.width + 1;
+  });
+  await expect.poll(fits).toBe(true);
+  await reset.click();
+  await expect(reset).toHaveText("100%");
+  await expect(viewport).not.toHaveClass(/is-fit/);
+  await modal.getByTestId("preview-zoom-fit").click();
+  await expect(reset).toHaveText("Fit");
+  await modal.getByRole("button", { name: "Zoom in", exact: true }).click();
+  await expect(reset).toHaveText("125%");
+  await page.keyboard.press("Escape");
+  await expect(modal).toHaveCount(0);
+});
+
+test("reply actions are named and legible at rest", async ({ page }) => {
+  await enterApp(page);
+  await page.locator(".composer-inner textarea").first().fill("ARTIFACTATTRIBUTION");
+  await page.getByRole("button", { name: "Send" }).click();
+  const actions = page.locator(".msg.assistant .msg-actions").last();
+  await expect(actions).toBeVisible({ timeout: 10_000 });
+  const buttons = actions.locator("button.msg-icon-btn");
+  expect(await buttons.count()).toBeGreaterThan(0);
+  for (const button of await buttons.all()) {
+    const name = await button.getAttribute("aria-label");
+    expect(name?.trim()).toBeTruthy();
+    await expect(button).toHaveAttribute("title", name!);
+  }
+  const enabled = actions.locator("button.msg-icon-btn:not(:disabled)").first();
+  await expect(enabled).toHaveCSS("opacity", "0.8");
 });
 
 test("session row menu button is hidden until hover or keyboard focus", async ({ page }) => {

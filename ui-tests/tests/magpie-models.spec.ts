@@ -153,3 +153,33 @@ test("Settings shows no Magpie notice when Magpie is not connected", async ({ pa
   await expect(page.locator(".settings-list-row").filter({ hasText: "opus-4.8" })).toBeVisible();
   await expect(page.getByTestId("models-magpie-notice")).toHaveCount(0);
 });
+
+test("a reply's model badge names the Magpie model, not the personal default", async ({ page }) => {
+  await enterProject(page);
+  await page.locator("#composer-input").fill("badge check");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  const reply = page.locator(".msg.assistant").last();
+  await expect(reply).toContainText("badge check");
+  await expect(reply.locator(".role-model")).toHaveText(MAGPIE);
+});
+
+test("the backend's usage label re-stamps the running reply's badge", async ({ page }) => {
+  await enterProject(page, "");
+  await page.locator("#composer-input").fill("PENDINGDEMO · which model answered");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByTestId("turn-pending")).toBeVisible();
+  const frameId = await page.evaluate(() => {
+    const calls = (window as any).__skillInvokeLog as { cmd: string; args: any }[];
+    const args = calls.filter(call => call.cmd === "send_message").at(-1)!.args;
+    return (args instanceof Map ? args.get("sessionId") : args.sessionId) as string;
+  });
+  const emit = (event: Record<string, unknown>) =>
+    page.evaluate(payload => (window as any).__tauriEmit("agent", payload), { frame_id: frameId, ...event });
+  await emit({ kind: "Text", delta: "Answered." });
+  const badge = page.locator(".msg.assistant").last().locator(".role-model");
+  await expect(badge).not.toHaveText("Magpie · gateway/served");
+  await emit({ kind: "Usage", model: "Magpie · gateway/served", input: 10, output: 2, ctx_tokens: 12, max_context: 128000 });
+  await expect(badge).toHaveText("Magpie · gateway/served");
+  await page.evaluate(() => (window as any).__finishPendingTurn());
+  await expect(badge).toHaveText("Magpie · gateway/served");
+});

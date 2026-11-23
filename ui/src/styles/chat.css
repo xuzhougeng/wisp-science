@@ -908,7 +908,7 @@
 .msg .msg-actions { display: flex; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity .15s ease; }
 .msg.user .msg-actions { justify-content: flex-end; }
 /* Keep the copy affordance visible under assistant replies (not just on hover)
-   so it's discoverable — the icon itself stays subtle (.6) until hover. */
+   so it's discoverable — the icon itself stays subtle (.8, muted) until hover. */
 .msg.assistant .msg-actions { justify-content: flex-start; margin-left: -4px; opacity: 1; }
 .msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; }
 .msg.assistant .assistant-wrap { display: flex; flex-direction: column; min-width: 0; max-width: 100%; }
@@ -941,7 +941,9 @@
 button.msg-btn { background: transparent; color: var(--text-faint); border: none; border-radius: var(--radius-xs); padding: 4px 8px; font: inherit; font-size: calc(11px * var(--ui-font-scale, 1)); cursor: pointer; line-height: 1; }
 button.msg-btn:hover:not(:disabled) { color: var(--text); background: var(--bg-sunken); }
 button.msg-btn:disabled { opacity: .4; cursor: not-allowed; }
-button.msg-icon-btn { display: inline-flex; align-items: center; justify-content: center; background: transparent; color: var(--text-faint); border: none; border-radius: var(--radius-xs); padding: 4px; cursor: pointer; line-height: 0; opacity: .6; }
+/* Resting icons stay quiet but legible: muted text at .8, not faint at .6,
+   which washed out to near-invisible under replies. */
+button.msg-icon-btn { display: inline-flex; align-items: center; justify-content: center; background: transparent; color: var(--text-muted); border: none; border-radius: var(--radius-xs); padding: 4px; cursor: pointer; line-height: 0; opacity: .8; }
 button.msg-icon-btn:hover:not(:disabled) { color: var(--text); background: var(--bg-sunken); opacity: 1; }
 button.msg-icon-btn:disabled { opacity: .3; cursor: default; }
 button.msg-icon-btn svg { width: 14px; height: 14px; }
@@ -2386,6 +2388,10 @@ button.stop:disabled { opacity: .45; cursor: default; }
 .steps-indicator.running svg > circle:last-child { transform-origin: 12px 12px; animation: steps-breathe var(--agent-pulse-duration) var(--agent-motion-ease) infinite; }
 .steps-copy { display: grid; gap: 3px; min-width: 0; white-space: normal; }
 .steps-title { font-size: calc(12.5px * var(--ui-font-scale, 1)); font-weight: 600; line-height: 1.4; color: var(--text-muted); overflow-wrap: anywhere; }
+/* A settled header names what ran ("python · import matplotlib…"): one line,
+   cut by the ellipsis rather than by trimming the string. */
+.steps-copy:has(> .steps-title.is-summary) { grid-template-columns: minmax(0, 1fr); }
+.steps-title.is-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
 .steps-note { color: var(--text-faint); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.45; overflow-wrap: anywhere; }
 .steps.is-live > .steps-head { padding-top: 11px; padding-bottom: 11px; }
 @keyframes steps-orbit { to { transform: rotate(360deg); } }
@@ -2896,6 +2902,15 @@ button.stop:disabled { opacity: .45; cursor: default; }
 .generated-artifact-tree .message-artifact-card { width: 100%; min-width: 0; grid-template-columns: 24px minmax(0, 1fr); padding: 4px 6px; }
 .generated-artifact-tree .message-artifact-thumb { width: 24px; height: 24px; }
 .message-artifacts summary:focus-visible { outline: 2px solid var(--text-muted); outline-offset: 2px; }
+/* Short output lists open expanded; their images are inline thumbnails that
+   open the artifact preview. The whole figure shows (contain, not cover). */
+.message-artifact-gallery { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; max-width: 680px; }
+.message-artifact-image { display: flex; flex-direction: column; gap: 5px; width: min(100%, 300px); padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); font: inherit; text-align: left; cursor: zoom-in; transition: border-color .12s ease, background .12s ease; }
+.message-artifact-image:hover { border-color: var(--border-strong); background: var(--surface-hover); }
+.message-artifact-image:focus-visible { outline: 2px solid var(--text-muted); outline-offset: 2px; }
+.message-artifact-image .message-artifact-thumb { width: 100%; height: 200px; }
+.message-artifact-image .message-artifact-thumb img { object-fit: contain; }
+.message-artifact-image .message-artifact-name { grid-row: auto; }
 
 .step-icon svg, .run-monitor-done svg, .plan-entry-mark svg, .plan-entry-priority svg,
 .review-transition-icon svg, .review-badge svg, .review-empty svg, .review-coverage svg,

@@ -3827,6 +3827,7 @@ fn App() -> impl IntoView {
                 transcripts,
                 models,
                 session_model_ids,
+                magpie_model,
             );
             transcript_event_revisions.update(|all| {
                 let revision = all.entry(removal.frame_id.clone()).or_default();
@@ -3899,6 +3900,7 @@ fn App() -> impl IntoView {
                 transcripts_cb,
                 models_cb,
                 session_models_cb,
+                magpie_model,
             )
         };
         let queue = |fid: String, d: PendingDelta| {
@@ -3911,6 +3913,7 @@ fn App() -> impl IntoView {
                 transcripts_cb,
                 models_cb,
                 session_models_cb,
+                magpie_model,
             );
         };
         let set_pet_activity = |frame_id: &str, state: &str| {
@@ -4035,10 +4038,11 @@ fn App() -> impl IntoView {
                     .chars()
                     .take(160)
                     .collect();
-                let model = session_model_label(
+                let model = session_reply_label(
                     &models_cb.get_untracked(),
                     &session_models_cb.get_untracked(),
                     Some(&frame_id),
+                    magpie_model.get_untracked().as_ref(),
                 );
                 if let Some(id) = queue_id {
                     queue_states.update(|states| {
@@ -4408,6 +4412,7 @@ fn App() -> impl IntoView {
             }
             AgentEvent::Usage {
                 frame_id,
+                model,
                 input,
                 output,
                 reasoning,
@@ -4422,6 +4427,7 @@ fn App() -> impl IntoView {
                 // it never splits the coalesced tool-steps panel.
                 flush_now();
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                    stamp_turn_reply_model(v, &model);
                     upsert_turn_usage(
                         v,
                         input,
@@ -4637,10 +4643,11 @@ fn App() -> impl IntoView {
                         .set(Some(localize_backend(locale_cb.get_untracked(), &message)));
                 }
                 if !rolled_back {
-                    let model = session_model_label(
+                    let model = session_reply_label(
                         &models_cb.get_untracked(),
                         &session_models_cb.get_untracked(),
                         Some(&frame_id),
+                        magpie_model.get_untracked().as_ref(),
                     );
                     route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                         strip_approval_pending(v);
@@ -5208,6 +5215,7 @@ fn App() -> impl IntoView {
             transcripts,
             models,
             session_model_ids,
+            magpie_model,
         );
         match update.kind.as_str() {
             "ToolCall" | "ToolCallUpdate" => route_items(
@@ -5646,7 +5654,12 @@ fn App() -> impl IntoView {
                 .map(|agent| agent.label)
                 .or_else(|| Some("ACP Agent".into()))
         } else {
-            session_model_label(&models.get(), &session_model_ids.get(), active.as_deref())
+            session_reply_label(
+                &models.get(),
+                &session_model_ids.get(),
+                active.as_deref(),
+                magpie_model.get().as_ref(),
+            )
         };
         input.set(String::new());
         attachments.set(vec![]);
@@ -6525,7 +6538,12 @@ fn App() -> impl IntoView {
                 status.set("ACP protocol v1 cannot replay a Wisp transcript.".into());
                 return;
             }
-            let model = session_model_label(&models.get(), &session_model_ids.get(), Some(&id));
+            let model = session_reply_label(
+                &models.get(),
+                &session_model_ids.get(),
+                Some(&id),
+                magpie_model.get().as_ref(),
+            );
             items.update(|v| {
                 strip_error_at(v, error_idx);
                 ensure_streaming_assistant(v, model.clone());
@@ -6665,7 +6683,12 @@ fn App() -> impl IntoView {
             };
 
             let prompt = t(locale.get_untracked(), "context_recovery.new_prompt");
-            let model = active_model_label(&models.get_untracked());
+            let model = session_reply_label(
+                &models.get_untracked(),
+                &HashMap::new(),
+                None,
+                magpie_model.get_untracked().as_ref(),
+            );
             let initial = vec![
                 ChatItem::User(prompt.clone()),
                 ChatItem::Assistant {
@@ -7343,7 +7366,12 @@ fn App() -> impl IntoView {
     let start_session_with_first_message = Callback::new(move |text: String| {
         attachments.set(vec![]);
         sel_artifact.set(0);
-        let turn_model = active_model_label(&models.get_untracked());
+        let turn_model = session_reply_label(
+            &models.get_untracked(),
+            &HashMap::new(),
+            None,
+            magpie_model.get_untracked().as_ref(),
+        );
         replace_visible_transcript(
             active_session.get_untracked(),
             None,
@@ -7511,7 +7539,12 @@ fn App() -> impl IntoView {
                 .into_iter()
                 .map(|name| ComposerReferenceArg::Skill { name })
                 .collect();
-            let turn_model = active_model_label(&models.get());
+            let turn_model = session_reply_label(
+                &models.get(),
+                &HashMap::new(),
+                None,
+                magpie_model.get().as_ref(),
+            );
             spawn_local(async move {
                 if !enabled {
                     let args = to_value(&serde_json::json!({

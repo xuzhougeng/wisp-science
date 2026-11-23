@@ -347,6 +347,10 @@ pub enum AgentEvent {
     },
     Usage {
         frame_id: String,
+        /// Runtime label of the model that served this round (the backend's
+        /// `models::session_label`, e.g. `Magpie · <model>`).
+        #[serde(default)]
+        model: String,
         input: u64,
         output: u64,
         #[serde(default)]
@@ -1391,6 +1395,26 @@ pub fn session_model_label(
     )
 }
 
+/// The label a reply in this session is stamped with while it streams: the
+/// model that will actually serve the turn. A connected Magpie gateway runs
+/// every HTTP turn (the backend's `models::session_label`), so its label wins
+/// over the bound or personal default profile; ACP-bound frames keep their
+/// agent label.
+pub fn session_reply_label(
+    models: &[ModelProfile],
+    session_models: &HashMap<String, String>,
+    session_id: Option<&str>,
+    magpie: Option<&MagpieModelDto>,
+) -> Option<String> {
+    let acp_bound = session_id
+        .and_then(|session_id| session_models.get(session_id))
+        .is_some_and(|id| id.starts_with("acp:"));
+    match magpie {
+        Some(magpie) if !acp_bound => Some(magpie.label()),
+        _ => session_model_label(models, session_models, session_id),
+    }
+}
+
 /// The profile a session resolves to right now: bound profile → active →
 /// first chat model. Shared by the session-scoped getters.
 pub fn session_profile<'a>(
@@ -1580,6 +1604,26 @@ mod session_context_window_tests {
     #[test]
     fn magpie_label_names_the_connected_model_like_the_session_label() {
         assert_eq!(magpie(500_000).label(), "Magpie · fixture/reasoner");
+    }
+
+    #[test]
+    fn reply_label_names_the_magpie_model_over_the_default_profile() {
+        use super::session_reply_label;
+        let models = vec![profile("Default", true, 128_000)];
+        let connected = magpie(500_000);
+        assert_eq!(
+            session_reply_label(&models, &HashMap::new(), Some("s1"), Some(&connected)).as_deref(),
+            Some("Magpie · fixture/reasoner")
+        );
+        assert_eq!(
+            session_reply_label(&models, &HashMap::new(), Some("s1"), None).as_deref(),
+            Some("Default")
+        );
+        let bindings = HashMap::from([("s1".to_string(), "acp:Codex ACP".to_string())]);
+        assert_eq!(
+            session_reply_label(&models, &bindings, Some("s1"), Some(&connected)).as_deref(),
+            Some("Codex ACP")
+        );
     }
 }
 

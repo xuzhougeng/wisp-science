@@ -643,6 +643,12 @@ button.run-status:hover { filter:brightness(0.96); }
    reads viewer.clientWidth on the next page render. */
 .file-preview-zoom-content { display: inline-block; width: 100%; vertical-align: top; position: relative; }
 .file-preview-zoom-content[data-zoom-kind="image"] { width: calc(var(--preview-zoom, 1) * 100%); min-width: 25%; }
+/* Fit (artifact modal default): the content shrink-wraps the image, which the
+   viewport's container units cap on both edges, so a tall figure shows whole.
+   Only bounded viewports opt in — size containment needs a definite height. */
+.file-preview-zoom-viewport.is-fit { container-type: size; }
+.file-preview-zoom-viewport.is-fit .file-preview-zoom-content[data-zoom-kind="image"] { width: auto; min-width: 0; max-width: 100%; }
+.file-preview-zoom-viewport.is-fit .file-preview-zoom-content .rp-img { width: auto; max-width: 100cqw; max-height: 100cqh; }
 /* Region crop: toggle button + full-viewport capture layer + rubber-band. */
 .file-preview-crop-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; height: 28px; padding: 0 7px; border: 1px solid var(--border-strong); background: var(--bg-elev); color: var(--text-muted); border-radius: var(--radius-xs); cursor: pointer; }
 .file-preview-crop-btn:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }

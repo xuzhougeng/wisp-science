@@ -133,6 +133,87 @@ pub(crate) fn ensure_streaming_assistant(items: &mut Vec<ChatItem>, model: Optio
     }
 }
 
+/// Re-stamp the current turn's reply with the label the backend reports on
+/// its usage events — the model that actually served the round. The label
+/// guessed when the turn started can be stale (a Magpie connection, a model
+/// rebound at the turn boundary). Rows after a review transition keep their
+/// own label.
+pub(crate) fn stamp_turn_reply_model(items: &mut [ChatItem], model: &str) {
+    let model = model.trim();
+    if model.is_empty() {
+        return;
+    }
+    let turn_start = items
+        .iter()
+        .rposition(|item| matches!(item, ChatItem::User(_)))
+        .map_or(0, |index| index + 1);
+    for item in items[turn_start..].iter_mut() {
+        match item {
+            ChatItem::ReviewTransition { .. } => break,
+            ChatItem::Assistant { model: slot, .. } if slot.as_deref() != Some(model) => {
+                *slot = Some(model.to_string());
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod stamp_turn_reply_model_tests {
+    use super::stamp_turn_reply_model;
+    use crate::dto::{ChatItem, ReviewTransitionPhase};
+
+    fn reply(text: &str, model: Option<&str>) -> ChatItem {
+        ChatItem::Assistant {
+            text: text.into(),
+            model: model.map(Into::into),
+            resources: Vec::new(),
+        }
+    }
+
+    fn model_of(item: &ChatItem) -> Option<&str> {
+        match item {
+            ChatItem::Assistant { model, .. } => model.as_deref(),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn restamps_only_the_current_turn_before_any_review() {
+        let mut items = vec![
+            ChatItem::User("earlier".into()),
+            reply("old", Some("Default")),
+            ChatItem::User("now".into()),
+            reply("preamble", Some("Default")),
+            ChatItem::Reasoning("why".into()),
+            reply("answer", None),
+            ChatItem::ReviewTransition {
+                phase: ReviewTransitionPhase::Correcting,
+                model: Some("Reviewer".into()),
+            },
+            reply("correction", Some("Reviewer")),
+        ];
+        stamp_turn_reply_model(&mut items, "Magpie · deepseek/deepseek-flash");
+        assert_eq!(model_of(&items[1]), Some("Default"));
+        assert_eq!(
+            model_of(&items[3]),
+            Some("Magpie · deepseek/deepseek-flash")
+        );
+        assert_eq!(
+            model_of(&items[5]),
+            Some("Magpie · deepseek/deepseek-flash")
+        );
+        assert_eq!(model_of(&items[7]), Some("Reviewer"));
+    }
+
+    #[test]
+    fn an_empty_label_leaves_the_reply_alone() {
+        let mut items = vec![ChatItem::User("q".into()), reply("a", Some("Default"))];
+        stamp_turn_reply_model(&mut items, "  ");
+        assert_eq!(model_of(&items[1]), Some("Default"));
+    }
+}
+
 pub(crate) fn last_tool_input(items: &[ChatItem], tool: &str) -> String {
     items
         .iter()
@@ -1618,6 +1699,7 @@ pub(crate) fn flush_delta_buf(
     transcripts: RwSignal<HashMap<String, Vec<ChatItem>>>,
     models: RwSignal<Vec<ModelProfile>>,
     session_models: RwSignal<HashMap<String, String>>,
+    magpie: RwSignal<Option<MagpieModelDto>>,
 ) {
     let drained: Vec<_> = buf.borrow_mut().drain().collect();
     if drained.is_empty() {
@@ -1625,8 +1707,9 @@ pub(crate) fn flush_delta_buf(
     }
     let profiles = models.get_untracked();
     let bindings = session_models.get_untracked();
+    let magpie = magpie.get_untracked();
     for (fid, deltas) in drained {
-        let model = session_model_label(&profiles, &bindings, Some(&fid));
+        let model = session_reply_label(&profiles, &bindings, Some(&fid), magpie.as_ref());
         route_items(active, items, transcripts, &fid, move |v| {
             for d in deltas {
                 match d {
@@ -1647,6 +1730,7 @@ pub(crate) fn schedule_delta_flush(
     transcripts: RwSignal<HashMap<String, Vec<ChatItem>>>,
     models: RwSignal<Vec<ModelProfile>>,
     session_models: RwSignal<HashMap<String, String>>,
+    magpie: RwSignal<Option<MagpieModelDto>>,
 ) {
     if scheduled.get() {
         return;
@@ -1657,7 +1741,15 @@ pub(crate) fn schedule_delta_flush(
     set_timeout(
         move || {
             scheduled.set(false);
-            flush_delta_buf(&buf, active, items, transcripts, models, session_models);
+            flush_delta_buf(
+                &buf,
+                active,
+                items,
+                transcripts,
+                models,
+                session_models,
+                magpie,
+            );
         },
         std::time::Duration::from_millis(50),
     );
