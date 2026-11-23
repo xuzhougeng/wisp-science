@@ -613,6 +613,20 @@ pub async fn build(
         runs.clone(),
         scope.clone(),
     )));
+    // A file, a result or a run set as evidence of the project's paper from
+    // the conversation, instead of being looked up on the paper's page. It
+    // gets the conversation's own scope, so an exploration is refused.
+    let evidence_scope = store
+        .frame_state_scope(frame)
+        .await?
+        .unwrap_or_else(|| scope.clone());
+    agent.add_tool(Box::new(
+        wisp_runs::paper_evidence::PaperEvidenceTool::new_in_scope(
+            store.clone(),
+            evidence_scope,
+            frame,
+        ),
+    ));
     let runner = runs.runner();
     agent.add_tool(Box::new(HarvestRunTool::new_in_scope(
         store.clone(),

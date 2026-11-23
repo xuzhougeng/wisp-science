@@ -11,6 +11,7 @@ pub mod exploration_isolation;
 pub mod harvest;
 pub mod mime;
 pub mod openssh;
+pub mod paper_evidence;
 pub mod publication_capsule;
 pub mod publication_reproduction;
 pub mod remote_file;

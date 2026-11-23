@@ -26,7 +26,6 @@ mod pet;
 mod project_chat_search;
 mod project_landing;
 mod publication;
-mod publication_sources;
 mod research;
 mod research_archive;
 mod research_calendar;

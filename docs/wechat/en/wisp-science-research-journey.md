@@ -94,8 +94,8 @@ This workspace organizes evidence around the manuscript. Its outline contains se
 For an editable draft:
 
 1. Create or select a publication and draft revision, then add the section, claim, or figure you want to support.
-2. Choose **Add evidence** and select registered results, analysis runs, or saved research conversations.
-3. Record the purpose, selection state, and any needed rationale. Conversation sources support passage selection; file sources bind the exact version selected.
+2. Ask the assistant in a conversation to set a file as evidence, for example "set figures/fig1.png as evidence for Figure 1 and fig1_source.csv as its source data", or choose **Use in publication** on an artifact or a run card. The publication page has no source browser to search by hand.
+3. Record the purpose, selection state, and any needed rationale. A file is bound at the exact version it has when it is set; setting it again after it changed replaces the older version on that item.
 4. Use **Finalization check** to inspect the revision and address its findings. After a successful check, explicitly confirm and lock the evidence.
 
 **Passing a check does not automatically lock the draft.** Locking is a separate action. Version history opens the stored revision; clone a new revision to continue editing. The calendar and notes do not automatically select manuscript evidence for you.

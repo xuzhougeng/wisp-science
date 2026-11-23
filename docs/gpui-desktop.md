@@ -287,7 +287,7 @@ desktop can hold them as they are.
 | Notebook | A tab of the side panel: the conversation's code as cells, with what each run returned; copy, save to favorites, or show it in the conversation |
 | Research calendar | A page across every project: a month as a grid with how many records each day holds, and the chosen day's records; projects can be left out |
 | Scheduled tasks | A page across projects (the clock on the home page, or the command palette): a prompt is sent into a new conversation of its project every few hours, daily or weekly at a time, while the app is open; each task can be run now, switched off or deleted, and its latest firing opens the conversation it made |
-| Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, sections, claims, figures, tables, methods and supplements, each at the top level or under a parent item, with the project results, runs, conversation passages and exact anchors they rest on and why each was chosen. Each piece of evidence says whether it is a candidate, selected or rejected and who may see it (changed on a draft), notes when the project has a newer version of its result, and opens to where it came from (the run's inputs, the run and its code, and the source and environment details). Advanced: locate by source ID binds a message range, tool result, execution log, code cell or external resource by its ids. Research conversations lists what you and the assistant said in the project's own conversations; a message opens read-only, a passage is selected in it (or the whole preview, up to 16 KiB, is used) and its text is kept with the evidence. Finalize… checks a draft for whom the evidence is for (private, restricted or public, with the reviews public needs) and lists what stands in the way, warnings and what the record leaves out; a finding that may stand is kept with a reason; when nothing is left in the way the version is locked under a SHA-256 fingerprint. A finalized version shows its evidence level; evidence a run made offers Verify in a clean folder, which reruns that run with only its frozen inputs and code and lists each output as matching or not (Reproduction reports); Build capsule… saves the version's evidence capsule as a `.zip` where you choose (Capsule builds). New version starts a draft from any version with its items and evidence |
+| Paper evidence | A page for the open project (Papers in the sidebar, or the command palette): the papers it is writing, each with its versions and, in a draft version, sections, claims, figures, tables, methods and supplements, each at the top level or under a parent item, with the project results, runs, conversation passages and exact anchors they rest on and why each was chosen. Each piece of evidence says whether it is a candidate, selected or rejected and who may see it (changed on a draft), notes when the project has a newer version of its result, and opens to where it came from (the run's inputs, the run and its code, and the source and environment details). Evidence is never looked up on this page. It is set in a conversation: ask the assistant to set a file as evidence of the paper (the `paper_evidence` tool registers the project file at the content it has now, binds it to the figure, table or section named, and adds the paper or the item when the title is new; setting the same file again after it changed replaces the older content). Or press Set as paper evidence on a file under Artifacts: the page opens with that file waiting, Use here on an item asks why it was chosen, and Set as evidence binds it at the version it has now. Finalize… checks a draft for whom the evidence is for (private, restricted or public, with the reviews public needs) and lists what stands in the way, warnings and what the record leaves out; a finding that may stand is kept with a reason; when nothing is left in the way the version is locked under a SHA-256 fingerprint. A finalized version shows its evidence level; evidence a run made offers Verify in a clean folder, which reruns that run with only its frozen inputs and code and lists each output as matching or not (Reproduction reports); Build capsule… saves the version's evidence capsule as a `.zip` where you choose (Capsule builds). New version starts a draft from any version with its items and evidence |
 | Research mandates | A page of standing goals (the gauge on the home page, or the command palette): each project's agent works on its mandate in rounds on a cadence in one conversation, asks you through the research assistant when it needs something only you can give, and writes reports; answer, run now, pause, report, edit, close or delete from its card |
 | Research assistant | One conversation of its own (the robot on the home page, or the command palette) that reads what was recorded across projects and each project's progress, keeps your dated plan, and hands work to a project conversation, whose outcome it reports back; a bar over it shows today's plan to tick off or drop |
 | Research journey | A page for the open project: one month of what happened, by day (what you asked, runs, files, decisions, your own records), a filter, and a form to add a record of your own. A file's source details (the run that made it, what that run read, the run's record) show beside the days, and Relationships shows the project's research graph as a list or drawn. Each day can have a recap the model drafts from its records, with what was done, found, went wrong and comes next, which you change, confirm or dismiss; Scheduled tasks drafts the last days' recaps each morning |
@@ -1751,17 +1751,16 @@ Limits of this slice:
   finalized version is shown with its evidence and cannot be changed, and
   a paper with such a version cannot be removed. Finding messages come
   from the check in English; the few fixed ones are translated. Evidence
-  is a registered result of the project (bound at the version it has when
-  chosen), a run, or a passage of a message of the project's own
-  conversations (the WebView's `message_span`: the passage is pinned by
-  its UTF-8 bytes and the message's SHA-256, a message changed since it
-  was shown is refused, and the text is kept with the evidence; the
-  offsets and locator are `wisp_dto::publication_sources`, which the
-  WebView picker uses too), or an exact anchor typed by its ids as in the
-  WebView's advanced dialog (`precise_evidence_source`, shared): a tool
-  call of a message with its result, one execution or its code, or an
-  external resource of the project; the store checks it is the project's
-  and keeps a copy with the evidence. Whether evidence is selected for the
+  is set, not searched for: by the `paper_evidence` tool in a
+  conversation (`wisp_runs::paper_evidence`, the same tool the WebView
+  host registers: a project file is registered as a result at the content
+  it has now, or a registered result or a run is taken by its id), or
+  from a file under Artifacts, which is bound at the version it has when
+  set. Neither desktop lists results, runs or messages to choose from any
+  more. Evidence bound earlier as a passage of a conversation message or
+  as an exact anchor (a tool call, an execution or its code, an external
+  resource) still shows as it was kept; the host can still bind those by
+  their exact locator, but no page offers it. Whether evidence is selected for the
   paper and who may see it are the binding's own columns, changed only on
   a draft (only selected evidence is locked when finalizing). Where a
   source came from is the WebView host's lineage summary, now
@@ -2592,9 +2591,16 @@ only the form closes. Delete the task: the question has to be answered.
 In a project press Papers: the page says there is no paper yet. Press
 New paper, give a title and save: it shows with the version "v1 ·
 Initial submission" (初次投稿 in the Chinese interface). Add a figure: it is listed with "No source yet".
-Press Add evidence, choose Runs or Project results, type why and click
-one: it appears under the figure with the reason, and the summary line
-counts it. Remove the evidence, change the figure's title, remove the
+The page says evidence is added from a conversation or from Artifacts,
+and the figure has no Add evidence button. In the Artifacts panel press
+Set as paper evidence on a file: the page opens saying which file is
+being set; press Use here on the figure, type why and press Set as
+evidence: it appears under the figure with the reason, and the summary
+line counts it. Press Set as paper evidence again and then Cancel: the
+figure's Use here is gone. In a conversation ask the assistant to set
+`figures/fig1.png` as evidence of Figure 1: after the turn the page
+lists that file under Figure 1; change the file, ask again, and the
+figure still lists it once. Remove the evidence, change the figure's title, remove the
 figure. With a form open press Escape: only the form closes; press it
 again: the page closes. Rename the paper, then remove it: the question
 has to be answered first.
@@ -2607,37 +2613,33 @@ finished run to the figure and check: what the run lacks is listed;
 press Let it stand… on each, give a reason and save: the check runs
 again and shows the reason. When the verdict reads Ready to finalize,
 finalize: the panel closes, the version reads Finalized with its
-fingerprint and its evidence level, and Add evidence and Change are gone.
+fingerprint and its evidence level, and Change is gone.
 On a local run's evidence press Verify in a clean folder: a note says it
 is rerunning, then Reproduction reports lists it with each output
 marked Matches or Differs and whether the environment matched. Press
 Build capsule…, keep the offered name: Capsule builds lists it as
 Succeeded with its path and fingerprint, and the ZIP holds
 `capsule.json`; save to the same name again: the error says the file
-exists. Back in a draft, press Add evidence, choose Research
-conversations, click a message: its text opens read-only; select a few
-words and press Add this passage: the item lists them as a Passage.
-Press New version:
+exists. Press New version:
 "v2 · Version 2" opens as a draft with the same figure and evidence.
 With the reason field open press Escape: only the field closes; press it
 again: the panel closes and the page stays.
 In a draft add a Section "Results", then a figure whose Parent item is
 "Results": the figure is listed indented under it. Change the section:
 the figure is not offered as its parent. Change the figure to Top level:
-it moves to the end of the list, unindented. Press Add evidence on the
-figure, choose Candidate and Public, then a project result: its line
-reads Candidate and Public. Open it with the arrow: Analysis source lists
+it moves to the end of the list, unindented. Press Set as paper evidence
+on a file under Artifacts, Use here on the figure, choose Candidate and
+Public, then Set as evidence: its line reads Candidate and Public. Open it with the arrow: Analysis source lists
 the run's inputs, the run with its code and the result, and below them
 the lineage, version, checksum, counts and environment; press Selected
 and Private there: the line changes. Once that result has a newer
 version in the project (a turn writes the same file again), the line
 says a newer result exists, bound v1, latest v2.
-Press Add evidence, then Advanced: locate by source ID: the dialog opens
-on Message span; press Escape at once: only the dialog closes and the
-source list stays. Open it again, choose Code cell, type an unknown id
-and press Bind exact evidence: the error says the code cell must belong
-to the project. On a finalized version open a source: its details show,
-without the selection and visibility buttons.
+With the Set as evidence form open press Escape at once: only the form
+closes and the page stays, with the file still waiting. On a finalized
+version open a source: its details show, without the selection and
+visibility buttons; with a file waiting, the page says the version is
+finalized and no item offers Use here.
 Send `/timer 1m say the time`: a note confirms it, a strip above the
 composer shows the prompt with "Every 1 min · Next: <time>", the
 Scheduled tasks page lists it as a conversation's timer, and within a

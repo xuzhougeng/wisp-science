@@ -5798,19 +5798,6 @@ impl Server {
         crate::papers::remove_item(&self.0.store, project, version, item).await
     }
 
-    /// The project's results or runs to choose evidence from, and whether
-    /// there are more after these.
-    pub async fn paper_source_choices(
-        &self,
-        project: &str,
-        kind: PaperSourceKind,
-        query: &str,
-        offset: u32,
-    ) -> Result<(Vec<PaperSourceChoice>, bool)> {
-        self.known_project(project).await?;
-        crate::papers::choices(&self.0.store, project, kind, query, offset).await
-    }
-
     /// Binds a result, a run, a passage or an exact anchor to an item of a
     /// draft version, with whether it is meant for the paper and who may
     /// see it.
@@ -8278,8 +8265,7 @@ pub use crate::papers::{
     Paper, PaperAudience, PaperCapsule, PaperCapsuleStatus, PaperCapture, PaperCheck, PaperDrift,
     PaperFinding, PaperInput, PaperItem, PaperItemInput, PaperItemKind, PaperLevel, PaperLineage,
     PaperLineageQuality, PaperPolicy, PaperRerun, PaperRerunOutput, PaperRerunStatus, PaperRow,
-    PaperSelection, PaperSource, PaperSourceChoice, PaperSourceKind, PaperVersion,
-    PaperVersionState,
+    PaperSelection, PaperSource, PaperSourceKind, PaperVersion, PaperVersionState,
 };
 pub use crate::pet::{Pet, PetLook, SHEET_HEIGHT, SHEET_WIDTH};
 pub use crate::plugins::PluginRow;

@@ -1,4 +1,8 @@
-//! Bounded source discovery for the Publication editor, independent of freeze.
+//! Bounded listing of a project's results, runs and conversation messages
+//! that can be paper evidence. No desktop page browses it any more (evidence
+//! is set in a conversation or from where the source is shown); it remains
+//! for the `native_publication_sources` command of the native-client
+//! contract.
 use crate::Store;
 use anyhow::{bail, Result};
 use sha2::{Digest, Sha256};

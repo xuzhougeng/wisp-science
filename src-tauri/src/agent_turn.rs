@@ -1122,6 +1122,15 @@ async fn send_message_inner_with_continuation(
             state.store.clone(),
             frame_scope.clone(),
         )));
+        // A file, a result or a run set as evidence of the project's paper
+        // from the conversation, instead of being looked up by hand.
+        agent.add_tool(Box::new(
+            wisp_runs::paper_evidence::PaperEvidenceTool::new_in_scope(
+                state.store.clone(),
+                frame_scope.clone(),
+                frame_id.clone(),
+            ),
+        ));
         agent.add_tool(Box::new(quick_actions::ExplainWorkflowTool::new(
             state.store.clone(),
         )));

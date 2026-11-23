@@ -1379,6 +1379,28 @@ impl Workspace {
                     })),
                 );
             }
+            // Set as evidence of the project's paper: the page opens to
+            // choose the figure, table or section it is for.
+            {
+                let pending = crate::papers::PendingEvidence {
+                    kind: wisp_server::desktop::PaperSourceKind::Result,
+                    id: artifact.id.clone(),
+                    name: artifact.name.clone(),
+                };
+                row = row.action(
+                    surfaces::icon_action(
+                        ("artifact-paper", index),
+                        "book",
+                        tr("Set as paper evidence"),
+                        surfaces::IconTone::Faded,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.use_in_paper(pending.clone(), window, cx)
+                    })),
+                );
+            }
             let id = artifact.id.clone();
             let open = self.artifact_open.as_deref() == Some(artifact.id.as_str());
             row = row.action(

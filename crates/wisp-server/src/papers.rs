@@ -127,19 +127,6 @@ pub enum PaperSourceKind {
 }
 
 impl PaperSourceKind {
-    /// How an exact anchor of the advanced dialog names its kind, as the
-    /// WebView sends it (`wisp_dto::publication_sources::precise_evidence_source`).
-    pub fn of_anchor(kind: &str) -> Option<Self> {
-        match kind {
-            "message_span" => Some(PaperSourceKind::Passage),
-            "tool_call" => Some(PaperSourceKind::ToolCall),
-            "execution_log" => Some(PaperSourceKind::ExecutionLog),
-            "code_cell" => Some(PaperSourceKind::CodeCell),
-            "external_resource" => Some(PaperSourceKind::Resource),
-            _ => None,
-        }
-    }
-
     fn of(kind: EvidenceSourceKind) -> Self {
         match kind {
             EvidenceSourceKind::ArtifactVersion => PaperSourceKind::Result,
@@ -397,21 +384,6 @@ pub struct PaperItemInput {
     pub note: String,
     /// The item it sits under; `None` at the top level.
     pub parent: Option<String>,
-}
-
-/// A result, run or conversation message offered as evidence.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PaperSourceChoice {
-    pub kind: PaperSourceKind,
-    pub id: String,
-    /// The file, the run, or the conversation the message is in.
-    pub name: String,
-    /// The result's version, the run's state, or who wrote the message
-    /// (`user` or `assistant`).
-    pub detail: String,
-    /// For a message: the store's choice with its text (up to 16 KiB) and
-    /// what pins it, to pick a passage from and bind exactly.
-    pub message: Option<wisp_dto::PublicationSourceChoice>,
 }
 
 /// Who the finalized evidence may be shown to.
@@ -931,49 +903,15 @@ pub(crate) async fn remove_item(
     store.delete_publication_item(item).await
 }
 
-/// The project's results, runs or conversation messages to choose evidence
-/// from, 50 at a time. Messages are the users' and the assistant's in the
-/// project's own conversations (not explorations), newest first, matched
-/// by the conversation's name or the text.
-pub(crate) async fn choices(
-    store: &Store,
-    project: &str,
-    kind: PaperSourceKind,
-    query: &str,
-    offset: u32,
-) -> Result<(Vec<PaperSourceChoice>, bool)> {
-    let category = match kind {
-        PaperSourceKind::Result => "files",
-        PaperSourceKind::Run => "runs",
-        PaperSourceKind::Passage => "messages",
-        _ => bail!("Only results, runs and conversation passages can be chosen here"),
-    };
-    let page = store
-        .publication_source_page(project, category, query, offset)
-        .await?;
-    Ok((
-        page.sources
-            .into_iter()
-            .map(|choice| PaperSourceChoice {
-                kind,
-                id: choice.id.clone(),
-                name: choice.title.clone(),
-                detail: choice.detail.clone(),
-                message: (kind == PaperSourceKind::Passage).then_some(choice),
-            })
-            .collect(),
-        page.has_more,
-    ))
-}
-
-/// Binds a result (at the version it has now), a run, a passage of a
-/// conversation message, or an exact anchor (a tool call, an execution, its
-/// code, an outside resource) to an item of a draft version, with why it
-/// was chosen, whether it is meant for the paper and who may see it. A
+/// Binds a result, a run, a passage of a conversation message, or an exact
+/// anchor (a tool call, an execution, its code, an outside resource) to an
+/// item of a draft version, with why it was chosen, whether it is meant for
+/// the paper and who may see it. A result's `source` is one exact version,
+/// or the artifact itself, which is bound at the version it has now. A
 /// passage's `source` is its exact locator
 /// (`wisp_dto::publication_sources::message_span_locator`); a message
-/// changed since it was shown is refused. The store checks an anchor is of
-/// this project and copies what it names into the binding.
+/// changed since it was located is refused. The store checks an anchor is
+/// of this project and copies what it names into the binding.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn bind(
     store: &Store,
@@ -995,20 +933,26 @@ pub(crate) async fn bind(
             .any(|found| found.id == item),
         "That item is not in this version"
     );
+    let mut source = source.to_owned();
     let source_kind = match kind {
         PaperSourceKind::Result => {
-            let context = store
-                .get_artifact_version_context(source)
-                .await?
-                .context("That result is gone")?;
+            let context = match store.get_artifact_version_context(&source).await? {
+                Some(version) => version,
+                // Named by its artifact: the version it has now.
+                None => store
+                    .get_latest_artifact_version_context(&source)
+                    .await?
+                    .context("That result is gone")?,
+            };
             ensure!(
                 context.project_id == project,
                 "That result is not in this project"
             );
+            source = context.version.id;
             EvidenceSourceKind::ArtifactVersion
         }
         PaperSourceKind::Run => {
-            let run = store.get_run(source).await?.context("That run is gone")?;
+            let run = store.get_run(&source).await?.context("That run is gone")?;
             ensure!(run.project_id == project, "That run is not in this project");
             EvidenceSourceKind::Run
         }
@@ -1027,7 +971,7 @@ pub(crate) async fn bind(
             revision_id: version.to_owned(),
             item_id: Some(item.to_owned()),
             source_kind,
-            source_id: source.to_owned(),
+            source_id: source,
             purpose: note(purpose)?,
             supported_claim_item_id: None,
             selection_state: selection.stored(),
