@@ -128,7 +128,7 @@ impl Workspace {
             .occlude()
             .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(line)
+            .border_color(surfaces::surface_border(cx))
             .bg(cx.theme().popover)
             .shadow_md();
         for tab in overflow.iter().copied() {
@@ -995,8 +995,10 @@ impl Workspace {
                 }
             }
             let toggle = id.clone();
+            let expanded = self.expanded_run.as_deref() == Some(id.as_str());
             rows.push(
-                row.below(has_below.then(|| below.into_any_element()))
+                row.expandable(expanded)
+                    .below(has_below.then(|| below.into_any_element()))
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.expanded_run = if this.expanded_run.as_ref() == Some(&toggle) {
@@ -1453,9 +1455,10 @@ impl Workspace {
                 }
             }
             list = list.child(
-                div()
-                    .px_2()
-                    .child(row.below(opened.then(|| details.into_any_element()))),
+                div().px_2().child(
+                    row.expandable(opened)
+                        .below(opened.then(|| details.into_any_element())),
+                ),
             );
         }
         div()

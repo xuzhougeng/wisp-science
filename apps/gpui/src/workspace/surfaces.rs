@@ -5,7 +5,13 @@
 //! page's right margin with its tabs, headers, rows and empty lines.
 //! Views take these instead of choosing a size, a face, a border or a
 //! control of their own.
-use std::{rc::Rc, sync::Arc};
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    rc::Rc,
+    sync::Arc,
+    time::Duration,
+};
 
 use gpui::{prelude::*, *};
 use gpui_component::{
@@ -119,6 +125,69 @@ pub(super) fn fact(text: impl Into<SharedString>, cx: &App) -> Div {
         .text_xs()
         .text_color(cx.theme().muted_foreground)
         .child(text.into())
+}
+
+/// The border of an interactive surface (a card, dialog, menu or active tab):
+/// the hairline on the light page, and the firmer `input.border` on the dark
+/// page, where `popover` sits close to the paper in brightness.
+pub(super) fn surface_border(cx: &App) -> Hsla {
+    let theme = cx.theme();
+    if theme.is_dark() {
+        theme.input
+    } else {
+        theme.border
+    }
+}
+
+/// A keyboard shortcut cap: the key as a fact inside a hairline keycap.
+pub(super) fn kbd_hint(key: impl Into<SharedString>, cx: &App) -> Div {
+    let theme = cx.theme();
+    div()
+        .flex_none()
+        .px_1p5()
+        .py_0p5()
+        .rounded(theme.radius)
+        .border_1()
+        .border_color(surface_border(cx))
+        .bg(theme.background)
+        .child(fact(key, cx))
+}
+
+/// A quiet heading over a major section on a page: caption in faded ink,
+/// with an optional count as a fact beside it.
+pub(super) fn section_eyebrow(
+    label: impl Into<SharedString>,
+    count: Option<usize>,
+    cx: &App,
+) -> Div {
+    let muted = cx.theme().muted_foreground;
+    div()
+        .h_flex()
+        .items_center()
+        .gap_2()
+        .text_xs()
+        .text_color(muted)
+        .child(label.into())
+        .children(count.map(|n| fact(n.to_string(), cx)))
+}
+
+/// A smoothly rotating icon from the shared set, for running status marks
+/// (`loader`).
+pub(super) fn spinning_icon(
+    id: impl Into<ElementId>,
+    name: &str,
+    size: IconSize,
+    color: Hsla,
+) -> AnyElement {
+    crate::assets::icon(name)
+        .size(size.rems())
+        .text_color(color)
+        .with_animation(
+            id,
+            Animation::new(Duration::from_millis(1200)).repeat(),
+            |icon, delta| icon.with_transformation(Transformation::rotate(percentage(delta))),
+        )
+        .into_any_element()
 }
 
 /// The three sizes an icon comes in.
@@ -501,6 +570,7 @@ pub(super) fn record_row(id: impl Into<ElementId>, content: impl Into<SharedStri
         below: None,
         suffix: None,
         mono: false,
+        expandable: None,
         actions: Vec::new(),
     }
 }
@@ -528,6 +598,8 @@ pub(super) struct RecordRow {
     suffix: Option<SharedString>,
     /// The content is an identifier, set in the fact face in ink.
     mono: bool,
+    /// Whether the row opens on click: `Some(true)` open, `Some(false)` folded.
+    expandable: Option<bool>,
     /// Icon buttons at the right end, after the value.
     actions: Vec<AnyElement>,
 }
@@ -601,6 +673,13 @@ impl RecordRow {
         self
     }
 
+    /// Marks the row as expandable: adds a quiet chevron indicator and hover
+    /// ground so clickable rows read as interactive before being clicked.
+    pub(super) fn expandable(mut self, open: bool) -> Self {
+        self.expandable = Some(open);
+        self
+    }
+
     /// Keeps the value's column with nothing in it, for a row in a group
     /// whose other rows have values.
     pub(super) fn value_column(mut self) -> Self {
@@ -661,6 +740,8 @@ impl RenderOnce for RecordRow {
                     .child(format!("· {suffix}"))
             }));
         let line = cx.theme().border;
+        let hover = cx.theme().list_hover;
+        let ink = cx.theme().foreground;
         // With no time column there is no time and no gap after it.
         let timed = self.time_width > 0.;
         let inset = if timed {
@@ -668,13 +749,29 @@ impl RenderOnce for RecordRow {
         } else {
             RECORD_TO_TEXT - 10.
         };
+        let expandable = self.expandable;
         let below = self.below.map(|below| {
+            let content = if expandable.is_some() {
+                div()
+                    .w_full()
+                    .px_3()
+                    .py_2()
+                    .rounded(cx.theme().radius)
+                    .bg(cx.theme().muted)
+                    .border_l_2()
+                    .border_color(surface_border(cx))
+                    .child(below)
+                    .into_any_element()
+            } else {
+                below
+            };
             div()
                 .w_full()
                 .pl(rems(inset / 16.))
                 .pr_1()
-                .pb_2()
-                .child(below)
+                .when(expandable.is_some(), |box_| box_.pt_1().pb_2p5())
+                .when(expandable.is_none(), |box_| box_.pb_2())
+                .child(content)
         });
         let open = below.is_some();
         let row = self
@@ -688,6 +785,10 @@ impl RenderOnce for RecordRow {
             .px_1()
             .py_1()
             .min_h(px(RECORD_ROW_HEIGHT))
+            .when(expandable.is_some(), |row| {
+                row.rounded(cx.theme().radius)
+                    .hover(move |style| style.bg(hover))
+            })
             .when(!open, |row| row.border_b_1().border_color(line))
             .when(timed, |row| {
                 row.child(
@@ -727,6 +828,18 @@ impl RenderOnce for RecordRow {
                         .children(self.value.map(|value| fact(value, cx).truncate())),
                 )
             })
+            .children(expandable.map(|expanded| {
+                crate::assets::icon(if expanded {
+                    "chevron-down"
+                } else {
+                    "chevron-right"
+                })
+                .size(rems(13. / 16.))
+                .text_color(if expanded { ink } else { muted })
+                .when(!expanded, |chevron| {
+                    chevron.group_hover(ICON_HOVER, move |style| style.text_color(ink))
+                })
+            }))
             .when(!self.actions.is_empty(), |row| {
                 row.child(div().h_flex().flex_none().gap_0p5().children(self.actions))
             });
@@ -782,7 +895,7 @@ pub(super) const ICON_INSET: f32 = (ICON_BUTTON - IconSize::Toolbar.px()) / 2.;
 pub(super) const BOX_PAD: f32 = 12.;
 
 /// The space above and below the hairline between two entries.
-pub(super) const ENTRY_SPACE: f32 = 14.;
+pub(super) const ENTRY_SPACE: f32 = 18.;
 
 /// What sits between the transcript and the composer (`surfaces::bar`
 /// items, the composer's strips, the read-only card), and the composer's
@@ -798,7 +911,7 @@ pub(super) fn column_box(content: impl IntoElement) -> Div {
 
 /// The line an entry opens with, above its question: `№ n` and its time in
 /// faded fact text on the text edge; the entry whose turn runs has a solid
-/// teal dot before the number.
+/// teal dot before the number that gently breathes while active.
 pub(super) fn entry_head(
     number: Option<usize>,
     time: Option<SharedString>,
@@ -816,7 +929,14 @@ pub(super) fn entry_head(
                     .flex_none()
                     .size(px(DOT))
                     .rounded_full()
-                    .bg(cx.theme().primary),
+                    .bg(cx.theme().primary)
+                    .with_animation(
+                        "live-entry-dot",
+                        Animation::new(Duration::from_secs(2))
+                            .repeat()
+                            .with_easing(bounce(ease_in_out)),
+                        |dot, delta| dot.opacity(0.35 + delta * 0.65),
+                    ),
             )
         })
         .children(number.map(|number| fact(entry_label(number), cx)))
@@ -860,8 +980,9 @@ pub(super) fn question(title: bool, folded: bool, cx: &App) -> Div {
 }
 
 /// A tab in the window's bar: its object's icon and its name, the one in
-/// view on the paper with a hairline round it, the others in faded ink on
-/// the margin. The caller adds the close button and what a click does.
+/// view on the paper with a hairline round it and a thin teal cap along its
+/// top edge, the others in faded ink on the margin. The caller adds the
+/// close button and what a click does.
 pub(super) fn window_tab(
     id: impl Into<ElementId>,
     icon: &str,
@@ -871,8 +992,11 @@ pub(super) fn window_tab(
 ) -> Stateful<Div> {
     let theme = cx.theme();
     let paper = theme.background;
+    let active_border = surface_border(cx);
+    let accent = theme.primary;
     div()
         .id(id)
+        .relative()
         .group(ICON_HOVER)
         // In the window's bar: on Windows, not the caption to drag.
         .occlude()
@@ -880,8 +1004,8 @@ pub(super) fn window_tab(
         .flex_shrink_0()
         .items_center()
         .gap_1p5()
-        .pl_2()
-        .pr_0p5()
+        .pl_2p5()
+        .pr_1p5()
         .h(px(30.))
         .max_w(px(220.))
         .rounded(theme.radius)
@@ -889,8 +1013,19 @@ pub(super) fn window_tab(
         .text_sm()
         .when(selected, |tab| {
             tab.bg(paper)
-                .border_color(theme.border)
+                .border_color(active_border)
                 .text_color(theme.foreground)
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_2()
+                        .right_2()
+                        .h(px(2.))
+                        .rounded_bl(px(1.))
+                        .rounded_br(px(1.))
+                        .bg(accent),
+                )
         })
         .when(!selected, |tab| {
             tab.border_color(theme.transparent)
@@ -911,13 +1046,40 @@ pub(super) fn window_tab(
         .child(div().min_w_0().truncate().child(name.into()))
 }
 
-/// The close button of a tab: an icon button with its tooltip.
+/// The side of a tab's close button: compact so it fits inside a 30 px tab
+/// without overpowering its title.
+const TAB_CLOSE_BUTTON: f32 = 20.;
+
+/// The close glyph inside `tab_close`.
+const TAB_CLOSE_ICON: f32 = 12.;
+
+/// The close button of a tab: a compact icon button with its tooltip, shown
+/// on the active tab and revealed on hover for inactive tabs.
 pub(super) fn tab_close(
     id: impl Into<ElementId>,
     tooltip: impl Into<SharedString>,
+    selected: bool,
     cx: &App,
 ) -> Button {
-    icon_action(id, "close", tooltip, IconTone::Faded, cx)
+    let ink = cx.theme().foreground;
+    let muted = cx.theme().muted_foreground;
+    Button::new(id)
+        .ghost()
+        .tooltip(tooltip)
+        .size(px(TAB_CLOSE_BUTTON))
+        .p_0()
+        .rounded(cx.theme().radius)
+        .when(!selected, |button| {
+            button
+                .invisible()
+                .group_hover(ICON_HOVER, |style| style.visible())
+        })
+        .child(
+            crate::assets::icon("close")
+                .size(rems(TAB_CLOSE_ICON / 16.))
+                .text_color(muted)
+                .group_hover(ICON_HOVER, move |style| style.text_color(ink)),
+        )
 }
 
 /// Whether the window draws its own title bar, one choice per platform:
@@ -1112,14 +1274,31 @@ pub(super) fn text_style() -> gpui_component::text::TextViewStyle {
 }
 
 /// Markdown text, as answers, documents, reports and previews show it,
-/// with its paragraphs apart (`text_style`).
+/// with its paragraphs apart (`text_style`) and a quiet language + copy
+/// action on fenced code blocks.
 pub(super) fn markdown(
     id: impl Into<ElementId>,
     text: impl Into<SharedString>,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui_component::text::TextView {
-    gpui_component::text::TextView::markdown(id, text, window, cx).style(text_style())
+    gpui_component::text::TextView::markdown(id, text, window, cx)
+        .style(text_style())
+        .code_block_actions(|code_block, _window, cx| {
+            let lang = code_block.lang().filter(|lang| !lang.trim().is_empty());
+            let code = code_block.code();
+            let mut hasher = DefaultHasher::new();
+            lang.hash(&mut hasher);
+            code.hash(&mut hasher);
+            let copy_id = ("code-copy", hasher.finish() as usize);
+            div()
+                .h_flex()
+                .items_center()
+                .gap_1p5()
+                .pl_1p5()
+                .children(lang.map(|lang| fact(lang, cx)))
+                .child(gpui_component::clipboard::Clipboard::new(copy_id).value(code))
+        })
 }
 
 /// A whole window: its bar (`window_bar`) over the page, which takes the
@@ -1152,13 +1331,13 @@ pub(super) fn title(text: impl Into<SharedString>) -> Div {
 }
 
 /// A surface that sits on the page: white on paper, a hairline around it
-/// and no shadow.
+/// (firmer in dark mode so cards stand apart from the paper) and no shadow.
 pub(super) fn card(id: impl Into<ElementId>, cx: &App) -> Stateful<Div> {
     div()
         .id(id)
         .rounded(cx.theme().radius_lg)
         .border_1()
-        .border_color(cx.theme().border)
+        .border_color(surface_border(cx))
         .bg(cx.theme().popover)
 }
 
@@ -1315,8 +1494,8 @@ fn backdrop(id: SharedString, cx: &App) -> Stateful<Div> {
         .bg(cx.theme().overlay)
 }
 
-/// The card of a dialog: white, a hairline, `radius_lg` and the one shadow
-/// a floating layer has.
+/// The card of a dialog: white, a hairline (firmer in dark mode),
+/// `radius_lg` and the one shadow a floating layer has.
 fn dialog_card(width: DialogWidth, cx: &App) -> Div {
     div()
         .v_flex()
@@ -1327,7 +1506,7 @@ fn dialog_card(width: DialogWidth, cx: &App) -> Div {
         .p_5()
         .rounded(cx.theme().radius_lg)
         .border_1()
-        .border_color(cx.theme().border)
+        .border_color(surface_border(cx))
         .bg(cx.theme().popover)
         .shadow_lg()
         // A click inside is not a click on the backdrop.
@@ -1359,12 +1538,18 @@ impl RenderOnce for Dialog {
                 .child(div().flex_1())
                 .children(self.actions)
         });
+        let enter_id = SharedString::from(format!("{}-enter", self.id));
         let card = dialog_card(self.width, cx)
             .id(self.id.clone())
             .when_some(self.height, |card, height| card.h(px(height)))
             .child(header)
             .child(body)
-            .children(footer);
+            .children(footer)
+            .with_animation(
+                enter_id,
+                Animation::new(Duration::from_millis(120)).with_easing(ease_in_out),
+                |card, delta| card.opacity(0.5 + delta * 0.5),
+            );
         backdrop(SharedString::from(format!("{}-backdrop", self.id)), cx)
             .when_some(self.on_outside, |backdrop, handler| {
                 backdrop.on_mouse_down(MouseButton::Left, move |event, window, cx| {
@@ -2050,10 +2235,17 @@ pub(super) fn plain_segment(
         .child(label.into())
 }
 
-/// A field on the page: white, with the fields' line and `radius`; the
-/// caller puts the input (without its own look) inside.
+/// A field on the page: white, with the fields' line (turning teal on focus)
+/// and `radius`; the caller puts the input (without its own look) inside.
 pub(super) fn field(cx: &App) -> Div {
+    field_focused(false, cx)
+}
+
+/// Like `field`, showing the teal focus ring while the wrapped input has
+/// keyboard focus.
+pub(super) fn field_focused(focused: bool, cx: &App) -> Div {
     let theme = cx.theme();
+    let hover_ring = theme.ring.opacity(0.45);
     div()
         .h_flex()
         .items_center()
@@ -2061,8 +2253,11 @@ pub(super) fn field(cx: &App) -> Div {
         .px_2()
         .rounded(theme.radius)
         .border_1()
-        .border_color(theme.input)
+        .border_color(if focused { theme.ring } else { theme.input })
         .bg(theme.popover)
+        .when(!focused, |field| {
+            field.hover(move |style| style.border_color(hover_ring))
+        })
 }
 
 /// The row at the top of a side-panel tab, or over a group in it: `title`
@@ -4548,5 +4743,77 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].len(), 4);
         assert_eq!(first_literal(&calls[0][1]).as_deref(), Some("One, two"));
+    }
+
+    #[test]
+    fn visual_polish_keeps_hierarchy_focus_motion_and_affordances() {
+        let files = sources();
+        let file = |name: &str| {
+            files
+                .iter()
+                .find(|(path, _)| path.ends_with(name))
+                .map(|(_, text)| text.as_str())
+                .unwrap_or_else(|| panic!("no {name}"))
+        };
+        let surfaces = code(file("workspace/surfaces.rs"));
+        let shell = code(file("workspace/shell.rs"));
+        // Cards and dialogs use the firmer dark-mode surface border.
+        for helper in ["card", "dialog_card"] {
+            assert!(
+                free_function(surfaces, helper)
+                    .unwrap()
+                    .contains("surface_border(cx)"),
+                "{helper} does not use surface_border"
+            );
+        }
+        // Compact tab close fits inside the 30 px tab and reveals on hover when inactive.
+        assert!(super::TAB_CLOSE_BUTTON < ICON_BUTTON);
+        assert!(super::TAB_CLOSE_ICON < IconSize::Inline.px());
+        let tab_close = free_function(surfaces, "tab_close").unwrap();
+        assert!(tab_close.contains(".invisible()"));
+        assert!(tab_close.contains(".group_hover(ICON_HOVER"));
+        // Expandable record rows carry the flag and show a quiet chevron.
+        let folded = record_row("r", "shell").expandable(false);
+        assert_eq!(folded.expandable, Some(false));
+        let expanded = record_row("r", "shell").expandable(true);
+        assert_eq!(expanded.expandable, Some(true));
+        let row_body = method(shell, "row_body").unwrap();
+        assert!(row_body.contains(".expandable(open)"));
+        // Motion: breathing live dot and gentle dialog fade-in.
+        assert!(
+            free_function(surfaces, "entry_head")
+                .unwrap()
+                .contains(".with_animation(")
+        );
+        assert!(
+            surfaces.contains("\"palette-enter\"")
+                || file("workspace/palette_view.rs").contains("\"palette-enter\"")
+        );
+        // Markdown code blocks offer language + copy actions.
+        assert!(
+            free_function(surfaces, "markdown")
+                .unwrap()
+                .contains(".code_block_actions(")
+        );
+        // Composer and wrapped search fields show the teal focus ring.
+        let composer = method(shell, "render_composer").unwrap();
+        assert!(composer.contains("self.composer.focus_handle(cx).is_focused(window)"));
+        assert!(composer.contains("cx.theme().ring"));
+        assert!(
+            free_function(surfaces, "field_focused")
+                .unwrap()
+                .contains("theme.ring")
+        );
+        // Inline cards and error banners stay on the white card surface, not tinted fills.
+        for function in ["question_card", "plan_card", "progress_card"] {
+            let body = method(shell, function).unwrap();
+            assert!(body.contains("cx.theme().popover"), "{function}");
+            assert!(body.contains("surfaces::surface_border(cx)"), "{function}");
+            assert!(!body.contains(".bg(info.opacity("), "{function}");
+            assert!(!body.contains(".bg(accent.opacity("), "{function}");
+        }
+        let error = free_function(shell, "error_banner").unwrap();
+        assert!(error.contains("cx.theme().popover"));
+        assert!(!error.contains("danger.opacity("));
     }
 }

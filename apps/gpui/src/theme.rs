@@ -234,13 +234,19 @@ pub fn styled(base: &ThemeConfig, look: &Look) -> ThemeConfig {
         }
         colors.primary_foreground = set(if palette.dark { page } else { "#FFFFFF" });
         colors.selection = Some(SharedString::from(format!("{accent}40")));
-        for slot in [
-            &mut colors.background,
-            &mut colors.popover,
-            &mut colors.list,
-            &mut colors.tab_active,
-        ] {
+        for slot in [&mut colors.background, &mut colors.list] {
             *slot = set(page);
+        }
+        // Keep interactive surfaces (cards, composer, dialogs, active tab)
+        // distinct from the page paper on every palette, matching Wisp's
+        // own light and dark hierarchy.
+        let card = if palette.dark {
+            mix(page, text, 0.05)
+        } else {
+            mix(page, "#FFFFFF", 0.7)
+        };
+        for slot in [&mut colors.popover, &mut colors.tab_active] {
+            *slot = Some(SharedString::from(card.clone()));
         }
         for slot in [
             &mut colors.foreground,
@@ -427,6 +433,13 @@ mod tests {
         assert_eq!(text(&worn.colors.primary), Some("#0969DA"));
         assert_eq!(text(&worn.colors.background), Some("#F6F8FA"));
         assert_eq!(text(&worn.colors.foreground), Some("#1F2328"));
+        // Interactive surfaces stay distinct from the page paper on every palette.
+        assert_eq!(
+            text(&worn.colors.popover),
+            Some(mix("#F6F8FA", "#FFFFFF", 0.7).as_str())
+        );
+        assert_ne!(worn.colors.popover, worn.colors.background);
+        assert_eq!(worn.colors.tab_active, worn.colors.popover);
         // Surfaces are shades of the page towards the text.
         assert_eq!(
             text(&worn.colors.border),
@@ -434,8 +447,16 @@ mod tests {
         );
         assert_eq!(worn.font_size, Some(rem_for(15.)));
         assert_eq!(text(&worn.mono_font_family), Some("JetBrains Mono"));
-        // The dark theme wears the dark palette.
-        assert_eq!(text(&styled(dark, &look).colors.primary), Some("#D79921"));
+        // The dark theme wears the dark palette and lifts cards slightly above the page.
+        let worn_dark = styled(dark, &look);
+        assert_eq!(text(&worn_dark.colors.primary), Some("#D79921"));
+        assert_eq!(
+            text(&worn_dark.colors.popover),
+            Some(mix("#282828", "#EBDBB2", 0.05).as_str())
+        );
+        assert_ne!(worn_dark.colors.popover, worn_dark.colors.background);
+        // Light list hover stays visibly distinct from the warm paper background.
+        assert_ne!(light.colors.list_hover, light.colors.background);
         // A size outside the range keeps Wisp's.
         let tiny = Look {
             text_size: 3.,

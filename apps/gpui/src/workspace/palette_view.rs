@@ -786,7 +786,7 @@ impl Workspace {
             .overflow_hidden()
             .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(border)
+            .border_color(surfaces::surface_border(cx))
             .bg(cx.theme().popover)
             .shadow_lg()
             // A click inside is not a click on the backdrop.
@@ -825,6 +825,11 @@ impl Workspace {
                             tr("↑ ↓ to move · Return to put it into the message · Esc to close")
                         }
                     }),
+            )
+            .with_animation(
+                "palette-enter",
+                Animation::new(std::time::Duration::from_millis(120)).with_easing(ease_in_out),
+                |card, delta| card.opacity(0.5 + delta * 0.5),
             );
 
         div()

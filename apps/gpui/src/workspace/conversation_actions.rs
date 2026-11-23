@@ -588,7 +588,7 @@ impl Workspace {
             .occlude()
             .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(line)
+            .border_color(surfaces::surface_border(cx))
             .bg(cx.theme().popover)
             .shadow_md()
             // Finding one's way in it.

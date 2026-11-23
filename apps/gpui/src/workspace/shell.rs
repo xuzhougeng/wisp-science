@@ -87,7 +87,8 @@ pub(super) fn nav_row(
         .child(div().flex_1().min_w_0().truncate().child(label.into()))
 }
 
-/// A soft banner for something that went wrong.
+/// A quiet card for something that went wrong: white surface, hairline, and a
+/// thin danger bar on its left edge.
 pub(super) fn error_banner(message: &str, cx: &App) -> Div {
     let danger = cx.theme().danger;
     div()
@@ -96,10 +97,20 @@ pub(super) fn error_banner(message: &str, cx: &App) -> Div {
         .gap_2()
         .px_3()
         .py_2()
-        .rounded(cx.theme().radius)
-        .bg(danger.opacity(0.08))
+        .rounded(cx.theme().radius_lg)
+        .border_1()
+        .border_color(surfaces::surface_border(cx))
+        .bg(cx.theme().popover)
         .text_sm()
-        .text_color(danger)
+        .child(
+            div()
+                .flex_none()
+                .w(px(2.))
+                .h(px(16.))
+                .mt(px(2.))
+                .rounded_full()
+                .bg(danger),
+        )
         .child(icon("circle-alert").mt(px(2.)).text_color(danger))
         .child(div().flex_1().min_w_0().child(crate::i18n::host(message)))
 }
@@ -413,14 +424,23 @@ impl Workspace {
                     )
             })
             .child(
-                // White, with the fields' line, like the home page's.
+                div()
+                    .h(px(1.))
+                    .mx_1()
+                    .my_1()
+                    .flex_shrink_0()
+                    .bg(cx.theme().sidebar_border),
+            )
+            .child(
+                // White, with the fields' line (turning teal on focus), like the home page's.
                 div().py_1().child(
-                    surfaces::field(cx).child(
-                        super::surfaces::input(&self.search, cx)
-                            .small()
-                            .appearance(false)
-                            .prefix(icon("search").text_color(muted)),
-                    ),
+                    surfaces::field_focused(self.search.focus_handle(cx).is_focused(window), cx)
+                        .child(
+                            super::surfaces::input(&self.search, cx)
+                                .small()
+                                .appearance(false)
+                                .prefix(icon("search").text_color(muted)),
+                        ),
                 ),
             );
 
@@ -626,7 +646,7 @@ impl Workspace {
             .occlude()
             .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(cx.theme().border)
+            .border_color(surfaces::surface_border(cx))
             .bg(cx.theme().popover)
             .shadow_md()
             .child(item(
@@ -724,12 +744,21 @@ impl Workspace {
             .p_3()
             .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(info.opacity(0.4))
-            .bg(info.opacity(0.05))
+            .border_color(surfaces::surface_border(cx))
+            .bg(cx.theme().popover)
             .child(
                 div()
                     .h_flex()
+                    .items_center()
                     .gap_2()
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(2.))
+                            .h(px(14.))
+                            .rounded_full()
+                            .bg(info),
+                    )
                     .child(icon("circle-help").text_color(info))
                     .child(div().child(if waiting {
                         tr("Wisp needs your decision")
@@ -796,9 +825,10 @@ impl Workspace {
             .v_flex()
             .gap_1()
             .p_3()
-            .rounded(cx.theme().radius)
+            .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(cx.theme().border)
+            .border_color(surfaces::surface_border(cx))
+            .bg(cx.theme().popover)
             .child(
                 div()
                     .h_flex()
@@ -807,7 +837,7 @@ impl Workspace {
                     .child(icon("plan").text_color(muted))
                     .child(div().child(tr("Plan"))),
             );
-        for step in steps {
+        for (step_ix, step) in steps.iter().enumerate() {
             let (glyph_name, color) = match step.status {
                 PlanStatus::Done => ("circle-check", cx.theme().success),
                 PlanStatus::Running => ("loader", cx.theme().info),
@@ -822,14 +852,23 @@ impl Workspace {
             if matches!(step.status, PlanStatus::Cancelled | PlanStatus::Done) {
                 text = text.text_color(muted);
             }
-            card = card.child(
+            let mark = if matches!(step.status, PlanStatus::Running) {
                 div()
-                    .h_flex()
-                    .items_start()
-                    .gap_2()
-                    .child(icon(glyph_name).mt(px(3.)).text_color(color))
-                    .child(text),
-            );
+                    .mt(px(3.))
+                    .child(surfaces::spinning_icon(
+                        ("plan-step-running", step_ix),
+                        glyph_name,
+                        surfaces::IconSize::Inline,
+                        color,
+                    ))
+                    .into_any_element()
+            } else {
+                icon(glyph_name)
+                    .mt(px(3.))
+                    .text_color(color)
+                    .into_any_element()
+            };
+            card = card.child(div().h_flex().items_start().gap_2().child(mark).child(text));
         }
         div().w_full().px_6().py_1().child(card).into_any_element()
     }
@@ -851,12 +890,21 @@ impl Workspace {
             .p_3()
             .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(accent.opacity(0.4))
-            .bg(accent.opacity(0.04))
+            .border_color(surfaces::surface_border(cx))
+            .bg(cx.theme().popover)
             .child(
                 div()
                     .h_flex()
+                    .items_center()
                     .gap_2()
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(2.))
+                            .h(px(14.))
+                            .rounded_full()
+                            .bg(accent),
+                    )
                     .child(icon("plan").text_color(accent))
                     .child(div().child(if waiting {
                         tr("Proposed plan — waiting for you")
@@ -1206,9 +1254,13 @@ impl Workspace {
                 if let Some((run, _)) = self.run_card_rows.get(&index) {
                     let record = self.run_record(index, run, &key, cx);
                     let below = open.then(|| self.run_card(Some(index), run, true, window, cx));
-                    let record = record.below(below).cursor_pointer().on_click(cx.listener(
-                        move |this, _, _, cx| this.toggle_tool(toggle.clone(), index, cx),
-                    ));
+                    let record = record
+                        .expandable(open)
+                        .below(below)
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.toggle_tool(toggle.clone(), index, cx)
+                        }));
                     return self.transcript_record(index, record, cx);
                 }
                 // A built-in tool is named by an identifier, set as one; what
@@ -1244,9 +1296,13 @@ impl Workspace {
                         .selectable(true)
                         .into_any_element()
                 });
-                let record = record.below(below).cursor_pointer().on_click(
-                    cx.listener(move |this, _, _, cx| this.toggle_tool(toggle.clone(), index, cx)),
-                );
+                let record = record
+                    .expandable(open)
+                    .below(below)
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_tool(toggle.clone(), index, cx)
+                    }));
                 self.transcript_record(index, record, cx)
             }
             "reasoning" if item.text.trim().is_empty() => div().into_any_element(),
@@ -1269,6 +1325,7 @@ impl Workspace {
                 )
                 .icon("brain")
                 .value_column()
+                .expandable(open)
                 .below(below)
                 .cursor_pointer()
                 .on_click(
@@ -1342,6 +1399,7 @@ impl Workspace {
                         .icon("branch")
                         .lead(tr("Merged branch result"))
                         .value_column()
+                        .expandable(open)
                         .below(below)
                         .cursor_pointer()
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -1381,15 +1439,18 @@ impl Workspace {
                     .px_6()
                     .pt_2()
                     .child(
-                        div().font(surfaces::body_face(cx)).child(
-                            surfaces::markdown(
-                                id,
-                                present::answer_markdown(&item.text).into_owned(),
-                                window,
-                                cx,
-                            )
-                            .selectable(true),
-                        ),
+                        div()
+                            .font(surfaces::body_face(cx))
+                            .line_height(relative(1.6))
+                            .child(
+                                surfaces::markdown(
+                                    id,
+                                    present::answer_markdown(&item.text).into_owned(),
+                                    window,
+                                    cx,
+                                )
+                                .selectable(true),
+                            ),
                     )
                     .children(self.inline_pictures(&item.text, cx))
                     .children(self.written_pictures(index, cx))
@@ -1658,9 +1719,9 @@ impl Workspace {
             .v_flex()
             .p_1()
             .occlude()
-            .rounded(cx.theme().radius)
+            .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(cx.theme().border)
+            .border_color(surfaces::surface_border(cx))
             .bg(cx.theme().popover)
             .shadow_md()
     }
@@ -2077,9 +2138,9 @@ impl Workspace {
             .v_flex()
             .p_1()
             .occlude()
-            .rounded(cx.theme().radius)
+            .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(cx.theme().border)
+            .border_color(surfaces::surface_border(cx))
             .bg(cx.theme().popover)
             .shadow_md();
         if entries.is_empty() {
@@ -2526,7 +2587,7 @@ impl Workspace {
         actions
     }
 
-    fn render_composer(&self, running: bool, cx: &mut Context<Self>) -> Div {
+    fn render_composer(&self, running: bool, window: &Window, cx: &mut Context<Self>) -> Div {
         let attached = self.attached();
         let typed = self.composer.read(cx).value();
         // Files alone are a message.
@@ -2748,6 +2809,8 @@ impl Workspace {
         // text does: the box is wider than the text by its own padding
         // (`BOX_PAD`) on each side; the send button keeps that inset on
         // the right.
+        let focused = self.composer.focus_handle(cx).is_focused(window);
+        let hover_ring = cx.theme().ring.opacity(0.45);
         let mut editor = div()
             .v_flex()
             .gap_1()
@@ -2755,8 +2818,15 @@ impl Workspace {
             .px(px(surfaces::BOX_PAD))
             .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(cx.theme().input)
-            .bg(cx.theme().popover);
+            .border_color(if focused {
+                cx.theme().ring
+            } else {
+                cx.theme().input
+            })
+            .bg(cx.theme().popover)
+            .when(!focused, |box_| {
+                box_.hover(move |style| style.border_color(hover_ring))
+            });
         if !attached.is_empty() {
             let mut chips = div().h_flex().flex_wrap().gap_1();
             for (index, chip) in attached.iter().enumerate() {
@@ -3113,6 +3183,22 @@ impl Workspace {
                 );
             }
             let can_start = !self.pending && self.state.project.is_some();
+            let muted = cx.theme().muted_foreground;
+            let search_key = if cfg!(target_os = "macos") {
+                "⌘K"
+            } else {
+                "Ctrl+K"
+            };
+            let hint = |key: &'static str, label: &'static str, cx: &App| {
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_1p5()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(surfaces::kbd_hint(key, cx))
+                    .child(label)
+            };
             return page.child(
                 content.child(
                     div()
@@ -3128,7 +3214,7 @@ impl Workspace {
                         .child(
                             div()
                                 .text_sm()
-                                .text_color(cx.theme().muted_foreground)
+                                .text_color(muted)
                                 .child(tr("Start a conversation, or pick one on the left.")),
                         )
                         .child(
@@ -3140,6 +3226,18 @@ impl Workspace {
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.create_session(window, cx)
                                 })),
+                        )
+                        .child(
+                            div()
+                                .h_flex()
+                                .flex_wrap()
+                                .items_center()
+                                .justify_center()
+                                .gap_4()
+                                .pt_4()
+                                .child(hint(search_key, tr("Search everything"), cx))
+                                .child(hint("/", tr("Commands"), cx))
+                                .child(hint("@", tr("Files"), cx)),
                         ),
                 ),
             );
@@ -3227,7 +3325,9 @@ impl Workspace {
             .children(surfaces::above_composer(
                 bars.into_iter().flatten().collect(),
             ))
-            .child(surfaces::reading_column(self.render_composer(running, cx)).flex_shrink_0());
+            .child(
+                surfaces::reading_column(self.render_composer(running, window, cx)).flex_shrink_0(),
+            );
         // A document opened in the centre takes the conversation's place,
         // or sits beside it; the terminals stay at the foot of the page.
         self.render_centre(page, content, window, cx)

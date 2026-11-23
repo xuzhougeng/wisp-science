@@ -125,9 +125,9 @@ impl Workspace {
             .id(SharedString::from(format!("project-{id}")))
             .group(group.clone())
             .v_flex()
-            .gap_1()
+            .gap_1p5()
             .px_4()
-            .py_3()
+            .py_3p5()
             .child(top)
             .child(
                 surfaces::fact(home::short_path(&project.workspace_dir, home_dir), cx).truncate(),
@@ -326,7 +326,12 @@ impl Workspace {
                     .flex_none()
                     .items_center()
                     .gap_1()
-                    .child(crate::assets::icon(StampKind::Running.icon()).text_color(running))
+                    .child(surfaces::spinning_icon(
+                        SharedString::from(format!("project-spin-{id}")),
+                        StampKind::Running.icon(),
+                        IconSize::Inline,
+                        running,
+                    ))
                     .child(surfaces::fact(project.running_count.to_string(), cx)),
             );
         }
@@ -533,7 +538,7 @@ impl Workspace {
             .occlude()
             .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(cx.theme().border)
+            .border_color(surfaces::surface_border(cx))
             .bg(cx.theme().popover)
             .shadow_md();
         for (id, icon, word, about, waits, start) in ways {
@@ -594,11 +599,7 @@ impl Workspace {
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(cx.theme().primary),
             )
-            .child(
-                div()
-                    .pl_2()
-                    .child(chip(tr("GPUI preview"), Tone::Neutral, cx)),
-            )
+            .child(div().pl_1p5().child(surfaces::fact(tr("GPUI preview"), cx)))
             .child(div().flex_1())
             .child(
                 place(
@@ -678,10 +679,10 @@ impl Workspace {
             .id("home-search")
             .h_flex()
             .items_center()
-            .gap_2()
+            .gap_2p5()
+            .h(px(40.))
             .px_3()
-            .py_2()
-            .rounded(cx.theme().radius)
+            .rounded(cx.theme().radius_lg)
             .border_1()
             .border_color(cx.theme().input)
             .bg(cx.theme().popover)
@@ -699,7 +700,7 @@ impl Workspace {
                     .text_color(muted)
                     .child(tr("Search everything")),
             )
-            .child(surfaces::fact(
+            .child(surfaces::kbd_hint(
                 if cfg!(target_os = "macos") {
                     "⌘K"
                 } else {
@@ -782,13 +783,14 @@ impl Workspace {
             cells.push(self.project_cell(project, now, home_dir.as_deref(), cx));
         }
         let projects = (!cells.is_empty()).then(|| {
+            let count = cells.len();
             let mut grid = div()
                 .v_flex()
                 .overflow_hidden()
                 .rounded(cx.theme().radius_lg)
                 .border_1()
-                .border_color(line);
-            let count = cells.len();
+                .border_color(surfaces::surface_border(cx))
+                .bg(cx.theme().popover);
             for (index, row) in surfaces::rows_of(cells, 2).into_iter().enumerate() {
                 // A last cell alone takes the whole line: no empty bordered
                 // half beside it.
@@ -810,7 +812,11 @@ impl Workspace {
                 }
                 grid = grid.child(pair);
             }
-            grid
+            div()
+                .v_flex()
+                .gap_2()
+                .child(surfaces::section_eyebrow(tr("Projects"), Some(count), cx))
+                .child(grid)
         });
 
         // Recent conversations are record rows: when, a conversation's
@@ -844,7 +850,8 @@ impl Workspace {
                     }))
             })
             .collect::<Vec<_>>();
-        let recent = if rows.is_empty() {
+        let recent_count = rows.len();
+        let recent_body = if rows.is_empty() {
             div()
                 .py_2()
                 .text_color(muted)
@@ -852,6 +859,15 @@ impl Workspace {
         } else {
             surfaces::record_group(rows, cx)
         };
+        let recent = div()
+            .v_flex()
+            .gap_2()
+            .child(surfaces::section_eyebrow(
+                tr("Recent conversations"),
+                (recent_count > 0).then_some(recent_count),
+                cx,
+            ))
+            .child(recent_body);
 
         let mut page = div()
             .v_flex()

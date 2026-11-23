@@ -132,6 +132,7 @@ impl Workspace {
                 surfaces::tab_close(
                     SharedString::from(format!("tab-close-{session}")),
                     tr("Close this tab; the conversation is kept"),
+                    selected,
                     cx,
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -346,7 +347,7 @@ impl Workspace {
             .occlude()
             .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(cx.theme().border)
+            .border_color(surfaces::surface_border(cx))
             .bg(cx.theme().popover)
             .shadow_md()
             .child(surfaces::record_group(rows, cx))

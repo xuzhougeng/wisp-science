@@ -104,7 +104,7 @@ impl Workspace {
             .occlude()
             .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(cx.theme().border)
+            .border_color(surfaces::surface_border(cx))
             .bg(cx.theme().popover)
             .shadow_md();
         if let Some(path) = self.preview_on_disk() {
@@ -470,6 +470,7 @@ impl Workspace {
             let toggled = key.clone();
             rows.push(
                 record
+                    .expandable(open)
                     .below(below)
                     .cursor_pointer()
                     .hover(move |style| style.bg(hover))
@@ -1974,7 +1975,7 @@ impl Workspace {
             .occlude()
             .rounded(cx.theme().radius_lg)
             .border_1()
-            .border_color(cx.theme().border)
+            .border_color(surfaces::surface_border(cx))
             .bg(cx.theme().popover)
             .shadow_md()
             .child(item(
@@ -2186,8 +2187,14 @@ impl Workspace {
                     .border_b_1()
                     .border_color(border)
                     .child(
-                        // White, with the fields' line, as every field is.
-                        surfaces::field(cx).flex_1().min_w_0().child(
+                        // White, with the fields' line (turning teal on focus), as every field is.
+                        surfaces::field_focused(
+                            self.file_search.focus_handle(cx).is_focused(window),
+                            cx,
+                        )
+                        .flex_1()
+                        .min_w_0()
+                        .child(
                             super::surfaces::input(&self.file_search, cx)
                                 .small()
                                 .appearance(false)
