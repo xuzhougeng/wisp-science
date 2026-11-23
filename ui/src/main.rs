@@ -20093,6 +20093,11 @@ fn App() -> impl IntoView {
             onboard_key=onboard_key
             save_onboard_key=save_onboard_key
             dismiss_onboard=Callback::new(dismiss_onboard)
+            magpie_model=magpie_model
+            open_model_settings=Callback::new(move |()| {
+                dismiss_onboarding.call(());
+                open_settings_fn(Some("models".into()));
+            })
         />
         <ContextRecoveryOverlay
             state=ContextRecoveryOverlayState {

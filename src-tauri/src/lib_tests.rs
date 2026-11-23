@@ -1149,6 +1149,40 @@ fn update_check_does_not_downgrade() {
     assert!(!result.update_available);
 }
 
+#[test]
+fn ui_locale_follows_the_system_until_a_preference_is_saved() {
+    // No saved preference: the system's language decides.
+    assert_eq!(super::resolve_locale(None, Some("zh-Hans-CN")), "zh");
+    assert_eq!(super::resolve_locale(Some("  "), Some("zh_CN.UTF-8")), "zh");
+    assert_eq!(super::resolve_locale(None, Some("en-US")), "en");
+    assert_eq!(super::resolve_locale(None, Some("fr-FR")), "en");
+    assert_eq!(super::resolve_locale(None, None), "en");
+    // A saved preference always wins over the system.
+    assert_eq!(super::resolve_locale(Some("en"), Some("zh-Hans")), "en");
+    assert_eq!(super::resolve_locale(Some("zh-CN"), Some("en-US")), "zh");
+}
+
+#[test]
+fn posix_language_skips_unset_and_c_locales() {
+    let env = |pairs: &'static [(&'static str, &'static str)]| {
+        move |name: &str| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_string())
+        }
+    };
+    assert_eq!(
+        super::posix_language(env(&[("LC_ALL", "C"), ("LANG", "zh_CN.UTF-8")])),
+        Some("zh_CN.UTF-8".into())
+    );
+    assert_eq!(
+        super::posix_language(env(&[("LC_MESSAGES", "en_GB.UTF-8"), ("LANG", "zh_CN")])),
+        Some("en_GB.UTF-8".into())
+    );
+    assert_eq!(super::posix_language(env(&[("LANG", "POSIX")])), None);
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn mac_menu_locale_uses_saved_zh_labels() {

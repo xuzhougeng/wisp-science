@@ -134,6 +134,38 @@ test("onboarding suggests installing only missing tools, with progress, stop, an
   expect(await invokes(page, "send_message")).toEqual([]);
 });
 
+// One row per tool: checkbox, name, note, and state side by side. Inside a
+// dialog, `.modal label` (a column flex) must not turn the row into a stack.
+async function expectToolRowsInline(setup: Locator) {
+  const rows = setup.locator(".toolchain-tool");
+  await expect(rows).toHaveCount(4);
+  for (const name of ["uv", "R"]) {
+    const row = toolRow(setup, name);
+    await expect(row).toHaveCSS("display", "grid");
+    const box = async (selector: string) => (await row.locator(selector).boundingBox())!;
+    const [check, label, state] = [await box('input[type="checkbox"]'), await box(".toolchain-name"), await box(".toolchain-state")];
+    const middle = (b: { y: number; height: number }) => b.y + b.height / 2;
+    expect(Math.abs(middle(check) - middle(label))).toBeLessThan(6);
+    expect(Math.abs(middle(label) - middle(state))).toBeLessThan(6);
+    expect(label.x).toBeGreaterThan(check.x + check.width);
+    expect(state.x).toBeGreaterThan(label.x + label.width);
+  }
+}
+
+test("tool rows stay on one line in the first-run guide and in Settings", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as any).__mockLocalEnvironment = { paths: {}, warning: null };
+  });
+  const { onboard, setup } = await openOnboardingEnvironment(page);
+  await expectToolRowsInline(setup);
+  await onboard.getByRole("button", { name: "Get started" }).click();
+  await expect(onboard).toBeHidden();
+  await page.locator(".proj-card-main").first().click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.locator(".settings-nav").getByRole("button", { name: "General", exact: true }).click();
+  await expectToolRowsInline(page.getByTestId("toolchain-setup"));
+});
+
 test("detected tools are used as they are and nothing is offered", async ({ page }) => {
   await page.goto("/");
   await page.locator(".proj-card-main").first().click();

@@ -44,6 +44,8 @@
 .onboard-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border-strong); }
 .onboard-dot.active { background: var(--clay); }
 .onboard-getkey { align-self: flex-start; font-size: calc(12.5px * var(--ui-font-scale, 1)); }
+/* Secondary way out of the DeepSeek-only step: other providers in Settings › Models. */
+.onboard-other-provider { align-self: flex-start; margin-left: 22px; font-size: calc(12.5px * var(--ui-font-scale, 1)); }
 /* Two numbered sub-steps on the model page: get a key, then paste it. */
 .onboard-steps { text-align: left; margin: 6px 0 2px; padding-left: 22px; display: flex; flex-direction: column; gap: 14px; }
 .onboard-steps li::marker { color: var(--text-faint); font-size: calc(13px * var(--ui-font-scale, 1)); }
@@ -74,18 +76,21 @@
 .toolchain-setup h4 { margin: 0 0 6px; font-size: calc(13px * var(--ui-font-scale, 1)); }
 .toolchain-setup .hint { overflow-wrap: anywhere; }
 .toolchain-tools { display: grid; gap: 4px; margin: 8px 0 10px; font-size: calc(12px * var(--ui-font-scale, 1)); }
-.toolchain-tool { display: grid; grid-template-columns: 16px 88px minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+/* Scoped under .toolchain-tools so the row grid outranks `.modal label`
+   (a column flex) and `.modal input` when the panel sits in onboarding or
+   the capabilities dialog, matching how it renders in Settings. */
+.toolchain-tools .toolchain-tool { display: grid; grid-template-columns: 16px 88px minmax(0, 1fr) auto; align-items: center; gap: 8px; color: var(--text); font-size: inherit; font-weight: 400; }
 .toolchain-tool:has(input) { cursor: pointer; }
 .toolchain-tool > .toolchain-name { grid-column: 2; }
 .toolchain-later { margin: 8px 0 0; }
-.toolchain-tool input { margin: 0; }
+.toolchain-tools .toolchain-tool input { width: 14px; height: 14px; margin: 0; padding: 0; accent-color: var(--clay); cursor: pointer; }
 .toolchain-name { font-weight: 600; }
 .toolchain-note { color: var(--text-muted); overflow-wrap: anywhere; }
 .toolchain-state { color: var(--text-muted); white-space: nowrap; }
 .toolchain-log { margin: 6px 0 10px; padding: 8px 10px; max-height: 9.5em; overflow: auto; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: calc(11px * var(--ui-font-scale, 1)); white-space: pre-wrap; overflow-wrap: anywhere; }
 .local-environment .toolchain-setup button.primary { background: var(--clay); border-color: var(--clay); color: var(--on-clay); }
 @media (max-width: 520px) {
-  .toolchain-tool { grid-template-columns: 16px minmax(0, 1fr) auto; }
+  .toolchain-tools .toolchain-tool { grid-template-columns: 16px minmax(0, 1fr) auto; }
   .toolchain-tool > .toolchain-name { grid-row: 1; }
   .toolchain-state { grid-column: 3; grid-row: 1; }
   .toolchain-note { grid-column: 2 / -1; grid-row: 2; }

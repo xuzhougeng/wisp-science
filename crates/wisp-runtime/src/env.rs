@@ -140,14 +140,37 @@ fn find_local_program(name: &str) -> Option<PathBuf> {
 }
 
 // Windows App Execution Aliases can open the Store instead of Python. On
-// macOS the system python3 stub can request Xcode installation when launched.
+// macOS `/usr/bin/python3` is a stub that asks to install the Command Line
+// Tools when launched without them, but runs their Python once they exist.
 fn usable_python_path(path: &Path) -> bool {
+    usable_python_path_with(
+        path,
+        cfg!(target_os = "macos"),
+        apple_developer_python_installed,
+    )
+}
+
+fn usable_python_path_with(path: &Path, macos: bool, developer_python: impl Fn() -> bool) -> bool {
     let normalized = path
         .to_string_lossy()
         .replace('\\', "/")
         .to_ascii_lowercase();
-    !normalized.contains("/microsoft/windowsapps/")
-        && !(cfg!(target_os = "macos") && normalized == "/usr/bin/python3")
+    if normalized.contains("/microsoft/windowsapps/") {
+        return false;
+    }
+    !(macos && normalized == "/usr/bin/python3") || developer_python()
+}
+
+/// Whether the Python behind macOS's `/usr/bin/python3` stub is installed, in
+/// the Command Line Tools or Xcode's default location. A file check only:
+/// launching the stub to find out is exactly what could open the installer.
+fn apple_developer_python_installed() -> bool {
+    [
+        "/Library/Developer/CommandLineTools/usr/bin/python3",
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+    ]
+    .into_iter()
+    .any(|path| Path::new(path).is_file())
 }
 
 /// Locate `Rscript`: PATH first, then well-known install locations, so an R
@@ -419,6 +442,22 @@ mod tests {
         )));
         assert!(usable_python_path(Path::new(r"C:\Python312\python.exe")));
         assert!(usable_python_path(Path::new("/opt/homebrew/bin/python3")));
+    }
+
+    #[test]
+    fn macos_system_python_counts_once_developer_tools_provide_it() {
+        let stub = Path::new("/usr/bin/python3");
+        // Without the Command Line Tools, launching the stub opens an installer.
+        assert!(!usable_python_path_with(stub, true, || false));
+        // With them, it runs their Python (for example 3.9.6) like any other.
+        assert!(usable_python_path_with(stub, true, || true));
+        // Only macOS has the stub; elsewhere /usr/bin/python3 is a real interpreter.
+        assert!(usable_python_path_with(stub, false, || panic!("not macOS")));
+        assert!(!usable_python_path_with(
+            Path::new(r"C:\Users\me\AppData\Local\Microsoft\WindowsApps\python3.exe"),
+            false,
+            || true
+        ));
     }
 
     #[test]

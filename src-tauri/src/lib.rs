@@ -4094,13 +4094,81 @@ fn resolve_workspace(env: Option<String>, stored: Option<String>, default: PathB
     default
 }
 
+/// The UI language: the saved preference always wins; without one, the
+/// system's preferred language, so a first launch on a Chinese system opens
+/// in Chinese. Every reader (settings, menus, configure tool) goes through
+/// here, so what they report matches what the user sees.
 async fn load_locale(store: &Store) -> String {
     let raw = store.get_setting("locale").await.ok().flatten();
-    match raw.as_deref().map(str::trim) {
+    let saved = raw.as_deref().map(str::trim).filter(|raw| !raw.is_empty());
+    let system = saved.is_none().then(system_language).flatten();
+    resolve_locale(saved, system.as_deref())
+}
+
+fn resolve_locale(saved: Option<&str>, system: Option<&str>) -> String {
+    match saved.map(str::trim) {
         Some("zh") | Some("zh-CN") | Some("zh-TW") => "zh".into(),
         Some(other) if !other.is_empty() => other.to_string(),
-        _ => "en".into(),
+        _ => supported_locale(system.unwrap_or_default()).into(),
     }
+}
+
+/// Map a system language tag (`zh-Hans-CN`, `zh_CN.UTF-8`, `en-US`) onto a
+/// supported UI locale, the same way the WebView's `Locale::from_code` does.
+fn supported_locale(tag: &str) -> &'static str {
+    if tag.trim().to_ascii_lowercase().starts_with("zh") {
+        "zh"
+    } else {
+        "en"
+    }
+}
+
+/// The user's first preferred language as the OS reports it, without
+/// launching a process. macOS reads `NSLocale.preferredLanguages`, Windows the
+/// per-user UI language from the registry, and other systems the POSIX locale
+/// variables; each falls back to those variables when it has no answer.
+fn system_language() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let preferred = objc2_foundation::NSLocale::preferredLanguages()
+            .firstObject()
+            .map(|tag| tag.to_string())
+            .filter(|tag| !tag.trim().is_empty());
+        if preferred.is_some() {
+            return preferred;
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::RegKey;
+        let user = RegKey::predef(HKEY_CURRENT_USER);
+        let preferred = user
+            .open_subkey("Control Panel\\Desktop")
+            .and_then(|key| key.get_value::<Vec<String>, _>("PreferredUILanguages"))
+            .ok()
+            .and_then(|languages| languages.into_iter().find(|tag| !tag.trim().is_empty()))
+            .or_else(|| {
+                user.open_subkey("Control Panel\\International")
+                    .and_then(|key| key.get_value::<String, _>("LocaleName"))
+                    .ok()
+                    .filter(|tag| !tag.trim().is_empty())
+            });
+        if preferred.is_some() {
+            return preferred;
+        }
+    }
+    posix_language(|name| std::env::var(name).ok())
+}
+
+/// `LC_ALL`, then `LC_MESSAGES`, then `LANG`; `C`/`POSIX` say nothing about
+/// the user's language.
+fn posix_language(var: impl Fn(&str) -> Option<String>) -> Option<String> {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .filter_map(var)
+        .map(|value| value.trim().to_string())
+        .find(|value| !value.is_empty() && value != "C" && value != "POSIX")
 }
 
 #[cfg(target_os = "macos")]
