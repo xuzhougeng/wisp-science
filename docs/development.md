@@ -151,6 +151,7 @@ Prerequisites:
 
 ```bash
 cargo run build      # fast, one-shot desktop build; no watcher or installer
+cargo run build --preview  # optimized installers for local testing; about half the release compile
 cargo run build-gpui # cross-platform GPUI preview; see docs/gpui-desktop.md
 cargo run gpui       # launch the GPUI preview
 cargo run dev        # hot-reload: Trunk serves the UI, Tauri opens the window
@@ -172,6 +173,7 @@ build command again. No development server is needed to launch the result:
 | --- | --- |
 | `cargo run build` (Linux/macOS) | `./target/debug/wisp-tauri` |
 | `cargo run build` (Windows) | `.\target\debug\wisp-tauri.exe` |
+| `cargo run build --preview` | installers under `target/preview/bundle` |
 | `cargo run build-gpui` | `apps/gpui/target/debug/wisp-gpui` (`.exe` on Windows) |
 
 The SwiftUI and WinUI desktop clients and their release jobs have been retired.
@@ -186,6 +188,18 @@ build dependencies. WebView installers remain the supported release channel
 until the migration acceptance criteria are met; releases also attach a GPUI
 preview archive per platform, packed by `scripts/package_gpui.py`
 (see [Preview downloads](gpui-desktop.md#preview-downloads)).
+
+`cargo run build --preview` runs the release pipeline under the `preview`
+Cargo profile (`cargo tauri build -- --profile preview`). `release` compiles
+the desktop crate as one codegen unit and finishes with fat LTO, so once the
+dependencies are built the rest runs on a single core: of a 6m59s cold native
+build on a 12-core Apple Silicon machine, nearly six minutes were that crate
+and its final link, and the progress bar sits on the last two units for most
+of the build.
+`preview` uses thin LTO and 16 codegen units; the same build took 3m34s and
+the executable grew from 44 MB to 71 MB. Use it to try an optimized build
+locally. Published installers always come from `release`; CI does not use
+`preview`.
 
 Repository `cargo run` now compiles a dependency-free `wisp-dev` launcher;
 desktop commands no longer compile the entire headless agent just to dispatch

@@ -53,16 +53,12 @@ jobs:
             ui -> target
           cache-on-failure: true
 
-      - name: Cache Trunk and Tauri CLI
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin
-          key: tauri-tools-${{ runner.os }}-v1
-
+      # Prebuilt binaries. Compiling both from source took about 7 minutes of
+      # every release, and the ~/.cargo/bin cache missed on tag runs.
       - name: Install Trunk and Tauri CLI
-        run: |
-          command -v trunk >/dev/null 2>&1 || cargo install trunk --locked
-          command -v cargo-tauri >/dev/null 2>&1 || cargo install tauri-cli --version "^2" --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk,tauri-cli@2
 
       # Import the Developer ID cert into a temp keychain and extract the signing
       # identity at runtime, so no hardcoded APPLE_SIGNING_IDENTITY secret is needed.
