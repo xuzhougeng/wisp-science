@@ -4907,33 +4907,41 @@ mod tests {
         let _ = std::fs::remove_file(tmp);
     }
 
+    // Profile ids are UUID-scoped: the secret backend here is the shared dev
+    // secrets file, and `model_key:default` is a real profile's key name that
+    // a fixed id would overwrite and then delete.
     #[tokio::test]
     async fn profile_key_reads_the_requested_profile() {
         let tmp =
             std::env::temp_dir().join(format!("wisp_profile_key_{}.sqlite", uuid::Uuid::new_v4()));
         let store = wisp_store::Store::open(&tmp).await.unwrap();
+        let prefix = uuid::Uuid::new_v4();
+        let first_id = format!("{prefix}-first");
+        let second_id = format!("{prefix}-second");
         save_raw(
             &store,
             &[
-                test_profile("default", "deepseek", "deepseek-v4-pro"),
-                test_profile("glm", "glm", "glm-5.2"),
+                test_profile(&first_id, "deepseek", "deepseek-v4-pro"),
+                test_profile(&second_id, "glm", "glm-5.2"),
             ],
         )
         .await
         .unwrap();
-        secret_set(&secret_name("default"), "sk-default").unwrap();
-        secret_set(&secret_name("glm"), "sk-glm").unwrap();
+        secret_set(&secret_name(&first_id), "sk-first").unwrap();
+        secret_set(&secret_name(&second_id), "sk-second").unwrap();
 
-        assert_eq!(profile_key(&store, "glm").await.as_deref(), Some("sk-glm"));
-        assert_eq!(
-            profile_key(&store, "default").await.as_deref(),
-            Some("sk-default")
-        );
-        assert_eq!(profile_key(&store, "missing").await, None);
+        let second = profile_key(&store, &second_id).await;
+        let first = profile_key(&store, &first_id).await;
+        let missing = profile_key(&store, &format!("{prefix}-missing")).await;
 
-        let _ = secret_del(&secret_name("default"));
-        let _ = secret_del(&secret_name("glm"));
+        // Clean up before asserting so a failure leaves nothing behind.
+        let _ = secret_del(&secret_name(&first_id));
+        let _ = secret_del(&secret_name(&second_id));
         let _ = std::fs::remove_file(&tmp);
+
+        assert_eq!(second.as_deref(), Some("sk-second"));
+        assert_eq!(first.as_deref(), Some("sk-first"));
+        assert_eq!(missing, None);
     }
 }
 
