@@ -236,8 +236,17 @@ test("Add API access fetches suggestions for every model row", async ({ page }) 
   await openModels(page);
   await page.getByTestId("add-provider").click();
   await page.getByTestId("provider-api-url").fill("http://127.0.0.1:3425/v1");
-  await page.getByTestId("model-fetch-models").click();
+  // The fetch action sits in the "Models" header row, right of its title.
+  const fetch = page.getByTestId("model-fetch-models");
+  await expect(page.locator(".provider-models-head > .model-fetch-btn")).toHaveCount(1);
+  const title = await page.locator(".provider-models-title").boundingBox();
+  const button = await fetch.boundingBox();
+  expect(button!.x).toBeGreaterThan(title!.x + title!.width - 1);
+  await expect(fetch).toHaveAttribute("aria-busy", "false");
+  await fetch.click();
   await expect(page.getByTestId("model-fetch-status")).toContainText("2 models found");
+  await expect(fetch).toHaveAttribute("aria-busy", "false");
+  await expect(fetch).not.toHaveClass(/busy/);
   const first = page.getByTestId("provider-model-row").first().getByTestId("provider-model-id");
   await expect(first).toHaveAttribute("list", "model-id-suggestions");
   await first.fill("deepseek/deepseek-pro");
