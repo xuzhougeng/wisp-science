@@ -727,6 +727,17 @@ button.run-status:hover { filter:brightness(0.96); }
   color: var(--text-muted); padding: 4px 10px; font: inherit; font-size: calc(11.5px * var(--ui-font-scale, 1)); font-weight: 600; cursor: pointer;
 }
 .tbl-copy:hover { background: var(--bg-app); color: var(--text); }
+/* Copy appears when the pointer is over the table (or a key focuses it); on
+   touch screens, which have no hover, it stays visible. Opacity rather than
+   display keeps the bar's height and the button's tab stop. */
+.tbl-copy { opacity: 0; transition: opacity .14s ease, background .12s ease, color .12s ease; }
+:is(.tbl-card, .md-table-card):is(:hover, :focus-within) .tbl-copy { opacity: 1; }
+@media (hover: none) { .tbl-copy { opacity: 1; } }
+/* Chat tables have no size label, so their head would be an empty strip:
+   float the button over the table's top-right corner instead. */
+.md-table-card { position: relative; }
+.md-table-card > .tbl-head { position: absolute; top: 5px; right: 6px; z-index: 2; padding: 0; border: 0; background: transparent; }
+.md-table-card > .tbl-head .tbl-copy { box-shadow: var(--shadow-sm); }
 .tbl { border-collapse: collapse; width: 100%; font-size: calc(12.5px * var(--ui-font-scale, 1)); table-layout: auto; }
 /* Data cells stay on one line — a wide CSV scrolls horizontally in .tbl-wrap
    instead of shattering numbers/headers character-by-character (matches the

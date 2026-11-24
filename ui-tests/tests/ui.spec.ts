@@ -2117,6 +2117,10 @@ test("assistant markdown table can be copied separately", async ({ page, context
   await page.getByRole("button", { name: "Send" }).click();
   const copyButton = page.locator(".msg.assistant .md-table-copy").first();
   await expect(copyButton).toBeVisible();
+  // Hidden until the pointer reaches the table, then it fades in.
+  await expect(copyButton).toHaveCSS("opacity", "0");
+  await page.locator(".msg.assistant .md-table-card").first().hover();
+  await expect(copyButton).toHaveCSS("opacity", "1");
   await page.evaluate(() => {
     Object.defineProperty(navigator.clipboard, "writeText", {
       configurable: true,
