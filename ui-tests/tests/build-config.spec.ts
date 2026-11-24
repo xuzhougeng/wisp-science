@@ -65,6 +65,56 @@ test("GitHub Pages finishes its artifact job before deployment", () => {
   expect(workflow).toContain("          include-hidden-files: true");
 });
 
+test("Desktop build workflows install prebuilt Trunk and Tauri CLI", () => {
+  for (const path of [
+    ".github/workflows/release-windows.yml",
+    ".github/workflows/build-windows.yml",
+    ".github/workflows/test-windows-signing.yml",
+    ".github/workflows/release-macos.yml",
+    ".github/workflows/build-macos.yml",
+    ".github/workflows/release-linux.yml",
+  ]) {
+    const workflow = readRepositoryFile(path);
+    expect(workflow, path).toContain("uses: taiki-e/install-action@v2");
+    expect(workflow, path).toMatch(/tool: trunk,tauri-cli@2(,|\n)/);
+    // Compiling these from source cost up to 22 minutes of a release job.
+    expect(workflow, path).not.toMatch(/cargo install (trunk|tauri-cli)/);
+    expect(workflow, path).not.toContain("tauri-tools-");
+  }
+
+  const linux = readRepositoryFile(".github/workflows/release-linux.yml");
+  // The aarch64 WebKit workaround depends on this exact wasm-bindgen version
+  // sitting behind the repository wrapper.
+  expect(linux).toContain("tool: trunk,tauri-cli@2,wasm-bindgen@0.2.96");
+  expect(linux).toContain("scripts/wasm-bindgen-wrapper.sh");
+  expect(linux).toContain('cache-bin: "false"');
+});
+
+test("Preview profile only relaxes LTO and codegen units of release", () => {
+  const manifest = readRepositoryFile("Cargo.toml");
+  const profile = (name: string) => {
+    const block = manifest.match(
+      new RegExp(`^\\[profile\\.${name}\\]\\n((?:.+\\n?)*)`, "m"),
+    );
+    expect(block, name).not.toBeNull();
+    return block![1].trim().split("\n").sort();
+  };
+
+  // Published installers keep whole-program optimization.
+  expect(profile("release")).toEqual([
+    "codegen-units = 1",
+    "lto = true",
+    'opt-level = "s"',
+    'panic = "abort"',
+    "strip = true",
+  ]);
+  expect(profile("preview")).toEqual([
+    "codegen-units = 16",
+    'inherits = "release"',
+    'lto = "thin"',
+  ]);
+});
+
 test("Windows signing workflows only use contexts job-level env allows", () => {
   for (const path of [
     ".github/workflows/release-windows.yml",

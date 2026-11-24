@@ -66,28 +66,26 @@ jobs:
             . -> target
             ui -> target
           cache-on-failure: true
+          # The step below replaces ~/.cargo/bin/wasm-bindgen with a symlink
+          # into the checkout; restoring that would break the next install.
+          cache-bin: "false"
 
-      - name: Cache Trunk and Tauri CLI
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin
-          key: tauri-tools-${{ runner.os }}-${{ runner.arch }}-v1
-
-      # wasm-bindgen-cli must stay pinned at 0.2.96 with the repo's wrapper
-      # installed over it: webkit2gtk 2.52.3 on aarch64 cannot expose externref
-      # tables, so the wasm must be built without reference-types. See
-      # scripts/wasm-bindgen-wrapper.sh for the full explanation.
+      # Prebuilt binaries; compiling these from source took about 11 minutes
+      # per job. wasm-bindgen-cli must stay pinned at 0.2.96 with the repo's
+      # wrapper installed over it: webkit2gtk 2.52.3 on aarch64 cannot expose
+      # externref tables, so the wasm must be built without reference-types.
+      # See scripts/wasm-bindgen-wrapper.sh for the full explanation.
       - name: Install Trunk, Tauri CLI and pinned wasm-bindgen
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk,tauri-cli@2,wasm-bindgen@0.2.96
+
+      - name: Route wasm-bindgen through the repository wrapper
         run: |
           set -euo pipefail
-          command -v trunk >/dev/null 2>&1 || cargo install trunk --locked
-          command -v cargo-tauri >/dev/null 2>&1 || cargo install tauri-cli --version "^2" --locked
-          if ! command -v wasm-bindgen.real >/dev/null 2>&1 || ! wasm-bindgen.real --version | grep -q '0\.2\.96'; then
-            cargo install wasm-bindgen-cli --version 0.2.96 --locked
-            mv "$HOME/.cargo/bin/wasm-bindgen" "$HOME/.cargo/bin/wasm-bindgen.real"
-          fi
+          mv "$HOME/.cargo/bin/wasm-bindgen" "$HOME/.cargo/bin/wasm-bindgen.real"
           ln -sf "$GITHUB_WORKSPACE/scripts/wasm-bindgen-wrapper.sh" "$HOME/.cargo/bin/wasm-bindgen"
-          wasm-bindgen.real --version
+          wasm-bindgen.real --version | grep '0\.2\.96'
 
       # No updater artifacts on Linux: the macOS workflow owns latest.json.
       # Pass releaseId so tauri-action uploads assets without rewriting notes.

@@ -4,6 +4,7 @@ use std::process::Command;
 
 const HELP: &str = "Repository commands:
   cargo run build                 Build the WebView desktop once (debug, no installer)
+  cargo run build --preview       Build optimized installers faster for local testing
   cargo run build --release       Build release installers using the existing Tauri pipeline
   cargo run build-gpui            Build the cross-platform GPUI desktop (debug)
   cargo run build-gpui --release  Build the GPUI desktop in release mode
@@ -59,24 +60,24 @@ fn plan(args: &[OsString], os: &str) -> Result<Step, String> {
     let name = args.first().and_then(|arg| arg.to_str()).unwrap_or("");
     let options = args.get(1..).unwrap_or_default();
     let mut step = match name {
-        "build" => {
-            let release = release_option(options)?;
-            if release {
-                Step::new("cargo", &["tauri", "build"])
-            } else {
-                Step::new(
-                    "cargo",
-                    &[
-                        "tauri",
-                        "build",
-                        "--debug",
-                        "--no-bundle",
-                        "--config",
-                        "src-tauri/tauri.fast.conf.json",
-                    ],
-                )
+        "build" => match build_mode(options)? {
+            BuildMode::Release => Step::new("cargo", &["tauri", "build"]),
+            // Same pipeline as release; only the Cargo profile differs.
+            BuildMode::Preview => {
+                Step::new("cargo", &["tauri", "build", "--", "--profile", "preview"])
             }
-        }
+            BuildMode::Fast => Step::new(
+                "cargo",
+                &[
+                    "tauri",
+                    "build",
+                    "--debug",
+                    "--no-bundle",
+                    "--config",
+                    "src-tauri/tauri.fast.conf.json",
+                ],
+            ),
+        },
         "build-gpui" | "gpui" => {
             let release = release_option(options)?;
             if !matches!(os, "macos" | "windows" | "linux") {
@@ -125,8 +126,27 @@ fn plan(args: &[OsString], os: &str) -> Result<Step, String> {
             step
         }
     };
-    step.fast_build = matches!(name, "build") && !options.iter().any(|arg| arg == "--release");
+    step.fast_build = matches!(name, "build") && options.is_empty();
     Ok(step)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum BuildMode {
+    Fast,
+    Preview,
+    Release,
+}
+
+fn build_mode(args: &[OsString]) -> Result<BuildMode, String> {
+    match args {
+        [] => Ok(BuildMode::Fast),
+        [arg] if arg == "--preview" => Ok(BuildMode::Preview),
+        [arg] if arg == "--release" => Ok(BuildMode::Release),
+        _ => Err(
+            "expected no options, --preview, or --release; use cargo run -- --help for usage"
+                .into(),
+        ),
+    }
 }
 
 fn release_option(args: &[OsString]) -> Result<bool, String> {
@@ -166,6 +186,8 @@ fn main() {
             if status.success() && args.first().is_some_and(|arg| arg == "build") {
                 if step.fast_build {
                     eprintln!("Built desktop executable in Cargo's debug output directory (normally target/debug/wisp-tauri{}). Run it directly; no watcher is started.", std::env::consts::EXE_SUFFIX);
+                } else if args.get(1).is_some_and(|arg| arg == "--preview") {
+                    eprintln!("Built preview bundles in Cargo's preview output directory (normally target/preview/bundle). They are for local testing; publish installers from --release.");
                 } else {
                     eprintln!("Built release bundles in Cargo's release output directory (normally target/release/bundle).");
                 }
@@ -227,6 +249,18 @@ mod tests {
     }
 
     #[test]
+    fn preview_runs_the_release_pipeline_under_the_preview_profile() {
+        for os in ["windows", "macos", "linux"] {
+            let step = task(&["build", "--preview"], os).unwrap();
+            assert_eq!(step.program, "cargo");
+            assert_eq!(step.args, ["tauri", "build", "--", "--profile", "preview"]);
+            // Not the debug fast path: bundles are built and the catalog is fetched.
+            assert!(!step.fast_build);
+            assert!(step.command(Path::new(".")).get_envs().next().is_none());
+        }
+    }
+
+    #[test]
     fn gpui_build_and_launch_use_the_same_workspace_on_every_desktop() {
         for os in ["macos", "windows", "linux"] {
             for (name, command) in [("build-gpui", "build"), ("gpui", "run")] {
@@ -268,6 +302,15 @@ mod tests {
             ] {
                 assert!(task(&args, "windows").is_err());
             }
+        }
+        for args in [
+            vec!["build", "--preview", "--release"],
+            vec!["build", "--preview", "--preview"],
+            // GPUI has its own workspace and no preview profile.
+            vec!["build-gpui", "--preview"],
+            vec!["gpui", "--preview"],
+        ] {
+            assert!(task(&args, "windows").is_err());
         }
     }
 

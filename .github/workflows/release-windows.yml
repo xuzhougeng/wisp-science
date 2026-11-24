@@ -69,21 +69,12 @@ jobs:
             ui -> target
           cache-on-failure: true
 
-      - name: Cache Trunk and Tauri CLI
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin
-          key: tauri-tools-${{ runner.os }}-v1
-
+      # Prebuilt binaries. Compiling both from source took 16-22 minutes of
+      # every Windows release, and the ~/.cargo/bin cache missed on tag runs.
       - name: Install Trunk and Tauri CLI
-        shell: pwsh
-        run: |
-          if (-not (Get-Command trunk -ErrorAction SilentlyContinue)) {
-            cargo install trunk --locked
-          }
-          if (-not (Get-Command cargo-tauri -ErrorAction SilentlyContinue)) {
-            cargo install tauri-cli --version "^2" --locked
-          }
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk,tauri-cli@2
 
       - name: Cache CodeSignTool
         uses: actions/cache@v4

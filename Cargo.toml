@@ -95,3 +95,13 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# Local preview of the optimized desktop build (`cargo run build --preview`).
+# `release` spends most of its time on one core: the desktop crate compiles as
+# a single codegen unit and fat LTO then re-optimizes every dependency. Thin
+# LTO with parallel codegen about halves that wait for a larger binary.
+# Published installers keep `release`.
+[profile.preview]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
