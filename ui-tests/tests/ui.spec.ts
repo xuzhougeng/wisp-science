@@ -8494,7 +8494,9 @@ test("monitor_run renders a live Run card from summary polls and on-demand detai
   await expect(card).toContainText("Elapsed 1h");
   await expect(card).toContainText("8 of 16 steps complete (50%)");
   const reasoning = page.locator(".rz");
-  await expect(reasoning).toContainText("thinking");
+  // A settled reasoning row reads as finished, not "Thinking…".
+  await expect(reasoning.locator(".rz-label")).toHaveText("Thought process");
+  await expect(reasoning).not.toHaveClass(/\blive\b/);
   await reasoning.locator("summary").click();
   await expect(reasoning).toContainText("Attach the existing Run monitor.");
   await expect(page.locator('.step-name:text-is("monitor_run")')).toHaveCount(0);
@@ -8748,6 +8750,9 @@ test("reasoning details stays open while more thinking streams in", async ({ pag
 
   const rz = page.locator("details.rz");
   await expect(rz).toBeVisible();
+  // Still the transcript tail: the label says it is thinking right now.
+  await expect(rz).toHaveClass(/\blive\b/);
+  await expect(rz.locator(".rz-label")).toHaveText("Thinking…");
   await rz.locator("summary").click();
   await expect(rz).toHaveAttribute("open", "open");
   await rz.evaluate((element) => {
@@ -9766,6 +9771,16 @@ test("DOCX artifacts render offline with headings, tables, and equations", async
   await expect(manuscriptTile).toBeVisible();
   await manuscriptTile.click();
 
+  // The preview opens as its own panel and folds the list into one bar.
+  const listToggle = page.getByTestId("artifact-list-toggle");
+  await expect(listToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator(".rp-tiles")).toBeHidden();
+  await listToggle.click();
+  await expect(listToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(manuscriptTile).toBeVisible();
+  await listToggle.click();
+  await expect(page.locator(".rp-tiles")).toBeHidden();
+
   // docx-preview renders a `.docx-wrapper` of `section.docx` pages, fully offline.
   const docx = page.locator(".rp-docx");
   await expect(docx.locator(".docx-wrapper section.docx").first()).toBeVisible();
@@ -9795,6 +9810,8 @@ test("DOCX artifacts render offline with headings, tables, and equations", async
   await expect(closePreview).toBeVisible();
   await closePreview.click();
   await expect(view).toHaveCount(0);
+  await expect(listToggle).toHaveCount(0);
+  await expect(manuscriptTile).toBeVisible();
 });
 
 test("DOCX opened from the Files browser scrolls inside the modal (#274)", async ({ page }) => {

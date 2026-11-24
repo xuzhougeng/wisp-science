@@ -737,6 +737,21 @@ pub(crate) enum ThreadRow {
 
 const STREAMING_REASONING_MAX_BYTES: usize = 64 * 1024;
 
+/// Summary row of a reasoning disclosure: icon, label, and a chevron that
+/// turns when the body opens. "Thinking…" only while the text still streams.
+fn reasoning_summary(locale: Locale, streaming: bool) -> impl IntoView {
+    let label = if streaming {
+        "chat.reasoning_live"
+    } else {
+        "chat.reasoning_done"
+    };
+    view! {
+        <span class="rz-icon">{compose_icon("brain")}</span>
+        <span class="rz-label">{t(locale, label)}</span>
+        <span class="rz-chevron">{compose_icon("chevron-right")}</span>
+    }
+}
+
 fn streaming_reasoning_text(text: &str, max_bytes: usize) -> String {
     if text.len() <= max_bytes {
         return text.to_string();
@@ -763,12 +778,22 @@ pub(crate) fn StreamingReasoningMessage(
     let toggle_id = open_id.clone();
     let open_key = open_id.clone();
     let open = create_memo(move |_| disclosure_open(disclosure_state, &open_key, false));
+    // Only the transcript tail is still streaming; once a tool call or answer
+    // follows, the row stays mounted for the turn but reads as settled.
+    let streaming = create_memo(move |_| {
+        items.with(|rows| {
+            rows.get(source_item + 1..).is_none_or(|rest| {
+                rest.iter()
+                    .all(|item| matches!(item, ChatItem::QueuedUser { .. }))
+            })
+        })
+    });
     view! {
-        <details class="rz" open=move || open.get()>
+        <details class="rz" class:live=move || streaming.get() open=move || open.get()>
             <summary on:click=move |event| {
                 event.prevent_default();
                 toggle_disclosure(disclosure_state, &toggle_id, false);
-            }>{move || t(locale.get(), "chat.thinking")}</summary>
+            }>{move || reasoning_summary(locale.get(), streaming.get())}</summary>
             {move || open.get().then(|| {
                 let text = items.with(|rows| match rows.get(source_item) {
                     Some(ChatItem::Reasoning(text)) => {
@@ -3286,7 +3311,7 @@ pub(crate) fn render_item(
                     <summary on:click=move |event| {
                         event.prevent_default();
                         toggle_disclosure(disclosure_state, &toggle_id, false);
-                    }>{move || t(locale.get(), "chat.thinking")}</summary>
+                    }>{move || reasoning_summary(locale.get(), false)}</summary>
                     <div class="body">{s.clone()}</div>
                 </details>
             }

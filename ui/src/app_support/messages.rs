@@ -298,6 +298,7 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "edit" => view! { <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/> }.into_view(),
         "square-pen" => view! { <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M16 3a2.1 2.1 0 0 1 3 3l-9 9-4 1 1-4Z"/> }.into_view(),
         "code" => view! { <path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/> }.into_view(),
+        "sigma" => view! { <path d="M18 7V5a1 1 0 0 0-1-1H6.5a.5.5 0 0 0-.4.8l4.5 6a2 2 0 0 1 0 2.4l-4.5 6a.5.5 0 0 0 .4.8H17a1 1 0 0 0 1-1v-2"/> }.into_view(),
         "doc" => view! { <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/> }.into_view(),
         "image" => view! { <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/> }.into_view(),
         "video" => view! { <path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/> }.into_view(),
@@ -669,9 +670,24 @@ fn ArtifactThumb(path: Option<String>, kind: &'static str) -> impl IntoView {
         });
     }
     view! {
-        <span class="message-artifact-thumb" id=dom_id.clone()>
-            <span class=format!("rp-badge {kind}")>{kind}</span>
+        <span class="message-artifact-thumb" id=dom_id.clone() data-kind=kind>
+            {compose_icon(artifact_kind_icon(kind))}
         </span>
+    }
+}
+
+/// The shared icon for an artifact kind on in-thread output cards. A 24px
+/// tile cannot fit a text badge such as "TABLE", so the kind reads as a glyph.
+pub(crate) fn artifact_kind_icon(kind: &str) -> &'static str {
+    match kind {
+        "table" | "csv" | "xlsx" => "table",
+        "image" => "image",
+        "video" => "video",
+        "latex" => "sigma",
+        "fasta" | "msa" => "dna",
+        "structure" | "molecule" | "smiles" => "flask",
+        "code" | "notebook" | "json" | "html" => "code",
+        _ => "doc",
     }
 }
 
@@ -1115,6 +1131,23 @@ pub(crate) const INLINE_GENERATED_MAX: usize = 4;
 /// Whether a reply's generated outputs open expanded by default.
 pub(crate) fn generated_inline(count: usize) -> bool {
     (1..=INLINE_GENERATED_MAX).contains(&count)
+}
+
+#[cfg(test)]
+mod artifact_kind_icon_tests {
+    use super::artifact_kind_icon;
+
+    #[test]
+    fn every_kind_maps_to_a_glyph_and_unknown_kinds_fall_back_to_doc() {
+        assert_eq!(artifact_kind_icon("table"), "table");
+        assert_eq!(artifact_kind_icon("csv"), "table");
+        assert_eq!(artifact_kind_icon("latex"), "sigma");
+        assert_eq!(artifact_kind_icon("fasta"), "dna");
+        assert_eq!(artifact_kind_icon("image"), "image");
+        assert_eq!(artifact_kind_icon("notebook"), "code");
+        assert_eq!(artifact_kind_icon("markdown"), "doc");
+        assert_eq!(artifact_kind_icon("something-new"), "doc");
+    }
 }
 
 #[cfg(test)]

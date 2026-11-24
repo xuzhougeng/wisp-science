@@ -935,6 +935,8 @@
 .message-artifact-card.superseded { opacity: .52; cursor: default; background: var(--bg-sunken); }
 .message-artifact-card.superseded:hover { border-color: var(--border); }
 .message-artifact-thumb { grid-row: 1 / -1; position: relative; display: flex; width: 40px; height: 40px; align-items: center; justify-content: center; overflow: hidden; border-radius: var(--radius-xs); background: var(--bg-sunken); }
+.message-artifact-thumb > svg { width: 55%; height: 55%; max-width: 18px; max-height: 18px; color: var(--clay-strong); }
+.message-artifact-thumb[data-kind="image"] > svg, .message-artifact-thumb[data-kind="video"] > svg { color: var(--text-muted); }
 .message-artifact-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: var(--bg-sunken); }
 .message-artifact-name { grid-column: 2; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 600; }
 /* No status row: let the name span both tracks so it stays vertically centered. */
@@ -1308,11 +1310,40 @@ button.tool-btn.card-copy { margin-left: auto; flex: 0 0 auto; padding: 2px 8px;
 .usage-row .usage-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(10.5px * var(--ui-font-scale, 1)); font-family: var(--font-mono); color: var(--text-faint); margin-top: -6px; }
 
 details.rz { align-self: stretch; }
-details.rz > summary { cursor: pointer; list-style: none; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+/* A quiet, clickable row: brain icon, label, chevron. The negative margin keeps
+   the icon aligned with the transcript text while the hover fill has room. */
+details.rz > summary {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-left: -6px; padding: 3px 8px 3px 6px; border-radius: var(--radius-xs);
+  list-style: none; cursor: pointer; user-select: none;
+  font-size: calc(12.5px * var(--ui-font-scale, 1)); font-weight: 500; color: var(--text-faint);
+  transition: background .12s ease, color .12s ease;
+}
 details.rz > summary::-webkit-details-marker { display: none; }
-details.rz > summary::before { content: "\25B8  "; }
-details.rz[open] > summary::before { content: "\25BE  "; }
-details.rz .body { margin-top: 6px; }
+details.rz > summary:hover { background: var(--bg-sunken); color: var(--text-muted); }
+details.rz > summary:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring); }
+details.rz .rz-icon, details.rz .rz-chevron { display: inline-flex; flex-shrink: 0; }
+details.rz .rz-icon svg { width: 14px; height: 14px; }
+details.rz .rz-chevron svg { width: 12px; height: 12px; }
+details.rz .rz-chevron { opacity: .7; transition: transform .15s ease; }
+details.rz[open] .rz-chevron { transform: rotate(90deg); }
+/* Streaming: the icon breathes in the accent colour and the label shimmers. */
+details.rz.live .rz-icon { color: var(--clay); animation: rz-pulse 1.6s ease-in-out infinite; }
+details.rz.live .rz-label {
+  background: linear-gradient(90deg, var(--text-faint) 0%, var(--text-faint) 35%, var(--text) 50%, var(--text-faint) 65%, var(--text-faint) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: rz-shimmer 2.2s linear infinite;
+}
+@keyframes rz-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@keyframes rz-pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) {
+  details.rz.live .rz-icon, details.rz.live .rz-label { animation: none; }
+  details.rz.live .rz-label { background: none; color: var(--text-muted); }
+  details.rz .rz-chevron { transition: none; }
+}
+/* Upright text: a synthesized italic reads poorly for CJK reasoning. */
+.msg.reasoning details.rz .body { margin: 6px 0 2px 1px; font-style: normal; color: var(--text-muted); line-height: 1.65; }
 
 /* ---------- Rendered Markdown (assistant messages) ---------- */
 .md .resource-inline-image {

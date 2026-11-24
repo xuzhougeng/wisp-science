@@ -460,6 +460,9 @@ test("generated artifact cards render as compact rows", async ({ page }) => {
     return { cardHeight: cardBox.height, thumbSize: thumbBox.width };
   });
   expect(metrics.thumbSize).toBe(24);
+  // The kind reads as an icon; a text badge like "TABLE" cannot fit 24px.
+  await expect(card.locator('.message-artifact-thumb > svg[data-icon="image"]')).toHaveCount(1);
+  await expect(card.locator(".rp-badge")).toHaveCount(0);
   // Compact row: thumb + one or two text lines, not the old ~140px tile.
   expect(metrics.cardHeight).toBeLessThan(72);
 });
