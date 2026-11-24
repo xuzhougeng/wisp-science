@@ -13692,7 +13692,10 @@ fn App() -> impl IntoView {
                     }
                 }}
                 <div class="spacer"></div>
-                <div class="topbar-actions" class:more-open=move || topbar_more_open.get()>
+                // A file alone in the center hides the conversation's tools; the
+                // panel button then brings the conversation in beside the file.
+                <div class="topbar-actions" class:more-open=move || topbar_more_open.get()
+                    class:file-view=move || center_file_open.get() && !center_split.get()>
                 // Wide panes show these inline; narrow ones fold them into the
                 // "more" menu below, where the same buttons reveal their labels.
                 <div class="topbar-overflow" id="topbar-overflow" data-testid="topbar-overflow"
@@ -13859,11 +13862,23 @@ fn App() -> impl IntoView {
                         <span class="inbox-badge topbar-more-dot" aria-hidden="true"></span>
                     })}
                 </button>
-                <button class="icon-btn" title=move || t(locale.get(), "center.toggle_panel")
-                    class:active=move || show_right.get()
+                <button class="icon-btn" data-testid="topbar-panel-toggle"
+                    data-center-split=move || center_file_open.get().then_some("")
+                    title=move || t(locale.get(), if center_file_open.get() { "center.split" } else { "center.toggle_panel" })
+                    aria-label=move || t(locale.get(), if center_file_open.get() { "center.split" } else { "center.toggle_panel" })
+                    aria-pressed=move || center_file_open.get().then(|| center_split.get().to_string())
+                    class:active=move || if center_file_open.get() { center_split.get() } else { show_right.get() }
                     disabled=move || assistant_mode.get() || demo_mode.get()
                     on:click=move |_| {
-                        if show_right.get_untracked() {
+                        // Beside an open file the one side panel is the conversation:
+                        // it takes the right pane's width, so that pane folds away.
+                        if center_file_open.get_untracked() {
+                            center_split.update(|on| *on = !*on);
+                            if center_split.get_untracked() {
+                                show_right.set(false);
+                                topbar_more_open.set(false);
+                            }
+                        } else if show_right.get_untracked() {
                             show_right.set(false);
                         } else {
                             // Reopen what the user left open; the launcher is
@@ -14263,20 +14278,6 @@ fn App() -> impl IntoView {
                                   })}
                                 }
                             })}
-                            // Split the center: document left, the main conversation
-                            // right. Collapses the right pane so the two share its width.
-                            <button type="button" class="center-file-btn" data-center-split=""
-                                class:primary=move || center_split.get()
-                                aria-pressed=move || center_split.get().to_string()
-                                title=move || t(locale.get(), "center.split")
-                                aria-label=move || t(locale.get(), "center.split")
-                                on:click=move |_| {
-                                    center_split.update(|on| *on = !*on);
-                                    if center_split.get_untracked() { show_right.set(false); }
-                                }>
-                                {compose_icon("chat")}
-                                <span>{move || t(locale.get(), "center.split_short")}</span>
-                            </button>
                         </div>
                     </div>
                 }
