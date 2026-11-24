@@ -144,7 +144,7 @@ test("approval scope click preserves native child visibility and submits the sel
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   expect((await calls(page, "update_mcp_app_child_bounds")).filter((c: any) => !c.args.bounds.visible)).toEqual([]);
   await scope.selectOption("project");
-  await page.getByRole("button", {name:"Allow for this project", exact:true}).click();
+  await page.getByRole("button", {name:"Allow", exact:true}).click();
   await expect.poll(() => page.evaluate(() => {
     const call = (window as any).__skillInvokeLog.find((c: any) => c.cmd === "confirm_response");
     return call?.args instanceof Map ? Object.fromEntries(call.args) : call?.args;

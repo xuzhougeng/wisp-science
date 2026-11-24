@@ -166,13 +166,40 @@ pub(crate) fn StreamingAssistantMessage(
 pub(crate) fn SessionStatusBadge(
     status: SessionStatusKind,
     locale: RwSignal<Locale>,
+    /// Needs-you only because a finished reply is still unread: nothing is
+    /// blocked on the user, so it reads "New reply" rather than "Needs you".
+    #[prop(optional)]
+    new_reply: bool,
 ) -> impl IntoView {
-    let key = status.i18n_key();
-    let class = status.css();
+    let (key, class) = attention_label(status, new_reply);
     view! {
         <span class=format!("sess-status sess-status-{class}")>
             {move || t(locale.get(), key)}
         </span>
+    }
+}
+
+/// i18n key and CSS suffix for a session status. The backend reports both
+/// unread finished replies and approval waits as `needs_you`; callers that know
+/// the session is not waiting on an approval pass `new_reply`.
+pub(crate) fn attention_label(
+    status: SessionStatusKind,
+    new_reply: bool,
+) -> (&'static str, &'static str) {
+    if new_reply && status == SessionStatusKind::NeedsYou {
+        ("sess_status.new_reply", "new-reply")
+    } else {
+        (status.i18n_key(), status.css())
+    }
+}
+
+/// Why a Needs-you session is listed, for the inbox: an approval wait, or a
+/// finished reply nobody has opened yet.
+pub(crate) fn attention_reason_key(awaiting_approval: bool) -> &'static str {
+    if awaiting_approval {
+        "inbox.reason_approval"
+    } else {
+        "inbox.reason_reply"
     }
 }
 
@@ -236,6 +263,7 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "loader" => view! { <circle cx="12" cy="12" r="9" opacity="0.16"/><path d="M21 12a9 9 0 0 0-9-9"/><path d="M21 12a9 9 0 0 0-5.2-8.2" opacity="0.4"/> }.into_view(),
         "circle-alert" => view! { <circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/> }.into_view(),
         "circle-help" => view! { <circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/> }.into_view(),
+        "info" => view! { <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/> }.into_view(),
         "pin" => view! { <path d="M12 17v5"/><path d="M5 17h14"/><path d="m6 3 1 7-3 4h16l-3-4 1-7Z"/> }.into_view(),
         "link" => view! { <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/> }.into_view(),
         "bell" => view! { <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/> }.into_view(),
@@ -1080,11 +1108,42 @@ impl GeneratedDirectory {
     }
 }
 
+/// A reply with at most this many generated outputs shows them expanded, with
+/// images as inline thumbnails; longer lists keep the collapsed tree.
+pub(crate) const INLINE_GENERATED_MAX: usize = 4;
+
+/// Whether a reply's generated outputs open expanded by default.
+pub(crate) fn generated_inline(count: usize) -> bool {
+    (1..=INLINE_GENERATED_MAX).contains(&count)
+}
+
+#[cfg(test)]
+mod generated_inline_tests {
+    use super::{generated_inline, INLINE_GENERATED_MAX};
+
+    #[test]
+    fn small_output_sets_open_and_long_lists_stay_collapsed() {
+        assert!(!generated_inline(0));
+        assert!(generated_inline(1));
+        assert!(generated_inline(INLINE_GENERATED_MAX));
+        assert!(!generated_inline(INLINE_GENERATED_MAX + 1));
+    }
+}
+
+/// An image output shown as an inline thumbnail under a short reply.
+#[derive(Clone, PartialEq)]
+struct GeneratedImage {
+    index: usize,
+    name: String,
+    path: String,
+}
+
 fn generated_directory_view(
     node: GeneratedDirectory,
     on_artifact: Callback<usize>,
     disclosures: RwSignal<std::collections::HashMap<String, bool>>,
     parent: String,
+    folders_open: bool,
 ) -> View {
     let locale = use_locale();
     let folders = node
@@ -1097,10 +1156,10 @@ fn generated_directory_view(
             let toggle_path = path.clone();
             view! {
                 <details class="generated-directory"
-                    open=move || crate::chat_render::disclosure_open(disclosures, &open_path, false)>
+                    open=move || crate::chat_render::disclosure_open(disclosures, &open_path, folders_open)>
                     <summary on:click=move |event| {
                         event.prevent_default();
-                        crate::chat_render::toggle_disclosure(disclosures, &toggle_path, false);
+                        crate::chat_render::toggle_disclosure(disclosures, &toggle_path, folders_open);
                     }>
                         {compose_icon("chevron-right")}
                         {compose_icon("folder")}
@@ -1108,7 +1167,7 @@ fn generated_directory_view(
                         <span class="generated-directory-count">{count}</span>
                     </summary>
                     <div class="generated-directory-children">
-                        {generated_directory_view(child, on_artifact, disclosures, path)}
+                        {generated_directory_view(child, on_artifact, disclosures, path, folders_open)}
                     </div>
                 </details>
             }
@@ -1237,11 +1296,26 @@ pub(crate) fn AssistantMessage(
             .unwrap_or_default();
         artifacts.with(|arts| {
             let mut tree = GeneratedDirectory::default();
-            for (index, artifact) in arts
-                .iter()
-                .enumerate()
-                .filter(|(_, a)| a.source_item == source_item)
-            {
+            let mut images = Vec::new();
+            let own = || {
+                arts.iter()
+                    .enumerate()
+                    .filter(|(_, a)| a.source_item == source_item)
+            };
+            // A short output list shows its current image files as inline
+            // thumbnails; everything else (and every long list) stays a row.
+            let inline = generated_inline(own().count());
+            for (index, artifact) in own() {
+                if let PreviewData::File { path, .. } = &artifact.data {
+                    if inline && artifact.kind == "image" && !artifact.superseded {
+                        images.push(GeneratedImage {
+                            index,
+                            name: artifact.name.clone(),
+                            path: path.clone(),
+                        });
+                        continue;
+                    }
+                }
                 let group = crate::text::artifact_group_key(artifact, &root);
                 let mut node = &mut tree;
                 // Inline outputs have no filesystem parent; keep them at the root.
@@ -1262,10 +1336,11 @@ pub(crate) fn AssistantMessage(
                     path,
                 ));
             }
-            tree
+            (tree, images)
         })
     });
-    let generated_count = move || generated.with(GeneratedDirectory::count);
+    let generated_count = move || generated.with(|(tree, images)| tree.count() + images.len());
+    let generated_open_default = move || generated_inline(generated_count());
     let text_for_disabled = text.clone();
     let text_for_click_copy = text;
     view! {
@@ -1305,18 +1380,43 @@ pub(crate) fn AssistantMessage(
                     )
                 }></div>
             {move || (generated_count() > 0).then(|| view! {
-                <details class="message-artifacts"
-                    open=move || crate::chat_render::disclosure_open(generated_disclosures, "", false)>
+                <details class="message-artifacts" class:inline=generated_open_default
+                    open=move || crate::chat_render::disclosure_open(generated_disclosures, "", generated_open_default())>
                     <summary class="message-artifacts-label" on:click=move |event| {
                         event.prevent_default();
-                        crate::chat_render::toggle_disclosure(generated_disclosures, "", false);
+                        crate::chat_render::toggle_disclosure(generated_disclosures, "", generated_open_default());
                     }>
                         {compose_icon("chevron-right")}
                         {move || tf(locale.get(), "artifact.generated_count", &[("n", &generated_count().to_string())])}
                     </summary>
-                    <div class="generated-artifact-tree">
-                        {move || generated_directory_view(generated.get(), on_artifact_for_cards, generated_disclosures, String::new())}
-                    </div>
+                    {move || {
+                        let images = generated.with(|(_, images)| images.clone());
+                        (!images.is_empty()).then(|| view! {
+                            <div class="message-artifact-gallery" data-testid="generated-image-gallery">
+                                {images.into_iter().map(|image| {
+                                    let index = image.index;
+                                    view! {
+                                        <button type="button" class="message-artifact-image"
+                                            data-artifact-name=image.name.clone()
+                                            title=image.path.clone()
+                                            aria-label=image.name.clone()
+                                            on:click=move |_| on_artifact_for_cards.call(index)>
+                                            <ArtifactThumb path=Some(image.path) kind="image" />
+                                            <span class="message-artifact-name">{image.name}</span>
+                                        </button>
+                                    }
+                                }).collect_view()}
+                            </div>
+                        })
+                    }}
+                    {move || {
+                        let tree = generated.with(|(tree, _)| tree.clone());
+                        (tree.count() > 0).then(|| view! {
+                            <div class="generated-artifact-tree">
+                                {generated_directory_view(tree, on_artifact_for_cards, generated_disclosures, String::new(), generated_open_default())}
+                            </div>
+                        })
+                    }}
                 </details>
             })}
             {move || {
@@ -1479,12 +1579,47 @@ pub(crate) fn parse_plan_steps(preview: &str) -> Vec<(&'static str, String)> {
         .map(|step| (step.status.as_str(), step.content))
         .collect()
 }
-pub(crate) fn approval_allow_label_key(scope: &str) -> &'static str {
-    match scope {
-        "session" => "approval.allow_session",
-        "project" => "approval.allow_project",
-        "global" => "approval.allow_global",
-        _ => "approval.allow_once",
+/// The scope select already states how long the grant lasts, so the button
+/// beside it just says Allow. Without a select (workflow node confirmations
+/// are one-shot) the button names the only scope there is.
+pub(crate) fn approval_allow_label_key(has_scope_control: bool) -> &'static str {
+    if has_scope_control {
+        "approval.allow"
+    } else {
+        "approval.allow_once"
+    }
+}
+
+/// Field label above an approval preview: a shell tool runs a command, the
+/// other tools (python, r, …) run code.
+pub(crate) fn approval_preview_label_key(tool: &str) -> &'static str {
+    match tool {
+        "shell" | "bash" | "sh" | "powershell" | "run_in_context" | "wisp_run_in_context" => {
+            "approval.command"
+        }
+        _ => "approval.code",
+    }
+}
+
+#[cfg(test)]
+mod approval_label_tests {
+    use super::{approval_allow_label_key, approval_preview_label_key};
+
+    #[test]
+    fn allow_button_does_not_repeat_the_selected_scope() {
+        assert_eq!(approval_allow_label_key(true), "approval.allow");
+        assert_eq!(approval_allow_label_key(false), "approval.allow_once");
+    }
+
+    #[test]
+    fn shell_previews_are_labelled_as_commands() {
+        assert_eq!(approval_preview_label_key("shell"), "approval.command");
+        assert_eq!(
+            approval_preview_label_key("run_in_context"),
+            "approval.command"
+        );
+        assert_eq!(approval_preview_label_key("python"), "approval.code");
+        assert_eq!(approval_preview_label_key("r"), "approval.code");
     }
 }
 
@@ -1510,6 +1645,7 @@ pub(crate) fn ApprovalCard(
     let show_feedback = create_rw_signal(false);
     let feedback = create_rw_signal(String::new());
     let approval_scope = create_rw_signal(String::from("once"));
+    let has_scope_control = !is_plan && !is_resource_conflict && !is_image_resize && !is_workflow;
     let feedback_ready = move || !feedback.get().trim().is_empty();
     if is_plan {
         window_capture_escape(move || {
@@ -1596,6 +1732,7 @@ pub(crate) fn ApprovalCard(
                     let show_code = !preview.is_empty() && !is_resource_conflict;
                     let p = preview.clone();
                     let lang = lang.clone();
+                    let preview_label_key = approval_preview_label_key(&tool);
                     view! {
                         {(is_resource_conflict || is_image_resize).then(|| view! {
                             <p class="approval-conflict-message">{if is_image_resize && !p.is_empty() { p.clone() } else if is_image_resize { message.clone() } else { p.clone() }}</p>
@@ -1605,7 +1742,7 @@ pub(crate) fn ApprovalCard(
                         })}
                         {show_code.then(|| view! {
                             <details class="approval-code" open=true>
-                                <summary>{move || t(locale.get(), "approval.code")}</summary>
+                                <summary>{move || t(locale.get(), preview_label_key)}</summary>
                                 <pre><code class=format!("language-{lang}")>{p}</code></pre>
                             </details>
                         })}
@@ -1621,7 +1758,7 @@ pub(crate) fn ApprovalCard(
                     "approval.hint"
                 })}</p>
                 <div class="approval-actions">
-                    {(!is_plan && !is_resource_conflict && !is_image_resize && !is_workflow).then(|| view! {
+                    {has_scope_control.then(|| view! {
                         <label class="approval-scope">
                             <span>{move || t(locale.get(), "approval.scope")}</span>
                             <select
@@ -1648,7 +1785,7 @@ pub(crate) fn ApprovalCard(
                             } else if is_image_resize {
                                 t(locale.get(), "approval.image_resize_continue").to_string()
                             } else {
-                                t(locale.get(), approval_allow_label_key(&approval_scope.get())).to_string()
+                                t(locale.get(), approval_allow_label_key(has_scope_control)).to_string()
                             }
                         }}
                     </button>
@@ -1664,10 +1801,12 @@ pub(crate) fn ApprovalCard(
                             "confirm.deny"
                         })}
                     </button>
-                    {(!is_plan && !is_resource_conflict && !is_image_resize && !is_workflow).then(|| view! {
+                    {has_scope_control.then(|| view! {
                         // "full" is not a grant scope: the host opens the Full
                         // Permission warning, and enabling it settles this card.
-                        <button type="button" data-testid="approval-full-permission"
+                        // Tertiary (link-styled, pushed to the far end) so it
+                        // never reads as a peer of Allow / Deny.
+                        <button type="button" class="approval-full-permission" data-testid="approval-full-permission"
                             title=move || t(locale.get(), "full_permission.confirm_body")
                             on:click=move |_| on_decide.call((sid_full.clone(), true, None, "full".into()))>
                             {move || t(locale.get(), "composer.full_permission")}
@@ -1721,6 +1860,31 @@ pub(crate) fn ApprovalCard(
                 })}
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod attention_label_tests {
+    use super::{attention_label, attention_reason_key};
+    use crate::dto::SessionStatusKind;
+
+    #[test]
+    fn unread_replies_read_as_new_reply_and_approvals_as_needs_you() {
+        assert_eq!(
+            attention_label(SessionStatusKind::NeedsYou, true),
+            ("sess_status.new_reply", "new-reply")
+        );
+        assert_eq!(
+            attention_label(SessionStatusKind::NeedsYou, false),
+            ("sess_status.needs_you", "needs-you")
+        );
+        // Only a needs-you row can become a new reply.
+        assert_eq!(
+            attention_label(SessionStatusKind::Running, true),
+            ("sess_status.running", "running")
+        );
+        assert_eq!(attention_reason_key(true), "inbox.reason_approval");
+        assert_eq!(attention_reason_key(false), "inbox.reason_reply");
     }
 }
 

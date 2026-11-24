@@ -347,6 +347,10 @@ pub enum AgentEvent {
     },
     Usage {
         frame_id: String,
+        /// Runtime label of the model that served this round (the backend's
+        /// `models::session_label`, e.g. `Magpie · <model>`).
+        #[serde(default)]
+        model: String,
         input: u64,
         output: u64,
         #[serde(default)]
@@ -1376,7 +1380,7 @@ pub fn model_label(models: &[ModelProfile], model_id: Option<&str>) -> Option<St
                 .find(|model| model.active && model.is_chat_model())
         })
         .or_else(|| models.iter().find(|model| model.is_chat_model()))
-        .map(|m| m.label.clone())
+        .map(|m| m.display_label())
         .filter(|s| !s.is_empty())
 }
 
@@ -1389,6 +1393,26 @@ pub fn session_model_label(
         models,
         session_id.and_then(|session_id| session_models.get(session_id).map(String::as_str)),
     )
+}
+
+/// The label a reply in this session is stamped with while it streams: the
+/// model that will actually serve the turn. A connected Magpie gateway runs
+/// every HTTP turn (the backend's `models::session_label`), so its label wins
+/// over the bound or personal default profile; ACP-bound frames keep their
+/// agent label.
+pub fn session_reply_label(
+    models: &[ModelProfile],
+    session_models: &HashMap<String, String>,
+    session_id: Option<&str>,
+    magpie: Option<&MagpieModelDto>,
+) -> Option<String> {
+    let acp_bound = session_id
+        .and_then(|session_id| session_models.get(session_id))
+        .is_some_and(|id| id.starts_with("acp:"));
+    match magpie {
+        Some(magpie) if !acp_bound => Some(magpie.label()),
+        _ => session_model_label(models, session_models, session_id),
+    }
 }
 
 /// The profile a session resolves to right now: bound profile → active →
@@ -1487,6 +1511,7 @@ mod session_context_window_tests {
             max_tokens: 8_192,
             context_window,
             reasoning_effort: String::new(),
+            endpoint_efforts: Vec::new(),
             service_tier: String::new(),
             user_agent: String::new(),
             send_user_agent: true,
@@ -1579,6 +1604,26 @@ mod session_context_window_tests {
     #[test]
     fn magpie_label_names_the_connected_model_like_the_session_label() {
         assert_eq!(magpie(500_000).label(), "Magpie · fixture/reasoner");
+    }
+
+    #[test]
+    fn reply_label_names_the_magpie_model_over_the_default_profile() {
+        use super::session_reply_label;
+        let models = vec![profile("Default", true, 128_000)];
+        let connected = magpie(500_000);
+        assert_eq!(
+            session_reply_label(&models, &HashMap::new(), Some("s1"), Some(&connected)).as_deref(),
+            Some("Magpie · fixture/reasoner")
+        );
+        assert_eq!(
+            session_reply_label(&models, &HashMap::new(), Some("s1"), None).as_deref(),
+            Some("Default")
+        );
+        let bindings = HashMap::from([("s1".to_string(), "acp:Codex ACP".to_string())]);
+        assert_eq!(
+            session_reply_label(&models, &bindings, Some("s1"), Some(&connected)).as_deref(),
+            Some("Codex ACP")
+        );
     }
 }
 
@@ -3499,6 +3544,10 @@ pub struct ModelProfile {
     pub context_window: u64,
     #[serde(default)]
     pub reasoning_effort: String,
+    /// Reasoning levels the endpoint's model list reported for this exact id;
+    /// used only when the catalog has no exact entry.
+    #[serde(default)]
+    pub endpoint_efforts: Vec<String>,
     #[serde(default)]
     pub service_tier: String,
     #[serde(default)]
@@ -3616,6 +3665,27 @@ pub const VIDEO_DURATION_MAX_SECS: u32 = 15;
 pub const VIDEO_DURATION_DEFAULT_SECS: u32 = 5;
 
 impl ModelProfile {
+    /// Name shown in pickers and lists: the display name, falling back to the
+    /// model id when it is empty or still the fresh-install placeholder
+    /// "Default" (which read like a model name).
+    pub fn display_label(&self) -> String {
+        let label = self.label.trim();
+        if label.is_empty() || (self.id == "default" && label == "Default") {
+            self.model.trim().to_string()
+        } else {
+            label.to_string()
+        }
+    }
+
+    /// Nothing to call yet: no model id, or no base URL for an API-key model.
+    pub fn is_unconfigured(&self) -> bool {
+        let subscription = matches!(
+            self.provider.as_str(),
+            "openai_codex" | "openai_chatgpt" | "xai_oauth"
+        );
+        self.model.trim().is_empty() || (!subscription && self.api_url.trim().is_empty())
+    }
+
     pub fn is_chat_model(&self) -> bool {
         !(self.image_generation_capable
             || self.use_for_image_generation
@@ -4123,6 +4193,7 @@ mod image_generation_model_tests {
             max_tokens: 0,
             context_window: 128_000,
             reasoning_effort: String::new(),
+            endpoint_efforts: Vec::new(),
             service_tier: String::new(),
             user_agent: String::new(),
             send_user_agent: true,
@@ -4227,6 +4298,7 @@ mod video_generation_model_tests {
             max_tokens: 0,
             context_window: 128_000,
             reasoning_effort: String::new(),
+            endpoint_efforts: Vec::new(),
             service_tier: String::new(),
             user_agent: String::new(),
             send_user_agent: true,
@@ -4329,6 +4401,20 @@ pub struct ModelForm {
     /// Used only when adding a provider (`id` is `None`): one row per model
     /// that should be created with the shared API URL and key.
     pub entries: Vec<ModelFormEntry>,
+    /// Effort levels the endpoint reported for `model`; saved with the profile.
+    pub endpoint_efforts: Vec<String>,
+    /// The endpoint's `GET /models` reply, offered as Model ID suggestions.
+    pub endpoint_models: Vec<EndpointModelDto>,
+    /// In flight, or the outcome of the last model-list fetch (ok, text).
+    pub endpoint_models_busy: bool,
+    pub endpoint_models_status: Option<(bool, String)>,
+    /// The user typed a token limit in this form; fetched facts never
+    /// overwrite it.
+    pub max_tokens_edited: bool,
+    pub context_window_edited: bool,
+    /// Field ids the last Save / Test connection found missing or invalid
+    /// (`api_url`, `api_key`, `model`, `endpoint_suffix`).
+    pub invalid_fields: Vec<String>,
 }
 
 impl ModelForm {
@@ -4352,6 +4438,20 @@ pub struct CatalogEntryDto {
     pub supports_vision: bool,
     #[allow(dead_code)]
     pub efforts: Vec<String>,
+}
+
+/// `list_endpoint_models`: one model the API endpoint's own `GET /models`
+/// listed, with the facts it reported for that exact id. `None` is "not
+/// reported"; `Some(vec![])` for `reasoning_levels` means no effort control.
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct EndpointModelDto {
+    pub id: String,
+    #[serde(default)]
+    pub context_window: Option<u64>,
+    #[serde(default)]
+    pub max_output_tokens: Option<u64>,
+    #[serde(default)]
+    pub reasoning_levels: Option<Vec<String>>,
 }
 
 /// `magpie_model_info`: the model a Magpie connection runs every HTTP turn on.
@@ -4608,6 +4708,10 @@ pub struct CapabilitySourceCounts {
 #[derive(Deserialize, Clone)]
 pub struct OnboardingState {
     pub show: bool,
+    /// Whether the active model (or a Magpie connection) has a credential, so
+    /// a first message can be answered. `None` from hosts that do not say.
+    #[serde(default)]
+    pub has_api_key: Option<bool>,
 }
 
 /// Mirrors `wisp_store::ResearchNode`. `kind` stays a plain string because the

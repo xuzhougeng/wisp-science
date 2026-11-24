@@ -43,7 +43,10 @@ for (const locale of ["en", "zh"]) {
     const unread = page.locator('.sidebar .side-item.ses[data-session-id="session-002"]');
     const running = page.locator('.sidebar .side-item.ses[data-session-id="session-003"]');
     const awaiting = page.locator('.sidebar .side-item.ses[data-session-id="session-004"]');
-    await expect(unread.locator(".ses-status-label")).toHaveText(locale === "zh" ? "待处理" : "Needs you");
+    // A finished, unread reply is news, not a request for action.
+    await expect(unread.locator(".ses-status-label")).toHaveText(locale === "zh" ? "有新回复" : "New reply");
+    await expect(unread).toHaveClass(/new-reply/);
+    await expect(awaiting).not.toHaveClass(/new-reply/);
     await expect(running.locator(".ses-status-label")).toHaveText(locale === "zh" ? "运行中" : "Running");
     await expect(awaiting.locator(".ses-attention")).toBeVisible();
     await expect(awaiting.locator(".ses-live")).toBeHidden();
@@ -87,6 +90,33 @@ test("Needs you finds folded and older conversations and clears only viewed repl
   await expect(family).toHaveClass(/collapsed/);
   await expect(page.locator(".side-load-more")).toBeVisible();
 });
+
+for (const locale of ["en", "zh"]) {
+  test(`attention rows say whether a reply is new or an approval is waiting (${locale})`, async ({ page }) => {
+    await openProject(page, locale);
+    const zh = locale === "zh";
+    await page.getByTestId("sidebar-needs-you").click();
+    const pending = page.getByTestId("sidebar-attention-session");
+    const approval = pending.filter({ hasText: "Paged session 4" });
+    const reply = pending.filter({ hasText: "Paged session 101" });
+    await expect(approval.locator(".ses-status-label")).toHaveText(zh ? "待处理" : "Needs you");
+    await expect(approval).toHaveAttribute("title", zh ? /等待你的确认/ : /Waiting for your approval/);
+    await expect(reply.locator(".ses-status-label")).toHaveText(zh ? "有新回复" : "New reply");
+    await expect(reply).toHaveAttribute("title", zh ? /回复已完成，尚未查看/ : /Reply finished, not read yet/);
+
+    // The bell lists the same rows with the reason, not just the title.
+    await page.locator(".inbox-wrap > .icon-btn").click();
+    const items = page.getByTestId("inbox-item");
+    await expect(items.filter({ hasText: "Paged session 4" }).getByTestId("inbox-item-reason"))
+      .toHaveText(zh ? "等待你的确认" : "Waiting for your approval");
+    await expect(items.filter({ hasText: "Paged session 101" }).getByTestId("inbox-item-reason"))
+      .toHaveText(zh ? "回复已完成，尚未查看" : "Reply finished, not read yet");
+    await expect(items.filter({ hasText: "Cross-project counts" }).getByTestId("inbox-item-reason"))
+      .toHaveText(zh ? "回复已完成，尚未查看" : "Reply finished, not read yet");
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".inbox-drop")).toHaveCount(0);
+  });
+}
 
 test("a late inbox snapshot cannot restore a cleared pending marker", async ({ page }) => {
   await openProject(page);

@@ -2959,6 +2959,22 @@ pub(super) async fn list_needs_you_sessions(
         .map_err(|error| error.to_string())
 }
 
+/// Sessions blocked on a tool approval right now, across every project. The
+/// Needs-you inbox mixes these with finished replies nobody has opened yet;
+/// the WebView uses this list to tell "waiting for you" from "new reply".
+#[tauri::command]
+pub(super) async fn list_awaiting_sessions(
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    Ok(sorted_session_ids(&state.awaiting_confirm.lock().unwrap()))
+}
+
+fn sorted_session_ids(ids: &HashSet<String>) -> Vec<String> {
+    let mut ids: Vec<String> = ids.iter().cloned().collect();
+    ids.sort();
+    ids
+}
+
 #[tauri::command]
 pub(super) async fn search_sessions(
     state: State<'_, AppState>,
@@ -3007,6 +3023,19 @@ pub(super) async fn search_sessions(
             shelved: s.shelved,
         })
         .collect())
+}
+
+#[cfg(test)]
+mod awaiting_sessions_tests {
+    use super::sorted_session_ids;
+    use std::collections::HashSet;
+
+    #[test]
+    fn awaiting_ids_are_listed_in_a_stable_order() {
+        let ids = HashSet::from(["s-b".to_string(), "s-a".to_string()]);
+        assert_eq!(sorted_session_ids(&ids), vec!["s-a", "s-b"]);
+        assert!(sorted_session_ids(&HashSet::new()).is_empty());
+    }
 }
 
 #[cfg(test)]

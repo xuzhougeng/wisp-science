@@ -532,6 +532,7 @@ pub async fn save_codex_login(
             max_tokens: 0,
             context_window: DEFAULT_CONTEXT_WINDOW,
             reasoning_effort: String::new(),
+            endpoint_efforts: Vec::new(),
             service_tier: String::new(),
             user_agent: String::new(),
             send_user_agent: true,

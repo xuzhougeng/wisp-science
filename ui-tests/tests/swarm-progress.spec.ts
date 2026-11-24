@@ -92,7 +92,7 @@ test('swarm typography follows the UI font size on desktop and narrow screens', 
   await expect(panel.locator('.swarm-worker-copy small').first()).toHaveCSS('font-size', '16.5px');
   await expect(panel.getByRole('button', { name: 'Stop this turn' })).toHaveCSS('font-size', '18px');
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(panel.locator('.swarm-roster-footer small')).toHaveCSS('font-size', '15px');
+  await expect(panel.locator('.swarm-roster-footer small')).toHaveCSS('font-size', '16.5px');
   await expect(panel.getByRole('button', { name: 'Stop this turn' })).toHaveCSS('font-size', '16.5px');
   await expect(panel.locator('.swarm-stages li').first()).toHaveCSS('font-size', '16.5px');
   expect(await panel.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);

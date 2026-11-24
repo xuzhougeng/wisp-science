@@ -78,22 +78,205 @@ pub(crate) fn use_model_efforts(
     })
 }
 
-async fn catalog_limits_or_default(provider: &str, api_url: &str, model: &str) -> (u64, u64) {
-    let Ok(args) = json_args(&serde_json::json!({
+pub(crate) const DEFAULT_FORM_MAX_TOKENS: u64 = 8192;
+pub(crate) const DEFAULT_FORM_CONTEXT_WINDOW: u64 = 128_000;
+
+/// Output ceiling, context window and endpoint-reported efforts for a new
+/// profile: the exact catalog entry first, then the facts the endpoint's own
+/// model list gave for this exact id, then the usual defaults.
+async fn new_profile_limits(
+    provider: &str,
+    api_url: &str,
+    model: &str,
+    facts: Option<&EndpointModelDto>,
+) -> (u64, u64, Vec<String>) {
+    let catalog = match json_args(&serde_json::json!({
         "provider": provider,
         "apiUrl": api_url,
         "model": model,
-    })) else {
-        return (8192, 128_000);
-    };
-    match invoke_checked("model_catalog_lookup", args).await {
-        Ok(value) => serde_wasm_bindgen::from_value::<Option<CatalogEntryDto>>(value)
+    })) {
+        Ok(args) => invoke_checked("model_catalog_lookup", args)
+            .await
             .ok()
-            .flatten()
-            .map(|dto| (dto.max_tokens, dto.context_window))
-            .unwrap_or((8192, 128_000)),
-        Err(_) => (8192, 128_000),
+            .and_then(|value| serde_wasm_bindgen::from_value::<Option<CatalogEntryDto>>(value).ok())
+            .flatten(),
+        Err(_) => None,
+    };
+    match (catalog, facts) {
+        (Some(dto), _) => (dto.max_tokens, dto.context_window, Vec::new()),
+        (None, Some(facts)) => (
+            facts.max_output_tokens.unwrap_or(DEFAULT_FORM_MAX_TOKENS),
+            facts.context_window.unwrap_or(DEFAULT_FORM_CONTEXT_WINDOW),
+            facts.reasoning_levels.clone().unwrap_or_default(),
+        ),
+        (None, None) => (
+            DEFAULT_FORM_MAX_TOKENS,
+            DEFAULT_FORM_CONTEXT_WINDOW,
+            Vec::new(),
+        ),
     }
+}
+
+/// The endpoint's facts for exactly this model id (never a prefix match).
+pub(crate) fn endpoint_facts<'a>(
+    models: &'a [EndpointModelDto],
+    model: &str,
+) -> Option<&'a EndpointModelDto> {
+    let model = model.trim();
+    models.iter().find(|entry| entry.id == model)
+}
+
+/// Copy the fetched facts for the form's model id into the form. Token limits
+/// the user typed in this form stay; a later exact catalog match still wins
+/// (`apply_catalog_limits` runs after this).
+pub(crate) fn sync_endpoint_facts(form: &mut ModelForm) {
+    let facts = endpoint_facts(&form.endpoint_models, &form.model).cloned();
+    form.endpoint_efforts = facts
+        .as_ref()
+        .and_then(|facts| facts.reasoning_levels.clone())
+        .unwrap_or_default();
+    let Some(facts) = facts else {
+        return;
+    };
+    if let Some(output) = facts.max_output_tokens.filter(|_| !form.max_tokens_edited) {
+        form.max_tokens = output;
+    }
+    if let Some(context) = facts.context_window.filter(|_| !form.context_window_edited) {
+        form.context_window = context;
+    }
+}
+
+/// Field ids a Save / Test connection rejects, in form order: `api_url`,
+/// `api_key`, `model`, `endpoint_suffix` (per add-form row,
+/// `endpoint_suffix:<row id>`). An API key is optional on a local gateway.
+pub(crate) fn model_form_problems(
+    form: &ModelForm,
+    key: &str,
+    has_stored_key: bool,
+) -> Vec<String> {
+    let subscription = matches!(
+        provider_value(&form.provider),
+        "openai_codex" | "openai_chatgpt" | "xai_oauth"
+    );
+    let mut problems = Vec::new();
+    if !subscription && form.api_url.trim().is_empty() {
+        problems.push("api_url".to_string());
+    }
+    if !subscription
+        && key.trim().is_empty()
+        && !has_stored_key
+        && !crate::text::is_loopback_api_url(&form.api_url)
+    {
+        problems.push("api_key".to_string());
+    }
+    let model_missing = if form.id.is_none() {
+        form.entries
+            .iter()
+            .all(|entry| entry.model.trim().is_empty())
+    } else {
+        form.model.trim().is_empty()
+    };
+    if model_missing {
+        problems.push("model".to_string());
+    }
+    if form.id.is_none() {
+        for entry in &form.entries {
+            if crate::text::endpoint_suffix_error(&entry.endpoint_suffix).is_some() {
+                problems.push(format!("endpoint_suffix:{}", entry.row_id));
+            }
+        }
+    } else if crate::text::endpoint_suffix_error(&form.endpoint_suffix).is_some() {
+        problems.push("endpoint_suffix".to_string());
+    }
+    problems
+}
+
+/// The DOM id of the input a problem names (see `model_form_problems`).
+pub(crate) fn model_field_dom_id(field: &str) -> String {
+    match field {
+        "api_url" => "model-form-api-url".into(),
+        "api_key" => "model-form-api-key".into(),
+        "model" => "model-form-model".into(),
+        other => match other.strip_prefix("endpoint_suffix:") {
+            Some(row) => format!("provider-endpoint-suffix-{row}"),
+            None => "model-form-endpoint-suffix".into(),
+        },
+    }
+}
+
+/// One status line naming every problem field.
+fn model_form_problem_text(loc: Locale, problems: &[String]) -> String {
+    let mut names: Vec<String> = Vec::new();
+    for problem in problems {
+        let key = match problem.split(':').next().unwrap_or_default() {
+            "api_url" => "settings.api_url",
+            "api_key" => "models.field.api_key",
+            "model" => "settings.model",
+            _ => "models.field.endpoint_suffix",
+        };
+        let name = t(loc, key);
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    let separator = if loc == Locale::Zh { "、" } else { ", " };
+    let mut text = tf(
+        loc,
+        "models.fix_fields",
+        &[("fields", &names.join(separator))],
+    );
+    if problems.iter().any(|p| p.starts_with("endpoint_suffix")) {
+        text.push(' ');
+        text.push_str(&t(loc, "err.endpoint_suffix_invalid"));
+    }
+    text
+}
+
+/// Open any collapsed disclosure around the field, then focus it.
+pub(crate) fn focus_model_field_soon(field: &str) {
+    let id = model_field_dom_id(field);
+    let focus = Closure::once(move || {
+        let Some(element) = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.get_element_by_id(&id))
+        else {
+            return;
+        };
+        if let Ok(Some(details)) = element.closest("details") {
+            let _ = details.set_attribute("open", "");
+        }
+        if let Some(input) = element.dyn_ref::<web_sys::HtmlElement>() {
+            let _ = input.focus();
+        }
+    });
+    if let Some(window) = web_sys::window() {
+        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+            focus.as_ref().unchecked_ref(),
+            0,
+        );
+    }
+    focus.forget();
+}
+
+/// Mark every problem field, focus the first and report them in one line.
+/// Returns false when the form may proceed.
+fn report_model_form_problems(
+    model_form: RwSignal<Option<ModelForm>>,
+    model_form_msg: RwSignal<Option<(bool, String)>>,
+    loc: Locale,
+    problems: Vec<String>,
+) -> bool {
+    model_form.update(|form| {
+        if let Some(form) = form {
+            form.invalid_fields = problems.clone();
+        }
+    });
+    let Some(first) = problems.first() else {
+        return false;
+    };
+    focus_model_field_soon(first);
+    model_form_msg.set(Some((false, model_form_problem_text(loc, &problems))));
+    true
 }
 
 /// The Specialists page's import/export dialog. One layer at a time: either a
@@ -226,7 +409,11 @@ impl ModelSettingsState {
                     let msg = crate::app_support::js_error_text(error);
                     settings_message.set(Some((
                         false,
-                        tf(locale.get_untracked(), "status.save_failed", &[("msg", &msg)]),
+                        tf(
+                            locale.get_untracked(),
+                            "status.save_failed",
+                            &[("msg", &msg)],
+                        ),
                     )));
                 }
             }
@@ -261,6 +448,7 @@ impl ModelSettingsState {
                     "max_tokens": profile.max_tokens,
                     "context_window": profile.context_window,
                     "reasoning_effort": effort,
+                    "endpoint_efforts": profile.endpoint_efforts,
                     "service_tier": profile.service_tier,
                     "user_agent": profile.user_agent,
                     "send_user_agent": profile.send_user_agent,
@@ -335,17 +523,14 @@ impl ModelSettingsState {
                     .map(|m| m.has_api_key)
             })
             .unwrap_or(false);
-        let cfg = model_form_to_settings(
-            &form,
-            (has_key && key.is_empty())
-                || matches!(provider_value(&form.provider), "openai_codex" | "xai_oauth"),
-        );
-        if let Some(err_key) = settings_required_error_key(&cfg, &key).or_else(|| {
-            route_error(
-                form.proxy_url.as_deref().unwrap_or_default(),
-                form.proxy_custom,
-            )
-        }) {
+        let problems = model_form_problems(&form, &key, has_key);
+        if report_model_form_problems(model_form, model_form_msg, loc, problems) {
+            return;
+        }
+        if let Some(err_key) = route_error(
+            form.proxy_url.as_deref().unwrap_or_default(),
+            form.proxy_custom,
+        ) {
             let err = t(loc, err_key);
             let text = tf(loc, "status.save_failed", &[("msg", &err)]);
             model_form_msg.set(Some((false, text)));
@@ -386,6 +571,7 @@ impl ModelSettingsState {
             "max_tokens": form.max_tokens,
             "context_window": form.context_window,
             "reasoning_effort": form.reasoning_effort.trim(),
+            "endpoint_efforts": form.endpoint_efforts,
             "service_tier": form.service_tier.trim(),
             "user_agent": form.user_agent,
             "send_user_agent": form.send_user_agent,
@@ -471,28 +657,18 @@ impl ModelSettingsState {
         let loc = locale.get();
         let key = model_form_key.get();
         let api_url = form.api_url.trim().to_string();
-        if api_url.is_empty() {
-            let err = t(loc, "err.api_url_required");
-            model_form_msg.set(Some((
-                false,
-                tf(loc, "status.save_failed", &[("msg", &err)]),
-            )));
+        let existing = models.get();
+        let problems =
+            model_form_problems(&form, &key, endpoint_has_stored_key(&existing, &api_url));
+        if report_model_form_problems(model_form, model_form_msg, loc, problems) {
             return;
         }
+        let endpoint_models = form.endpoint_models.clone();
         let mut entries: Vec<ModelFormEntry> = form
             .entries
             .into_iter()
             .filter(|entry| !entry.model.trim().is_empty())
             .collect();
-        if entries.is_empty() {
-            let err = t(loc, "err.model_required");
-            model_form_msg.set(Some((
-                false,
-                tf(loc, "status.save_failed", &[("msg", &err)]),
-            )));
-            return;
-        }
-        let existing = models.get();
         let has_chat = entries.iter().any(|entry| {
             !entry.is_image_model() && !entry.is_video_model() && !entry.use_for_expert
         }) || existing
@@ -500,14 +676,6 @@ impl ModelSettingsState {
             .any(|profile| profile.is_chat_model() && !profile.use_for_expert);
         if !has_chat {
             model_form_msg.set(Some((false, t(loc, "models.need_chat").into())));
-            return;
-        }
-        if key.trim().is_empty() && !endpoint_has_stored_key(&existing, &api_url) {
-            let err = t(loc, "err.api_key_required");
-            model_form_msg.set(Some((
-                false,
-                tf(loc, "status.save_failed", &[("msg", &err)]),
-            )));
             return;
         }
         if let Some(err_key) = route_error(
@@ -522,29 +690,17 @@ impl ModelSettingsState {
             return;
         }
         let proxy_url = form.proxy_url.as_deref().map(str::trim).map(str::to_string);
-        // Image and video models first, then extra chat models, first chat
-        // last so `save_model` leaves the cheaper/default chat profile active.
+        // The first chat model first: `save_model` makes a new chat profile
+        // the default only while there is no usable default, so on a fresh
+        // install that is this one, and an existing default is never replaced.
         let first_chat = entries.iter().position(|entry| {
             !entry.is_image_model() && !entry.is_video_model() && !entry.use_for_expert
         });
-        let mut ordered = Vec::with_capacity(entries.len());
         if let Some(first) = first_chat {
             let default_chat = entries.remove(first);
-            let mut media = Vec::new();
-            let mut other = Vec::new();
-            for entry in entries {
-                if entry.is_image_model() || entry.is_video_model() {
-                    media.push(entry);
-                } else {
-                    other.push(entry);
-                }
-            }
-            ordered.append(&mut media);
-            ordered.append(&mut other);
-            ordered.push(default_chat);
-        } else {
-            ordered = entries;
+            entries.insert(0, default_chat);
         }
+        let ordered = entries;
         settings_busy.set(true);
         model_form_msg.set(Some((true, t(loc, "status.saving_settings").into())));
         let key_arg = if key.trim().is_empty() {
@@ -559,9 +715,13 @@ impl ModelSettingsState {
                 let provider = provider_value(&entry.provider).to_string();
                 let endpoint_suffix = entry.endpoint_suffix.trim().to_string();
                 let effective_api_url = join_api_url(&api_url, &endpoint_suffix);
-                let (max_tokens, context_window) =
-                    catalog_limits_or_default(&provider, &effective_api_url, entry.model.trim())
-                        .await;
+                let (max_tokens, context_window, endpoint_efforts) = new_profile_limits(
+                    &provider,
+                    &effective_api_url,
+                    entry.model.trim(),
+                    endpoint_facts(&endpoint_models, &entry.model),
+                )
+                .await;
                 let image = entry.is_image_model();
                 let video = entry.is_video_model();
                 let media = image || video;
@@ -575,6 +735,7 @@ impl ModelSettingsState {
                     "max_tokens": max_tokens,
                     "context_window": context_window,
                     "reasoning_effort": "",
+                    "endpoint_efforts": endpoint_efforts,
                     "service_tier": "",
                     "user_agent": form.user_agent,
                     "send_user_agent": form.send_user_agent,
@@ -664,17 +825,25 @@ impl ModelSettingsState {
         let loc = locale.get();
         let key = model_form_key.get();
         let listed = models.get();
-        let (form, has_key, profile_id) = if form.id.is_none() {
+        let has_key = if form.id.is_none() {
+            endpoint_has_stored_key(&listed, &form.api_url)
+        } else {
+            listed
+                .iter()
+                .find(|m| Some(m.id.as_str()) == form.id.as_deref())
+                .map(|m| m.has_api_key)
+                .unwrap_or(false)
+        };
+        let problems = model_form_problems(&form, &key, has_key);
+        if report_model_form_problems(model_form, model_form_msg, loc, problems) {
+            return;
+        }
+        let (form, profile_id) = if form.id.is_none() {
             let Some(entry) = form
                 .entries
                 .iter()
                 .find(|entry| !entry.model.trim().is_empty())
             else {
-                let err = t(loc, "err.model_required");
-                model_form_msg.set(Some((
-                    false,
-                    tf(loc, "status.validation_failed", &[("msg", &err)]),
-                )));
                 return;
             };
             let mut probe = form.clone();
@@ -686,23 +855,15 @@ impl ModelSettingsState {
             probe.use_for_vision = entry.use_for_vision;
             probe.use_for_image_generation = entry.use_for_image_generation;
             probe.use_for_video_generation = entry.use_for_video_generation;
-            let has_key = endpoint_has_stored_key(&listed, &form.api_url);
             let profile_id = sibling_profile_id(&listed, &form.api_url).map(str::to_string);
-            (probe, has_key, profile_id)
+            (probe, profile_id)
         } else {
-            let has_key = listed
-                .iter()
-                .find(|m| Some(m.id.as_str()) == form.id.as_deref())
-                .map(|m| m.has_api_key)
-                .unwrap_or(false);
             let profile_id = form.id.clone();
-            (form, has_key, profile_id)
+            (form, profile_id)
         };
         let cfg = model_form_to_settings(&form, has_key);
         let proxy_url = model_form_proxy(&listed, &form);
-        if let Some(err_key) = settings_required_error_key(&cfg, &key)
-            .or_else(|| route_error(&proxy_url, form.proxy_custom))
-        {
+        if let Some(err_key) = route_error(&proxy_url, form.proxy_custom) {
             let err = t(loc, err_key);
             model_form_msg.set(Some((
                 false,
@@ -710,6 +871,15 @@ impl ModelSettingsState {
             )));
             return;
         }
+        // A model the catalog does not know: once the connection works, read
+        // the endpoint's own facts for it (context, output, effort levels).
+        let fetch_facts = form.endpoint_models.is_empty()
+            && !form.is_image_model()
+            && self.model_catalog_limits.get_untracked().is_none()
+            && matches!(
+                provider_value(&form.provider),
+                "openai" | "openai_responses" | "anthropic"
+            );
         settings_busy.set(true);
         model_form_msg.set(Some((true, t(loc, "status.validating").into())));
         // The backend probes with a test image when "supports images" is on,
@@ -748,6 +918,10 @@ impl ModelSettingsState {
                         msg.push_str(&t(loc, "status.vision_ok"));
                     }
                     model_form_msg.set(Some((true, msg)));
+                    if fetch_facts {
+                        settings_busy.set(false);
+                        self.fetch_endpoint_models(true);
+                    }
                 }
                 Err(err) => {
                     let mut msg = tf(
@@ -762,6 +936,125 @@ impl ModelSettingsState {
                 }
             }
             settings_busy.set(false);
+        });
+    }
+
+    /// `GET {base}/models` for the open form: the IDs become Model ID
+    /// suggestions and, for a model the catalog does not know, the endpoint's
+    /// facts prefill context window, max output and effort levels. `quiet`
+    /// (after Test connection) reports nothing when the list is unavailable.
+    pub(crate) fn fetch_endpoint_models(self, quiet: bool) {
+        let Self {
+            model_form,
+            model_form_key,
+            model_form_msg,
+            model_catalog_limits,
+            models,
+            locale,
+            ..
+        } = self;
+        let Some(form) = model_form.get_untracked() else {
+            return;
+        };
+        if form.endpoint_models_busy {
+            return;
+        }
+        let loc = locale.get_untracked();
+        let listed = models.get_untracked();
+        let api_url = form.api_url.trim().to_string();
+        if api_url.is_empty() {
+            if !quiet {
+                report_model_form_problems(model_form, model_form_msg, loc, vec!["api_url".into()]);
+            }
+            return;
+        }
+        // The add form lists from the shared root with its first row's protocol.
+        let (provider, suffix) = if form.id.is_none() {
+            form.entries
+                .iter()
+                .find(|entry| !crate::dto::is_gemini_provider(&entry.provider))
+                .map(|entry| (entry.provider.clone(), entry.endpoint_suffix.clone()))
+                .unwrap_or_else(|| ("openai".into(), String::new()))
+        } else {
+            (form.provider.clone(), form.endpoint_suffix.clone())
+        };
+        let profile_id = if form.id.is_some() {
+            form.id.clone()
+        } else {
+            sibling_profile_id(&listed, &api_url).map(str::to_string)
+        };
+        let proxy_url = model_form_proxy(&listed, &form);
+        let key = model_form_key.get_untracked();
+        let requested_url = join_api_url(&api_url, &suffix);
+        model_form.update(|form| {
+            if let Some(form) = form {
+                form.endpoint_models_busy = true;
+                if !quiet {
+                    form.endpoint_models_status = None;
+                }
+            }
+        });
+        spawn_local(async move {
+            let args = json_args(&serde_json::json!({
+                "provider": provider_value(&provider),
+                "apiUrl": requested_url,
+                "key": (!key.trim().is_empty()).then_some(key),
+                "profileId": profile_id,
+                "proxyUrl": proxy_url.trim(),
+            }));
+            let reply = match args {
+                Ok(args) => invoke_timeout("list_endpoint_models", args, 30_000)
+                    .await
+                    .map_err(js_error_text)
+                    .and_then(|value| {
+                        serde_wasm_bindgen::from_value::<Vec<EndpointModelDto>>(value)
+                            .map_err(|error| error.to_string())
+                    }),
+                Err(error) => Err(error.to_string()),
+            };
+            model_form.update(|form| {
+                let Some(form) = form else {
+                    return;
+                };
+                form.endpoint_models_busy = false;
+                // The address changed while the list was loading.
+                if form.api_url.trim() != api_url {
+                    return;
+                }
+                match reply {
+                    Ok(list) => {
+                        let count = list.len().to_string();
+                        form.endpoint_models = list;
+                        let prefilled = form.id.is_some()
+                            && model_catalog_limits.get_untracked().is_none()
+                            && endpoint_facts(&form.endpoint_models, &form.model).is_some();
+                        if prefilled {
+                            sync_endpoint_facts(form);
+                        }
+                        let text = if prefilled {
+                            tf(
+                                loc,
+                                "models.fetch_prefilled",
+                                &[("count", &count), ("model", form.model.trim())],
+                            )
+                        } else {
+                            tf(loc, "models.fetch_found", &[("count", &count)])
+                        };
+                        form.endpoint_models_status = Some((true, text));
+                    }
+                    Err(error) if !quiet => {
+                        form.endpoint_models_status = Some((
+                            false,
+                            tf(
+                                loc,
+                                "models.fetch_failed",
+                                &[("msg", &localize_backend(loc, &error))],
+                            ),
+                        ));
+                    }
+                    Err(_) => {}
+                }
+            });
         });
     }
 
@@ -1084,5 +1377,96 @@ impl ModelSettingsState {
                 Err(error) => settings_message.set(Some((false, js_error_text(error)))),
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod form_tests {
+    use super::{model_field_dom_id, model_form_problems, sync_endpoint_facts};
+    use crate::dto::{EndpointModelDto, ModelForm, ModelFormEntry};
+
+    fn edit_form(api_url: &str, model: &str) -> ModelForm {
+        ModelForm {
+            id: Some("p1".into()),
+            provider: "openai".into(),
+            api_url: api_url.into(),
+            model: model.into(),
+            max_tokens: 8192,
+            context_window: 128_000,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn every_missing_field_is_reported_at_once_in_form_order() {
+        let form = edit_form("", "");
+        assert_eq!(
+            model_form_problems(&form, "", false),
+            ["api_url", "api_key", "model"]
+        );
+        assert_eq!(model_field_dom_id("api_key"), "model-form-api-key");
+        let mut add = ModelForm {
+            api_url: "https://api.deepseek.com".into(),
+            entries: vec![ModelFormEntry {
+                row_id: 7,
+                endpoint_suffix: "坏网关".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            model_form_problems(&add, "", true),
+            ["model", "endpoint_suffix:7"]
+        );
+        assert_eq!(
+            model_field_dom_id("endpoint_suffix:7"),
+            "provider-endpoint-suffix-7"
+        );
+        add.entries[0].model = "deepseek-v4-flash".into();
+        add.entries[0].endpoint_suffix.clear();
+        assert!(model_form_problems(&add, "", true).is_empty());
+    }
+
+    #[test]
+    fn local_gateways_need_no_api_key() {
+        let form = edit_form("http://127.0.0.1:3425/v1", "deepseek/deepseek-flash");
+        assert!(model_form_problems(&form, "", false).is_empty());
+        let remote = edit_form("https://api.deepseek.com", "deepseek-v4-flash");
+        assert_eq!(model_form_problems(&remote, "", false), ["api_key"]);
+        assert!(model_form_problems(&remote, "", true).is_empty());
+    }
+
+    #[test]
+    fn endpoint_facts_prefill_only_the_exact_id_and_never_typed_limits() {
+        let mut form = edit_form("http://127.0.0.1:3425/v1", "deepseek/deepseek-flash");
+        form.endpoint_models = vec![
+            EndpointModelDto {
+                id: "deepseek/deepseek-flash-2".into(),
+                context_window: Some(2_000_000),
+                ..Default::default()
+            },
+            EndpointModelDto {
+                id: "deepseek/deepseek-flash".into(),
+                context_window: Some(1_000_000),
+                max_output_tokens: Some(384_000),
+                reasoning_levels: Some(vec![
+                    "none".into(),
+                    "low".into(),
+                    "high".into(),
+                    "max".into(),
+                ]),
+            },
+        ];
+        form.max_tokens_edited = true;
+        form.max_tokens = 4096;
+        sync_endpoint_facts(&mut form);
+        assert_eq!(form.context_window, 1_000_000);
+        assert_eq!(form.max_tokens, 4096);
+        assert_eq!(form.endpoint_efforts, ["none", "low", "high", "max"]);
+        // A prefix of a listed id is not that model.
+        form.model = "deepseek/deepseek".into();
+        sync_endpoint_facts(&mut form);
+        assert!(form.endpoint_efforts.is_empty());
+        assert_eq!(form.context_window, 1_000_000);
     }
 }

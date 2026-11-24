@@ -96,7 +96,7 @@ async function emit(page: Page, name: string, payload: unknown) {
 test("quick start walks through onboarding, project creation, and a first conversation", async ({ page }, info) => {
   await page.goto(`/?mockLocale=${locale}&mockOnboarding=1&mockQuickStartTutorial=1`);
   const modal = page.locator(".onboard");
-  const titles = [tr("欢迎使用 wisp-science", "Welcome to wisp-science"), tr("wisp-science 能做什么", "What wisp-science can do"), tr("配置模型", "Set up your model"), tr("本地环境（可选）", "Local environment (optional)")];
+  const titles = [tr("欢迎使用 Wisp Science", "Welcome to Wisp Science"), tr("Wisp Science 能做什么", "What Wisp Science can do"), tr("配置模型", "Set up your model"), tr("本地环境（可选）", "Local environment (optional)")];
   const names = ["01-welcome", "02-features", "03-model", "04-environment"];
   for (let step = 0; step < 4; step++) {
     await expect(modal.getByRole("heading")).toHaveText(titles[step]);

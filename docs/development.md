@@ -400,8 +400,19 @@ existing interpreter overrides survive detection and database reopen. The
 check does not launch executables or validate versions/packages. **Cmd/Ctrl+P →
 Quick setup** reopens the first-run page and refreshes detection
 without resetting models or installing software. Use **Check
-paths again** after installing tools. Windows Store Python aliases and the
-macOS system Python developer-tools stub are excluded from automatic selection.
+paths again** after installing tools. Windows Store Python aliases are excluded
+from automatic selection. The macOS `/usr/bin/python3` developer-tools stub is
+excluded only while no Command Line Tools or Xcode Python exists at its default
+location (a file check; the stub is never launched to find out), because
+launching it then opens the installer; with them installed it runs their Python
+and is reported as found. The first-run guide lists Python, Rscript, uv, and
+Node only; Settings → General and Capabilities list every tool.
+
+Without a saved `locale` setting, the UI language follows the system's preferred
+language (`NSLocale.preferredLanguages` on macOS, the per-user UI language in
+the registry on Windows, `LC_ALL`/`LC_MESSAGES`/`LANG` elsewhere); a saved
+preference always wins. `load_locale` in `src-tauri/src/lib.rs` resolves it for
+the settings payload, native menus, and the `configure` tool alike.
 
 The one exception is the user-initiated **Install into Wisp** action in the
 same panel (`src-tauri/src/toolchain.rs`). The panel offers only tools that

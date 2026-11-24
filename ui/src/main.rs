@@ -71,8 +71,9 @@ use bindings::{
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
 use i18n::{
-    empty_subtitle, empty_title, localize_backend, send_failed, set_document_lang, t, tab_count,
-    tf, usage_tip, Locale, EMPTY_SUBTITLE_COUNT, EMPTY_TITLE_COUNT, TIP_COUNT,
+    empty_subtitle, empty_title, localize_backend, send_failed, send_failed_status,
+    set_document_lang, t, tab_count, tf, usage_tip, Locale, EMPTY_SUBTITLE_COUNT,
+    EMPTY_TITLE_COUNT, TIP_COUNT,
 };
 use leptos::{ev, window_event_listener, *};
 use library::{refresh_library, refresh_session_library, HighlightsPane, LibraryScreen};
@@ -356,7 +357,7 @@ fn request_turn_memory_proposal(
                     proposal.set(Some(next));
                     status.set(t(locale.get_untracked(), "memory.proposal.ready"));
                 }
-                Ok(_) => status.set(t(locale.get_untracked(), "memory.proposal.none")),
+                Ok(_) => flash_status(status, t(locale.get_untracked(), "memory.proposal.none")),
                 Err(parse_error) => {
                     status.set(tf(
                         locale.get_untracked(),
@@ -512,6 +513,9 @@ fn App() -> impl IntoView {
     // Hydration clears viewed replies locally, even while a shared inbox read
     // is still in flight. Its epoch also rejects that read's stale snapshot.
     let inbox_sessions = create_rw_signal::<Vec<SessionSearchInfo>>(vec![]);
+    // Inbox rows blocked on an approval in any project, read with the inbox.
+    // The rest are finished replies nobody has opened yet ("New reply").
+    let awaiting_sessions = create_rw_signal::<HashSet<String>>(HashSet::new());
     let inbox_request_epoch = create_rw_signal(0u64);
 
     let pet_activity = create_rw_signal((String::from("idle"), 0_u64));
@@ -1326,6 +1330,31 @@ fn App() -> impl IntoView {
         Some((profile.provider, profile.api_url, profile.model))
     });
     let magpie_model = model_settings.magpie_model;
+    // No usable model yet (skipped the key step, no Magpie): the home screen
+    // and composer say so before a first message fails. Rechecked whenever the
+    // model list, the Magpie connection or the Settings overlay changes.
+    let model_missing = create_rw_signal(false);
+    create_effect(move |_| {
+        models.track();
+        magpie_model.track();
+        show_settings.track();
+        spawn_local(async move {
+            let value = invoke("get_onboarding_state", JsValue::UNDEFINED).await;
+            if let Ok(state) = serde_wasm_bindgen::from_value::<OnboardingState>(value) {
+                // Ask for Magpie directly: at startup the shared signal is
+                // still empty and would flash the notice for Magpie users.
+                let magpie = state.has_api_key == Some(false)
+                    && match invoke_checked("magpie_model_info", JsValue::UNDEFINED).await {
+                        Ok(value) => !value.is_null() && !value.is_undefined(),
+                        Err(_) => magpie_model.get_untracked().is_some(),
+                    };
+                let missing = model_setup_missing(state.has_api_key, magpie);
+                if model_missing.get_untracked() != missing {
+                    model_missing.set(missing);
+                }
+            }
+        });
+    });
     let magpie_effort = create_memo(move |_| match active_session.get() {
         Some(session_id) => session_reasoning_efforts
             .with(|values| values.get(&session_id).cloned())
@@ -3826,6 +3855,7 @@ fn App() -> impl IntoView {
                 transcripts,
                 models,
                 session_model_ids,
+                magpie_model,
             );
             transcript_event_revisions.update(|all| {
                 let revision = all.entry(removal.frame_id.clone()).or_default();
@@ -3898,6 +3928,7 @@ fn App() -> impl IntoView {
                 transcripts_cb,
                 models_cb,
                 session_models_cb,
+                magpie_model,
             )
         };
         let queue = |fid: String, d: PendingDelta| {
@@ -3910,6 +3941,7 @@ fn App() -> impl IntoView {
                 transcripts_cb,
                 models_cb,
                 session_models_cb,
+                magpie_model,
             );
         };
         let set_pet_activity = |frame_id: &str, state: &str| {
@@ -4034,10 +4066,11 @@ fn App() -> impl IntoView {
                     .chars()
                     .take(160)
                     .collect();
-                let model = session_model_label(
+                let model = session_reply_label(
                     &models_cb.get_untracked(),
                     &session_models_cb.get_untracked(),
                     Some(&frame_id),
+                    magpie_model.get_untracked().as_ref(),
                 );
                 if let Some(id) = queue_id {
                     queue_states.update(|states| {
@@ -4407,6 +4440,7 @@ fn App() -> impl IntoView {
             }
             AgentEvent::Usage {
                 frame_id,
+                model,
                 input,
                 output,
                 reasoning,
@@ -4421,6 +4455,7 @@ fn App() -> impl IntoView {
                 // it never splits the coalesced tool-steps panel.
                 flush_now();
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                    stamp_turn_reply_model(v, &model);
                     upsert_turn_usage(
                         v,
                         input,
@@ -4636,10 +4671,11 @@ fn App() -> impl IntoView {
                         .set(Some(localize_backend(locale_cb.get_untracked(), &message)));
                 }
                 if !rolled_back {
-                    let model = session_model_label(
+                    let model = session_reply_label(
                         &models_cb.get_untracked(),
                         &session_models_cb.get_untracked(),
                         Some(&frame_id),
+                        magpie_model.get_untracked().as_ref(),
                     );
                     route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                         strip_approval_pending(v);
@@ -4869,7 +4905,7 @@ fn App() -> impl IntoView {
                     }
                 });
                 if active_cb.get().as_deref() == Some(&frame_id) {
-                    status_cb.set(t(locale_cb.get(), "status.review_done"));
+                    flash_status(status_cb, t(locale_cb.get(), "status.review_done"));
                 }
             }
             // Deliberately ignored, not forgotten: `edit` emits Diff from
@@ -5207,6 +5243,7 @@ fn App() -> impl IntoView {
             transcripts,
             models,
             session_model_ids,
+            magpie_model,
         );
         match update.kind.as_str() {
             "ToolCall" | "ToolCallUpdate" => route_items(
@@ -5285,7 +5322,7 @@ fn App() -> impl IntoView {
             }
             "AvailableCommands" => {
                 if active_session.get_untracked().as_deref() == Some(update.frame_id.as_str()) {
-                    status.set("ACP commands updated".into());
+                    flash_status(status, "ACP commands updated");
                 }
             }
             _ => {}
@@ -5645,7 +5682,12 @@ fn App() -> impl IntoView {
                 .map(|agent| agent.label)
                 .or_else(|| Some("ACP Agent".into()))
         } else {
-            session_model_label(&models.get(), &session_model_ids.get(), active.as_deref())
+            session_reply_label(
+                &models.get(),
+                &session_model_ids.get(),
+                active.as_deref(),
+                magpie_model.get().as_ref(),
+            )
         };
         input.set(String::new());
         attachments.set(vec![]);
@@ -5860,11 +5902,7 @@ fn App() -> impl IntoView {
                     if raw.contains(NO_API_KEY_MARK) {
                         needs_api_key.set(true);
                     }
-                    status.set(tf(
-                        locale.get(),
-                        "status.send_failed",
-                        &[("msg", &localize_backend(locale.get(), status_message))],
-                    ));
+                    status.set(send_failed_status(locale.get(), status_message));
                 }
             }
             finish_pending_turn(pending_turns, running, &id);
@@ -6528,7 +6566,12 @@ fn App() -> impl IntoView {
                 status.set("ACP protocol v1 cannot replay a Wisp transcript.".into());
                 return;
             }
-            let model = session_model_label(&models.get(), &session_model_ids.get(), Some(&id));
+            let model = session_reply_label(
+                &models.get(),
+                &session_model_ids.get(),
+                Some(&id),
+                magpie_model.get().as_ref(),
+            );
             items.update(|v| {
                 strip_error_at(v, error_idx);
                 ensure_streaming_assistant(v, model.clone());
@@ -6610,11 +6653,7 @@ fn App() -> impl IntoView {
                         if raw.contains(NO_API_KEY_MARK) {
                             needs_api_key.set(true);
                         }
-                        status.set(tf(
-                            loc,
-                            "status.send_failed",
-                            &[("msg", &localize_backend(loc, &raw))],
-                        ));
+                        status.set(send_failed_status(loc, &raw));
                         finish_pending_turn(pending_turns, running, &id);
                         if stopping_session.get().as_deref() == Some(&id) {
                             stopping_session.set(None);
@@ -6672,7 +6711,12 @@ fn App() -> impl IntoView {
             };
 
             let prompt = t(locale.get_untracked(), "context_recovery.new_prompt");
-            let model = active_model_label(&models.get_untracked());
+            let model = session_reply_label(
+                &models.get_untracked(),
+                &HashMap::new(),
+                None,
+                magpie_model.get_untracked().as_ref(),
+            );
             let initial = vec![
                 ChatItem::User(prompt.clone()),
                 ChatItem::Assistant {
@@ -6955,7 +6999,7 @@ fn App() -> impl IntoView {
                             &[("version", &update.current_version)],
                         );
                         msg.set(Some((true, text.clone())));
-                        status_msg.set(text);
+                        flash_status(status_msg, text);
                         if matches!(modal.get_untracked(), Some(UpdateCheckModal::Checking)) {
                             modal.set(Some(UpdateCheckModal::UpToDate {
                                 version: update.current_version,
@@ -7221,6 +7265,9 @@ fn App() -> impl IntoView {
         });
     };
     let open_settings = move |_| open_settings_fn(None);
+    provide_context(chat_render::OpenErrorSettings(Callback::new(
+        move |section: String| open_settings_fn(Some(section)),
+    )));
     let open_capability_settings = Callback::new(move |section: String| {
         show_capabilities.set(false);
         open_settings_fn(Some(section));
@@ -7268,7 +7315,7 @@ fn App() -> impl IntoView {
             sync_actions_available.set(project_sync_backend_configured(&cfg));
             busy.set(false);
             show.set(false);
-            status_msg.set(t(loc.get(), "status.settings_saved").into());
+            flash_status(status_msg, t(loc.get(), "status.settings_saved"));
             s.set(cfg);
             refresh_pet.call(());
         });
@@ -7277,6 +7324,7 @@ fn App() -> impl IntoView {
     let save_model_form = move |_| model_settings.save_model_form();
 
     let validate_model_form = move |_| model_settings.validate_model_form();
+    let fetch_endpoint_models = move |_| model_settings.fetch_endpoint_models(false);
 
     let test_reviewer_form = move |_| model_settings.test_reviewer_form();
 
@@ -7346,7 +7394,12 @@ fn App() -> impl IntoView {
     let start_session_with_first_message = Callback::new(move |text: String| {
         attachments.set(vec![]);
         sel_artifact.set(0);
-        let turn_model = active_model_label(&models.get_untracked());
+        let turn_model = session_reply_label(
+            &models.get_untracked(),
+            &HashMap::new(),
+            None,
+            magpie_model.get_untracked().as_ref(),
+        );
         replace_visible_transcript(
             active_session.get_untracked(),
             None,
@@ -7404,11 +7457,7 @@ fn App() -> impl IntoView {
                     if raw.contains(NO_API_KEY_MARK) {
                         needs_api_key.set(true);
                     }
-                    status.set(tf(
-                        loc,
-                        "status.send_failed",
-                        &[("msg", &localize_backend(loc, &raw))],
-                    ));
+                    status.set(send_failed_status(loc, &raw));
                     running.update(|r| {
                         r.clear();
                     });
@@ -7518,7 +7567,12 @@ fn App() -> impl IntoView {
                 .into_iter()
                 .map(|name| ComposerReferenceArg::Skill { name })
                 .collect();
-            let turn_model = active_model_label(&models.get());
+            let turn_model = session_reply_label(
+                &models.get(),
+                &HashMap::new(),
+                None,
+                magpie_model.get().as_ref(),
+            );
             spawn_local(async move {
                 if !enabled {
                     let args = to_value(&serde_json::json!({
@@ -7597,11 +7651,7 @@ fn App() -> impl IntoView {
                         if raw.contains(NO_API_KEY_MARK) {
                             needs_api_key.set(true);
                         }
-                        status.set(tf(
-                            loc,
-                            "status.send_failed",
-                            &[("msg", &localize_backend(loc, &raw))],
-                        ));
+                        status.set(send_failed_status(loc, &raw));
                         running.update(|sessions| {
                             sessions.remove(&session_id);
                         });
@@ -8429,7 +8479,7 @@ fn App() -> impl IntoView {
                                 session_timer.set(Some(timer));
                                 timer_refresh.update(|n| *n = n.wrapping_add(1));
                                 if input.get_untracked() == text { input.set(String::new()); }
-                                status.set(crate::i18n::tr(locale.get_untracked(), "assistant.timer_saved_use_the_clock_to_manage_it").into());
+                                flash_status(status, crate::i18n::tr(locale.get_untracked(), "assistant.timer_saved_use_the_clock_to_manage_it"));
                             }
                         },
                         Err(error) => status.set(error),
@@ -8875,6 +8925,26 @@ fn App() -> impl IntoView {
             }
         });
     };
+    // The example project is read-only, so its empty hero invites a message
+    // the user cannot send. Open the first example conversation on entry.
+    let demo_auto_opened = store_value(false);
+    create_effect(move |_| {
+        if !demo_mode.get() {
+            demo_auto_opened.set_value(false);
+            return;
+        }
+        if demo_auto_opened.get_value() {
+            return;
+        }
+        let Some(first) = demos.with(|list| list.first().cloned()) else {
+            return;
+        };
+        if active_session.get_untracked().is_some() || !items.with_untracked(Vec::is_empty) {
+            return;
+        }
+        demo_auto_opened.set_value(true);
+        load_demo(first);
+    });
 
     let respond_confirm = {
         let active_session = active_session;
@@ -9109,11 +9179,7 @@ fn App() -> impl IntoView {
                     if raw.contains(NO_API_KEY_MARK) {
                         needs_api_key.set(true);
                     }
-                    status.set(tf(
-                        loc,
-                        "status.send_failed",
-                        &[("msg", &localize_backend(loc, &raw))],
-                    ));
+                    status.set(send_failed_status(loc, &raw));
                 }
             }
             finish_pending_turn(pending_turns, running, &id);
@@ -9145,9 +9211,9 @@ fn App() -> impl IntoView {
         }
         let provider = "openai".to_string();
         let (api_url, _) = provider_defaults(&provider);
-        // `save_model` makes every newly created profile the active one, so
-        // the model the user should land on has to be saved last.
-        let wanted = [DEEPSEEK_PRO_MODEL, DEEPSEEK_FLASH_MODEL];
+        // `save_model` makes a new profile the default only while there is no
+        // usable default, so the model the user should land on goes first.
+        let wanted = [DEEPSEEK_FLASH_MODEL, DEEPSEEK_PRO_MODEL];
         spawn_local(async move {
             for model in wanted {
                 let arg = to_value(&serde_json::json!({
@@ -10197,6 +10263,16 @@ fn App() -> impl IntoView {
                 let v = invoke("list_needs_you_sessions", JsValue::UNDEFINED).await;
                 if epoch != inbox_request_epoch.get_untracked() {
                     continue;
+                }
+                let awaiting = invoke("list_awaiting_sessions", JsValue::UNDEFINED).await;
+                if epoch != inbox_request_epoch.get_untracked() {
+                    continue;
+                }
+                let awaiting = serde_wasm_bindgen::from_value::<Vec<String>>(awaiting)
+                    .map(|ids| ids.into_iter().collect::<HashSet<_>>())
+                    .unwrap_or_default();
+                if awaiting_sessions.with_untracked(|current| current != &awaiting) {
+                    awaiting_sessions.set(awaiting);
                 }
                 if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<SessionSearchInfo>>(v) {
                     if inbox_sessions.with_untracked(|current| current != &rows) {
@@ -13249,6 +13325,7 @@ fn App() -> impl IntoView {
                 sync_actions_available, command_palette_open, project_transfer,
                 privacy_mode_active, privacy_hidden_project_ids, privacy_ready,
                 menu_new_project, menu_import_project, home_calendar_open, home_dialog_open,
+                model_missing,
             }
             open_project=switch_project
             open_project_folder=Callback::new(move |id| open_project_with_files.call((id, None, true)))
@@ -13333,6 +13410,7 @@ fn App() -> impl IntoView {
                 sessions, folders, drag_session, drop_target, active_session, running,
                 explorations,
                 attention: approval_pending,
+                awaiting_sessions,
                 inbox_sessions,
                 rename_session_input, rename_session_target, collapsed_folders, folder_modal_input,
                 folder_modal, demos, session_history_cursor, session_history_loading,
@@ -13697,8 +13775,14 @@ fn App() -> impl IntoView {
                                     let project_id = s.project_id.clone();
                                     let session_id = s.id.clone();
                                     let title = user_message_presentation(&s.title).body;
+                                    // Say why the row is here: an approval wait needs
+                                    // the user; a finished reply only needs reading.
+                                    let awaiting = approval_pending.with(|ids| ids.contains(&s.id))
+                                        || awaiting_sessions.with(|ids| ids.contains(&s.id));
                                     view! {
                                         <button type="button" class="inbox-item"
+                                            class:inbox-item-approval=awaiting
+                                            data-testid="inbox-item"
                                             on:click=move |_| {
                                                 inbox_open.set(false);
                                                 topbar_more_open.set(false);
@@ -13706,6 +13790,9 @@ fn App() -> impl IntoView {
                                             }>
                                             <span class="inbox-item-project">{s.project_name.clone()}</span>
                                             <span class="inbox-item-title">{title}</span>
+                                            <span class="inbox-item-reason" data-testid="inbox-item-reason">
+                                                {t(locale.get(), attention_reason_key(awaiting))}
+                                            </span>
                                         </button>
                                     }
                                 };
@@ -14377,7 +14464,7 @@ fn App() -> impl IntoView {
                                             match invoke_checked("append_review_note", arg).await {
                                                 Ok(v) => {
                                                     let path = v.as_string().unwrap_or_default();
-                                                    status.set(tf(loc, "selection.annotated", &[("path", &path)]));
+                                                    flash_status(status, tf(loc, "selection.annotated", &[("path", &path)]));
                                                 }
                                                 Err(e) => status.set(localize_backend(loc, &js_error_text(e))),
                                             }
@@ -14734,8 +14821,13 @@ fn App() -> impl IntoView {
                                     }
                                     // Usage is metadata for the whole reply, not
                                     // a boundary that closes the live step run.
+                                    // Neither is the approval card for the call
+                                    // this run is blocked on: the run stays live
+                                    // and its header reads "Awaiting approval".
                                     let live = busy_now && (j > last || list[j..=last].iter().all(|item| {
-                                        renders_nothing(item) || matches!(item, ChatItem::Usage { .. })
+                                        renders_nothing(item)
+                                            || matches!(item, ChatItem::Usage { .. })
+                                            || awaits_approval(item)
                                     }));
                                     let mut h = std::collections::hash_map::DefaultHasher::new();
                                     for idx in &indices { (idx, list[*idx].fingerprint()).hash(&mut h); }
@@ -15815,6 +15907,16 @@ fn App() -> impl IntoView {
                         {t(locale.get(), "projects.example_read_only")}
                     </div>
                 })}
+                {move || (model_missing.get() && !demo_mode.get()).then(|| view! {
+                    <div class="model-missing-notice composer-model-missing" role="status"
+                        data-testid="composer-model-missing">
+                        <span>{move || t(locale.get(), "projects.model_missing")}</span>
+                        <button type="button" class="btn-ghost"
+                            on:click=move |_| open_settings_fn(Some("models".into()))>
+                            {move || t(locale.get(), "projects.model_missing_action")}
+                        </button>
+                    </div>
+                })}
                 {move ||active_archived.get().then(||view!{
                     <div class="archive-readonly" data-testid="archive-readonly"><span>{crate::i18n::tr(locale.get(), "assistant.archived_notebook_read_only")}</span><button class="btn-ghost" on:click=move |_|archive_frame.set(active_session.get_untracked())>{crate::i18n::tr(locale.get(), "assistant.view_milestone_continue_research")}</button></div>
                 })}
@@ -16726,7 +16828,7 @@ fn App() -> impl IntoView {
                                                             .into_iter()
                                                             .filter(ModelProfile::is_chat_model)
                                                             .map(|model| {
-                                                                (format!("http:{}", model.id), model.label)
+                                                                (format!("http:{}", model.id), model.display_label())
                                                             }),
                                                     );
                                                 }
@@ -16798,7 +16900,7 @@ fn App() -> impl IntoView {
                                                     profiles
                                                         .into_iter()
                                                         .filter(ModelProfile::is_chat_model)
-                                                        .map(|model| (Some(model.id), model.label)),
+                                                        .map(|model| (Some(model.id.clone()), model.display_label())),
                                                 );
                                                 // Subagents only run on HTTP models, so Magpie runs all of
                                                 // them; the stored choice waits for a disconnect.
@@ -17184,12 +17286,12 @@ fn App() -> impl IntoView {
                                                 let profiles = list.clone();
                                                 list.into_iter().filter(ModelProfile::is_chat_model).map(|m| {
                                                     let pick_id = m.id.clone();
-                                                    let pick_label = m.label.clone();
+                                                    let pick_label = m.display_label();
                                                     let pick_supports_vision = m.supports_vision;
                                                     let duplicate_label = profiles.iter().filter(|other| other.is_chat_model()
-                                                        && other.label.trim().eq_ignore_ascii_case(m.label.trim())).count() > 1;
+                                                        && other.display_label().eq_ignore_ascii_case(&pick_label)).count() > 1;
                                                     let detail = format!("{} · {}", m.provider, m.model);
-                                                    let tooltip = format!("{}\n{}", m.label, detail);
+                                                    let tooltip = format!("{}\n{}", pick_label, detail);
                                                     let is_active = !acp_selected
                                                         && selected.as_deref().map_or(m.active, |id| id == m.id);
                                                     view! {
@@ -17218,7 +17320,7 @@ fn App() -> impl IntoView {
                                                                 }
                                                             }>
                                                                 <span class="model-menu-text">
-                                                                    <span class="model-menu-label">{m.label.clone()}</span>
+                                                                    <span class="model-menu-label">{m.display_label()}</span>
                                                                     {duplicate_label.then(|| view! { <span class="model-menu-sub">{detail}</span> })}
                                                                 </span>
                                                                 {is_active.then(|| view! { <span class="model-menu-check">{compose_icon("check")}</span> })}
@@ -17507,7 +17609,11 @@ fn App() -> impl IntoView {
                                         .cloned()?;
                                         (
                                             profile.reasoning_effort.clone(),
-                                            composer_model_efforts.get().unwrap_or_default(),
+                                            // The catalog's exact entry first; without one, the levels
+                                            // the endpoint's own model list reported for this id.
+                                            composer_model_efforts
+                                                .get()
+                                                .unwrap_or_else(|| profile.endpoint_efforts.clone()),
                                             Some(profile.id.clone()),
                                         )
                                     }
@@ -19868,6 +19974,7 @@ fn App() -> impl IntoView {
             test_reviewer_form=Callback::new(test_reviewer_form)
             set_subagent_model=Callback::new(move |id: String| model_settings.apply_subagent_model(id))
             validate_model_form=Callback::new(validate_model_form)
+            fetch_endpoint_models=Callback::new(fetch_endpoint_models)
             start_specialist_chat=start_specialist_chat
             refresh_conns=Callback::new(move |_: ()| refresh_conns())
             refresh_skills=Callback::new(move |_: ()| refresh_skills())
@@ -20093,6 +20200,11 @@ fn App() -> impl IntoView {
             onboard_key=onboard_key
             save_onboard_key=save_onboard_key
             dismiss_onboard=Callback::new(dismiss_onboard)
+            magpie_model=magpie_model
+            open_model_settings=Callback::new(move |()| {
+                dismiss_onboarding.call(());
+                open_settings_fn(Some("models".into()));
+            })
         />
         <ContextRecoveryOverlay
             state=ContextRecoveryOverlayState {

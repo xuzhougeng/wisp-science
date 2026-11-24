@@ -1592,7 +1592,11 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "models.acp_open") => Some("ACP Agents"),
         (Locale::En, "models.category.http") => Some("API models"),
         (Locale::En, "models.acp_hint") => Some("App-wide profiles. The default model applies to new conversations; existing conversations keep their model. List changes are saved immediately."),
-        (Locale::En, "models.magpie_connected") => Some("Magpie is connected: every built-in conversation, subagent and HTTP reviewer runs on {model}. Switch models in Magpie. The models below apply again after you run `magpie wisp-science default` and restart Wisp Science."),
+        (Locale::En, "models.magpie_connected") => Some("Magpie is connected: every built-in conversation, subagent and HTTP reviewer runs on {model}. Switch models in Magpie."),
+        (Locale::En, "models.magpie_disconnect") => Some("The personal models below apply again after you run this command and restart Wisp Science:"),
+        (Locale::En, "models.magpie_copy") => Some("Copy command"),
+        (Locale::En, "models.not_in_effect") => Some("Not in effect"),
+        (Locale::En, "models.not_in_effect_hint") => Some("Magpie is connected, so this model is not used until you disconnect Magpie."),
         (Locale::En, "models.acp_subpage_hint") => Some("Configure an installed ACP v1 agent. Command is the executable only; put each argument on its own line."),
         (Locale::En, "models.acp_test") => Some("Test Connection"),
         (Locale::En, "models.acp_save") => Some("Save"),
@@ -1706,7 +1710,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "share.none_selected") => Some("Select at least one message"),
         (Locale::En, "share.saved") => Some("Share image saved to {path}"),
         (Locale::En, "share.failed") => Some("Export failed: {error}"),
-        (Locale::En, "share.image_footer") => Some("Shared from wisp-science"),
+        (Locale::En, "share.image_footer") => Some("Shared from Wisp Science"),
         (Locale::En, "permission.full_already") => Some("Full Permission is already on for this conversation"),
         (Locale::En, "permission.ask_already") => Some("Already asking before each tool call"),
         (Locale::En, "permission.auto_unavailable") => Some("Auto permission mode is not available yet"),
@@ -1730,9 +1734,9 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "review.resolved") => Some("resolved"),
         (Locale::En, "review.unaddressed") => Some("unaddressed"),
         (Locale::En, "review.agent_correcting") => Some("These findings require correction."),
-        (Locale::En, "review.transition_to_reviewer") => Some("wisp-science nudged Reviewer: please check this response"),
-        (Locale::En, "review.transition_to_agent") => Some("Reviewer nudged wisp-science: findings found, please revise"),
-        (Locale::En, "review.transition_passed") => Some("Reviewer nudged wisp-science: no issues found, please continue"),
+        (Locale::En, "review.transition_to_reviewer") => Some("Wisp Science nudged Reviewer: please check this response"),
+        (Locale::En, "review.transition_to_agent") => Some("Reviewer nudged Wisp Science: findings found, please revise"),
+        (Locale::En, "review.transition_passed") => Some("Reviewer nudged Wisp Science: no issues found, please continue"),
         (Locale::En, "review.all_fixed") => Some("All findings fixed and independently rechecked."),
         (Locale::En, "review.needs_attention") => Some("Some findings remain after the correction pass."),
         (Locale::En, "status.reviewing") => Some("Reviewing session…"),
@@ -2237,6 +2241,8 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "center.resize_split") => Some("Resize document and chat"),
         (Locale::En, "preview.zoom_out") => Some("Zoom out"),
         (Locale::En, "preview.zoom_reset") => Some("Reset zoom"),
+        (Locale::En, "preview.zoom_fit") => Some("Fit"),
+        (Locale::En, "preview.zoom_fit_title") => Some("Fit the whole image in view"),
         (Locale::En, "preview.zoom_in") => Some("Zoom in"),
         (Locale::En, "preview.select_region") => Some("Select a region to ask about"),
         (Locale::En, "preview.region_selected") => Some("Selected region"),
@@ -2277,7 +2283,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "preview.pdf_next_page") => Some("Next page"),
         (Locale::En, "right.close_preview") => Some("Close preview"),
         (Locale::En, "right.no_artifacts.title") => Some("No artifacts yet"),
-        (Locale::En, "right.no_artifacts.body") => Some("Markdown tables, CSV blocks, equations, and file previews from wisp-science appear here."),
+        (Locale::En, "right.no_artifacts.body") => Some("Markdown tables, CSV blocks, equations, and file previews from Wisp Science appear here."),
         (Locale::En, "right.no_notebook.title") => Some("No code yet"),
         (Locale::En, "right.no_notebook.body") => Some("Executed Python and shell cells, plus shared code blocks, appear here."),
         (Locale::En, "right.highlights") => Some("Highlights"),
@@ -2622,15 +2628,14 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "approval.run_shell") => Some("Run shell command?"),
         (Locale::En, "approval.run_tool") => Some("Run {tool}?"),
         (Locale::En, "approval.code") => Some("Code"),
+        (Locale::En, "approval.command") => Some("Command"),
         (Locale::En, "approval.scope") => Some("Approval scope"),
         (Locale::En, "approval.scope.once") => Some("Once"),
         (Locale::En, "approval.scope.session") => Some("This conversation"),
         (Locale::En, "approval.scope.project") => Some("This project"),
         (Locale::En, "approval.scope.global") => Some("Global"),
         (Locale::En, "approval.allow_once") => Some("Allow once"),
-        (Locale::En, "approval.allow_session") => Some("Allow for this conversation"),
-        (Locale::En, "approval.allow_project") => Some("Allow for this project"),
-        (Locale::En, "approval.allow_global") => Some("Allow globally"),
+        (Locale::En, "approval.allow") => Some("Allow"),
         (Locale::En, "approval.hint") => Some("Approve to run this once. Change default behavior in Settings → Connections."),
         (Locale::En, "approval.image_resize_title") => Some("Resize large image for model input?"),
         (Locale::En, "approval.image_resize_hint") => Some("Wisp will resize a temporary model-input copy. The original file will not be changed."),
@@ -2661,6 +2666,9 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "settings.search_empty") => Some("No matching settings. Try another keyword."),
         (Locale::En, "models.categories") => Some("Model categories"),
         (Locale::En, "models.default") => Some("Default"),
+        (Locale::En, "models.not_configured") => Some("Not configured"),
+        (Locale::En, "models.not_configured_hint") => Some("Add a Base URL, model ID and API key to use this model."),
+        (Locale::En, "models.untitled") => Some("Unnamed model"),
         (Locale::En, "models.capability.vision") => Some("Vision"),
         (Locale::En, "models.capability.expert") => Some("Expert"),
         (Locale::En, "settings.use_for_expert") => Some("Expert model (on-demand help)"),
@@ -2998,7 +3006,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "settings.nav.usage") => Some("Usage"),
         (Locale::En, "settings.storage.data_dir") => Some("Data location"),
         (Locale::En, "settings.storage.data_dir_hint") => {
-            Some("Where wisp-science keeps its database, Python environment and plugins on this machine")
+            Some("Where Wisp Science keeps its database, Python environment and plugins on this machine")
         }
         (Locale::En, "settings.storage.workspace_hint") => Some("Workspace: {dirs}"),
         (Locale::En, "settings.storage.loading") => Some("Calculating…"),
@@ -3398,12 +3406,26 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "settings.provider.anthropic") => Some("Anthropic"),
         (Locale::En, "settings.provider.gemini") => Some("Gemini (Image generation)"),
         (Locale::En, "settings.api_url") => Some("Base URL"),
+        (Locale::En, "settings.api_url_ph") => Some("e.g. https://api.deepseek.com or http://127.0.0.1:3425/v1"),
         (Locale::En, "settings.endpoint_suffix") => Some("Endpoint suffix (optional)"),
         (Locale::En, "settings.endpoint_suffix_ph") => Some("e.g. /anthropic or /v1/images/generations"),
         (Locale::En, "settings.label") => Some("Display name"),
-        (Locale::En, "settings.label_ph") => Some("e.g. gpt-5.5-closeai"),
+        (Locale::En, "settings.label_ph") => Some("Optional; blank shows the model ID"),
         (Locale::En, "settings.model") => Some("Model ID"),
         (Locale::En, "settings.model_ph") => Some("API model name, e.g. gpt-5.5"),
+        (Locale::En, "models.fetch") => Some("Fetch models"),
+        (Locale::En, "models.fetching") => Some("Fetching…"),
+        (Locale::En, "models.fetch_hint") => Some("List the model IDs this Base URL offers (GET /models)"),
+        (Locale::En, "models.fetch_found") => Some("{count} models found. Pick one from the Model ID suggestions."),
+        (Locale::En, "models.fetch_prefilled") => Some("{count} models found. Context window, max output and effort levels for {model} now come from this endpoint."),
+        (Locale::En, "models.fetch_failed") => Some("Could not fetch the model list: {msg}"),
+        (Locale::En, "models.field.api_key") => Some("API key"),
+        (Locale::En, "models.field.endpoint_suffix") => Some("Endpoint suffix"),
+        (Locale::En, "models.fix_fields") => Some("Fill in or fix the highlighted fields: {fields}."),
+        (Locale::En, "models.advanced") => Some("Advanced"),
+        (Locale::En, "models.advanced_hint") => Some("Endpoint suffix, token limits, reasoning effort, Fast mode, roles, network route and request headers"),
+        (Locale::En, "models.advanced_network_hint") => Some("Network route and request headers"),
+        (Locale::En, "settings.api_key_local_hint") => Some("Local gateway: the API key may stay empty (any placeholder also works)."),
         (Locale::En, "settings.api_key") => Some("API key (stored in OS keyring)"),
         (Locale::En, "settings.workspace_dir") => Some("Workspace folder (blank = default; applies after restart)"),
         (Locale::En, "settings.max_iter") => Some("Maximum agent iterations per turn"),
@@ -3646,6 +3668,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "settings.reasoning_effort") => Some("Reasoning effort"),
         (Locale::En, "settings.reasoning_effort.default") => Some("Default (provider)"),
         (Locale::En, "settings.reasoning_effort.known_hint") => Some("Values declared for this exact model in the catalog: {list}"),
+        (Locale::En, "settings.reasoning_effort.endpoint_hint") => Some("Values this endpoint's model list reports for this exact model: {list}"),
         (Locale::En, "settings.reasoning_effort.unknown_hint") => Some("No confirmed effort values are available for this model. Only Default can be selected."),
         (Locale::En, "settings.reasoning_effort.unsupported_hint") => Some("This model has no adjustable effort values declared in the catalog."),
         (Locale::En, "settings.service_tier") => Some("Fast mode"),
@@ -3679,7 +3702,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "settings.video_resolution") => Some("Default resolution"),
         (Locale::En, "settings.video_defaults_hint") => Some("These defaults are used when generate_video does not specify duration, aspect ratio, or resolution. The agent can still override them for a single request."),
         (Locale::En, "settings.stored_key") => Some("(stored — leave blank to keep)"),
-        (Locale::En, "settings.tip") => Some("Enter the shared API root. Put protocol-specific paths such as /anthropic or an explicit image endpoint in that model's optional suffix; Wisp then completes the protocol request path."),
+        (Locale::En, "settings.tip") => Some("Enter the shared API root, with or without /v1: Wisp adds /chat/completions (or /responses, /messages) after a URL that ends in /v1, and otherwise tries the URL itself and then its /v1 path. Put protocol-specific paths such as /anthropic or an explicit image endpoint in that model's optional suffix."),
         (Locale::En, "settings.check_updates") => Some("Check for updates"),
         (Locale::En, "settings.validate") => Some("Test connection"),
         (Locale::En, "settings.cancel") => Some("Cancel"),
@@ -3804,7 +3827,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "status.settings_saved") => Some("Settings saved"),
         (Locale::En, "status.validating") => Some("Validating current settings..."),
         (Locale::En, "status.validation_succeeded") => Some("Validation succeeded"),
-        (Locale::En, "status.validated") => Some("Validated {provider} with {model}"),
+        (Locale::En, "status.validated") => Some("Connection OK · {provider} · {model}"),
         (Locale::En, "status.vision_ok") => Some(" — the test image was accepted."),
         (Locale::En, "status.save_failed") => Some("Save failed: {msg}"),
         (Locale::En, "status.save_response_unreadable") => {
@@ -3916,6 +3939,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "err.api_url_required") => Some("API URL is required."),
         (Locale::En, "err.model_required") => Some("Model is required."),
         (Locale::En, "err.api_key_required") => Some("API key is required."),
+        (Locale::En, "err.endpoint_suffix_invalid") => Some("The endpoint suffix must be a URL path such as /anthropic (letters, digits, - . _ ~ and /)."),
         (Locale::En, "err.max_tokens_ceiling") => Some("{model} accepts at most {max} output tokens — lower Max output tokens."),
         (Locale::En, "err.unknown") => Some("Unknown error"),
         (Locale::En, "err.openssh_too_old") => Some("Local OpenSSH is too old for Wisp (found OpenSSH {found}, need 8.4 or later). Password authentication uses SSH_ASKPASS_REQUIRE, which OpenSSH added in 8.4. On Windows, update OpenSSH Client in Settings → Apps → Optional features, or install a current Win32-OpenSSH build. Restart Wisp and run `ssh -V`."),
@@ -3935,7 +3959,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "err.skill_no_description") => Some("SKILL.md is missing a description."),
         (Locale::En, "err.skill_exists") => Some("A skill named '{name}' already exists."),
         (Locale::En, "err.file_not_found") => Some("File not found: {path}"),
-        (Locale::En, "chat.assistant") => Some("wisp-science"),
+        (Locale::En, "chat.assistant") => Some("Wisp Science"),
         (Locale::En, "chat.thinking") => Some("thinking"),
         (Locale::En, "chat.progress") => Some("progress"),
         (Locale::En, "execution_plan.title") => Some("Execution plan"),
@@ -3961,7 +3985,9 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "chat.steps_n_time") => Some("Ran {n} steps · {t}"),
         (Locale::En, "chat.steps_1") => Some("Ran 1 step"),
         (Locale::En, "chat.steps_1_time") => Some("Ran 1 step · {t}"),
+        (Locale::En, "chat.steps_n_tools") => Some("Ran {n} steps · {tools}"),
         (Locale::En, "chat.steps_running") => Some("Working…"),
+        (Locale::En, "chat.steps_awaiting_approval") => Some("Awaiting approval"),
         (Locale::En, "chat.model_waiting") => Some("Waiting for the model…"),
         (Locale::En, "chat.turn_pending") => Some("Waiting for the model to respond…"),
         (Locale::En, "chat.iteration_limit_title") => Some("This turn stopped at the iteration limit"),
@@ -3973,6 +3999,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "chat.model_wait_4") => Some("The model is carefully selecting its next token…"),
         (Locale::En, "chat.step_lines") => Some("{n} lines"),
         (Locale::En, "chat.error") => Some("Error"),
+        (Locale::En, "chat.error_details") => Some("Details"),
         (Locale::En, "chat.jump_bottom") => Some("Back to latest"),
         (Locale::En, "trajectory.title") => Some("Trajectory"),
         (Locale::En, "trajectory.topbar") => Some("Trajectory"),
@@ -4029,6 +4056,9 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "trajectory.export_saved") => Some("Trajectory saved to {path}"),
         (Locale::En, "trajectory.export_failed") => Some("Could not export trajectory"),
         (Locale::En, "chat.resume") => Some("Resume"),
+        (Locale::En, "chat.retry") => Some("Retry"),
+        (Locale::En, "chat.open_model_settings") => Some("Open model settings"),
+        (Locale::En, "chat.open_network_settings") => Some("Open network settings"),
         (Locale::En, "chat.context_auto_compacted") => Some("Context automatically compacted"),
         (Locale::En, "chat.auto_continued") => Some("Output limit reached; automatically continued ({count}/{limit})"),
         (Locale::En, "chat.stream_recovery.waiting_title") => Some("Model response stream interrupted; recovering the connection ({attempt}/{max})"),
@@ -4094,9 +4124,22 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "err.hint.rate") => Some("Rate limited by the provider. Wait a moment and retry."),
         (Locale::En, "err.hint.server") => Some("The provider is temporarily overloaded or down. Retry in a bit."),
         (Locale::En, "err.hint.network") => Some("Could not reach the model API. A closed proxy app often leaves the OS system proxy or HTTP_PROXY/HTTPS_PROXY pointing at a port that is not listening. Open Settings → Network, set Model API to Direct to connect without a proxy, or enter a proxy that is still running."),
+        (Locale::En, "err.hint.network_local") => Some("Nothing on this computer is accepting connections at {addr}, so the local model gateway is probably not running. Start it (Magpie or another local gateway) and click Retry, or correct the Base URL in Settings → Models if the gateway listens on a different port."),
         (Locale::En, "err.hint.opencode_session") => Some("OpenCode requires x-opencode-session. In Request headers (advanced), enable Send conversation identifier and use this header name. Check that any forwarding proxy preserves the header."),
         (Locale::En, "err.hint.bad_request") => Some("The provider rejected the request. Common causes: the conversation is too long, or a message contains content this model does not support (e.g. images). Try /compact or another model."),
-        (Locale::En, "err.hint.tool_pairing") => Some("A tool call is missing its result in the conversation history (often after an interrupted or timed-out tool). Click Resume again after updating, or send /compact to repair the history."),
+        (Locale::En, "err.hint.tool_pairing") => Some("A tool call is missing its result in the conversation history (often after an interrupted or timed-out tool). Click Retry again after updating, or send /compact to repair the history."),
+        (Locale::En, "err.summary.balance") => Some("The provider account is out of credit"),
+        (Locale::En, "err.summary.auth") => Some("The API key was rejected"),
+        (Locale::En, "err.summary.context") => Some("The conversation exceeds the model's context limit"),
+        (Locale::En, "err.summary.image") => Some("This model does not accept images"),
+        (Locale::En, "err.summary.model_name") => Some("The provider does not recognize the model name"),
+        (Locale::En, "err.summary.rate") => Some("Rate limited by the provider"),
+        (Locale::En, "err.summary.server") => Some("The provider is temporarily unavailable"),
+        (Locale::En, "err.summary.network") => Some("Could not reach the model API"),
+        (Locale::En, "err.summary.network_local") => Some("The local model gateway at {addr} is not running"),
+        (Locale::En, "err.summary.opencode_session") => Some("OpenCode needs a session header"),
+        (Locale::En, "err.summary.bad_request") => Some("The provider rejected the request"),
+        (Locale::En, "err.summary.tool_pairing") => Some("A tool call is missing its result"),
         (Locale::En, "outline.title") => Some("Conversation outline"),
         (Locale::En, "outline.show") => Some("Show conversation outline"),
         (Locale::En, "outline.hide") => Some("Hide conversation outline"),
@@ -4411,7 +4454,8 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "caps.title") => Some("Capabilities"),
         (Locale::En, "env.title") => Some("Local environment (optional)"),
         (Locale::En, "env.optional") => Some("Detected paths are saved to Local, keeping your choices. Missing tools do not block startup: install them into Wisp below, or use local-env-setup after launch."),
-        (Locale::En, "env.missing") => Some("Not found · set up later if needed"),
+        (Locale::En, "env.missing") => Some("Not found · optional"),
+        (Locale::En, "env.more_tools") => Some("npm, sci, pixi, and Cua Driver are listed in Settings → General → Local environment."),
         (Locale::En, "env.checking") => Some("Checking paths in the background; you can continue."),
         (Locale::En, "env.edit") => Some("Edit paths"),
         (Locale::En, "env.save") => Some("Save paths"),
@@ -4420,7 +4464,8 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "env.check_again") => Some("Check paths again"),
         (Locale::Zh, "env.title") => Some("本地环境（可选）"),
         (Locale::Zh, "env.optional") => Some("检测到的路径会保存到 Local，保留已有配置。缺少工具不影响启动：可以在下方安装到 Wisp，或在启动后使用 local-env-setup 配置。"),
-        (Locale::Zh, "env.missing") => Some("未找到 · 可稍后按需配置"),
+        (Locale::Zh, "env.missing") => Some("未找到 · 可选"),
+        (Locale::Zh, "env.more_tools") => Some("npm、sci、pixi 和 Cua Driver 在 设置 → 常规 → 本地环境 中查看。"),
         (Locale::Zh, "env.checking") => Some("正在后台检测路径，可以继续。"),
         (Locale::Zh, "env.edit") => Some("编辑路径"),
         (Locale::Zh, "env.save") => Some("保存路径"),
@@ -4488,14 +4533,17 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         ),
         (Locale::En, "caps.ready") => Some("ready"),
         (Locale::En, "caps.missing") => Some("missing"),
-        (Locale::En, "onboard.welcome.title") => Some("Welcome to wisp-science"),
+        (Locale::En, "onboard.welcome.title") => Some("Welcome to Wisp Science"),
         (Locale::En, "onboard.welcome.body") => Some("Your local science assistant — design experiments, analyze data, and query ~80 biological databases without leaving your machine."),
         (Locale::En, "onboard.getkey.body") => Some("Open the DeepSeek console, sign in, create a key and copy it."),
         (Locale::En, "onboard.apikey.title") => Some("Set up your model"),
         (Locale::En, "onboard.apikey.body") => Some("Paste it here. This sets up deepseek-v4-flash as the default, plus deepseek-v4-pro for heavier work — switch between them per session. Keys are stored in your OS keyring, not in the project folder. Other providers (OpenAI, Anthropic, …) can be added anytime in Settings › Models."),
         (Locale::En, "onboard.apikey.get_key") => Some("Open the DeepSeek console →"),
         (Locale::En, "onboard.apikey.later") => Some("Set up later"),
-        (Locale::En, "onboard.features.title") => Some("What wisp-science can do"),
+        (Locale::En, "onboard.apikey.placeholder") => Some("Paste your DeepSeek API key (sk-…)"),
+        (Locale::En, "onboard.apikey.other_provider") => Some("Use another provider in Settings › Models"),
+        (Locale::En, "onboard.magpie.body") => Some("Your model is provided by Magpie ({model}). No API key is needed here; manage models anytime in Settings › Models."),
+        (Locale::En, "onboard.features.title") => Some("What Wisp Science can do"),
         (Locale::En, "onboard.features.body") => Some("Run Python in a sandboxed REPL, call bio-tools MCP servers, preview PDFs/molecules/structures in the right panel, and browse project files from the sidebar."),
         (Locale::En, "onboard.back") => Some("Back"),
         (Locale::En, "onboard.next") => Some("Next"),
@@ -4708,11 +4756,18 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "err.sync_not_ready") => Some("The shared project is not available yet. Wait for the relay or cloud-drive client to finish updating."),
         (Locale::En, "err.sync_code_before_first") => Some("Synchronize this project successfully before copying its device code."),
         (Locale::En, "projects.recent") => Some("Recent sessions"),
+        (Locale::En, "projects.recent_empty") => Some("No conversations yet. Open a project to start one."),
+        (Locale::En, "projects.model_missing") => Some("No model is set up yet, so messages can't be sent. Add an API key or connect Magpie in Settings › Models."),
+        (Locale::En, "projects.model_missing_action") => Some("Set up a model"),
         (Locale::En, "projects.name_ph") => Some("Project name"),
         (Locale::En, "projects.choose_dir") => Some("Choose folder"),
         (Locale::En, "projects.directory") => Some("Project directory"),
+        (Locale::En, "projects.need_name") => Some("Enter a project name to continue."),
+        (Locale::En, "projects.need_dir") => Some("Choose a folder for the project files to continue."),
+        (Locale::En, "projects.suggested_dir") => Some("Suggested: {path}"),
+        (Locale::En, "projects.use_suggested_dir") => Some("Use this folder"),
         (Locale::En, "projects.standard_layout") => Some("Use the standard research layout"),
-        (Locale::En, "projects.standard_layout_hint") => Some("Creates the folders below. Turn it off to keep your own structure and describe it instead."),
+        (Locale::En, "projects.standard_layout_hint") => Some("Creates these folders in the project directory. Turn it off to keep your own structure and describe it in Agent Context instead."),
         (Locale::En, "projects.layout_context") => Some(
             "This project uses the standard research layout. Write outputs to these paths, relative to the project root:\n\
 - figures -> figures/\n\
@@ -4768,19 +4823,22 @@ Do not leave generated files in the project root.",
         (Locale::En, "sess_status.running_n") => Some("{n} running"),
         (Locale::En, "sess_status.needs_you") => Some("Needs you"),
         (Locale::En, "sess_status.needs_you_hint") => Some("Unread replies or requests waiting for you. Open the project and choose Needs you to find them."),
+        (Locale::En, "sess_status.new_reply") => Some("New reply"),
         (Locale::En, "sidebar.all_sessions") => Some("All sessions"),
         (Locale::En, "sess_status.complete") => Some("Complete"),
         (Locale::En, "sess_status.needs_you_n") => Some("{n} need you"),
         (Locale::En, "inbox.empty") => Some("All caught up — nothing needs you."),
         (Locale::En, "inbox.other_projects") => Some("Other projects"),
+        (Locale::En, "inbox.reason_reply") => Some("Reply finished, not read yet"),
+        (Locale::En, "inbox.reason_approval") => Some("Waiting for your approval"),
         (Locale::En, "sess_status.needs_you_other_n") => Some("{n} need you · {m} in other projects"),
         (Locale::En, "session_notice.region") => Some("Updates from other projects"),
         (Locale::En, "session_notice.open") => Some("Open session"),
         (Locale::En, "session_notice.dismiss") => Some("Close"),
         (Locale::En, "time.just_now") => Some("just now"),
-        (Locale::En, "time.minutes") => Some("{n}m"),
-        (Locale::En, "time.hours") => Some("{n}h"),
-        (Locale::En, "time.days") => Some("{n}d"),
+        (Locale::En, "time.minutes") => Some("{n}m ago"),
+        (Locale::En, "time.hours") => Some("{n}h ago"),
+        (Locale::En, "time.days") => Some("{n}d ago"),
 
         (Locale::Zh, "sidebar.new_session") => Some("新建会话"),
         (Locale::Zh, "sidebar.files") => Some("文件"),
@@ -5223,7 +5281,11 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "models.acp_open") => Some("ACP Agents"),
         (Locale::Zh, "models.category.http") => Some("API 模型"),
         (Locale::Zh, "models.acp_hint") => Some("模型配置在应用全局共享。默认模型用于新对话，已有对话保持原模型；列表中的更改即时保存。"),
-        (Locale::Zh, "models.magpie_connected") => Some("已接入 Magpie：所有内置对话、子智能体和 HTTP 审查都使用 {model}，请在 Magpie 中切换模型。执行 `magpie wisp-science default` 断开并重启 Wisp Science 后，下面的个人模型才会重新生效。"),
+        (Locale::Zh, "models.magpie_connected") => Some("已接入 Magpie：所有内置对话、子智能体和 HTTP 审查都使用 {model}，请在 Magpie 中切换模型。"),
+        (Locale::Zh, "models.magpie_disconnect") => Some("执行下面的命令断开 Magpie 并重启 Wisp Science 后，下方的个人模型才会重新生效："),
+        (Locale::Zh, "models.magpie_copy") => Some("复制命令"),
+        (Locale::Zh, "models.not_in_effect") => Some("未生效"),
+        (Locale::Zh, "models.not_in_effect_hint") => Some("已接入 Magpie，断开 Magpie 之前不会使用这个模型。"),
         (Locale::Zh, "models.acp_subpage_hint") => Some("配置已安装的 ACP v1 Agent。Command 只填可执行文件；每个参数单独一行。"),
         (Locale::Zh, "models.acp_test") => Some("测试连接"),
         (Locale::Zh, "models.acp_save") => Some("保存"),
@@ -5337,7 +5399,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "share.none_selected") => Some("请至少勾选一条消息"),
         (Locale::Zh, "share.saved") => Some("分享长图已保存到 {path}"),
         (Locale::Zh, "share.failed") => Some("导出失败：{error}"),
-        (Locale::Zh, "share.image_footer") => Some("来自 wisp-science 的分享"),
+        (Locale::Zh, "share.image_footer") => Some("来自 Wisp Science 的分享"),
         (Locale::Zh, "permission.full_already") => Some("当前会话已开启完全权限"),
         (Locale::Zh, "permission.ask_already") => Some("已处于逐次询问模式"),
         (Locale::Zh, "permission.auto_unavailable") => Some("自动权限模式暂未开放"),
@@ -5361,9 +5423,9 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "review.resolved") => Some("已解决"),
         (Locale::Zh, "review.unaddressed") => Some("未解决"),
         (Locale::Zh, "review.agent_correcting") => Some("这些问题需要修正。"),
-        (Locale::Zh, "review.transition_to_reviewer") => Some("wisp-science 拍了拍 Reviewer：帮我检查一下这次回答"),
-        (Locale::Zh, "review.transition_to_agent") => Some("Reviewer 拍了拍 wisp-science：发现问题，请接着修正"),
-        (Locale::Zh, "review.transition_passed") => Some("Reviewer 拍了拍 wisp-science：没发现问题，请继续"),
+        (Locale::Zh, "review.transition_to_reviewer") => Some("Wisp Science 拍了拍 Reviewer：帮我检查一下这次回答"),
+        (Locale::Zh, "review.transition_to_agent") => Some("Reviewer 拍了拍 Wisp Science：发现问题，请接着修正"),
+        (Locale::Zh, "review.transition_passed") => Some("Reviewer 拍了拍 Wisp Science：没发现问题，请继续"),
         (Locale::Zh, "review.all_fixed") => Some("所有问题均已修正并通过独立复审。"),
         (Locale::Zh, "review.needs_attention") => Some("一次修正后仍有问题需要关注。"),
         (Locale::Zh, "status.reviewing") => Some("正在审查会话…"),
@@ -5826,6 +5888,8 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "center.resize_split") => Some("调整文档和对话宽度"),
         (Locale::Zh, "preview.zoom_out") => Some("缩小"),
         (Locale::Zh, "preview.zoom_reset") => Some("重置缩放"),
+        (Locale::Zh, "preview.zoom_fit") => Some("适应"),
+        (Locale::Zh, "preview.zoom_fit_title") => Some("完整显示图片"),
         (Locale::Zh, "preview.zoom_in") => Some("放大"),
         (Locale::Zh, "preview.select_region") => Some("框选区域提问"),
         (Locale::Zh, "preview.region_selected") => Some("已选区域"),
@@ -6209,15 +6273,14 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "approval.run_shell") => Some("运行 Shell 命令？"),
         (Locale::Zh, "approval.run_tool") => Some("运行 {tool}？"),
         (Locale::Zh, "approval.code") => Some("代码"),
+        (Locale::Zh, "approval.command") => Some("命令"),
         (Locale::Zh, "approval.scope") => Some("批准范围"),
         (Locale::Zh, "approval.scope.once") => Some("仅本次"),
         (Locale::Zh, "approval.scope.session") => Some("本会话"),
         (Locale::Zh, "approval.scope.project") => Some("本项目"),
         (Locale::Zh, "approval.scope.global") => Some("全局"),
         (Locale::Zh, "approval.allow_once") => Some("仅本次允许"),
-        (Locale::Zh, "approval.allow_session") => Some("本会话允许"),
-        (Locale::Zh, "approval.allow_project") => Some("本项目允许"),
-        (Locale::Zh, "approval.allow_global") => Some("全局允许"),
+        (Locale::Zh, "approval.allow") => Some("允许"),
         (Locale::Zh, "approval.hint") => Some("批准后执行一次。默认策略可在「设置 → 连接」中修改。"),
         (Locale::Zh, "approval.image_resize_title") => Some("缩小大图片后交给模型？"),
         (Locale::Zh, "approval.image_resize_hint") => Some("Wisp 只会缩小临时的模型输入副本，原始文件不会被修改。"),
@@ -6248,6 +6311,9 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "settings.search_empty") => Some("没有匹配的设置，请尝试其他关键词。"),
         (Locale::Zh, "models.categories") => Some("模型类别"),
         (Locale::Zh, "models.default") => Some("当前默认"),
+        (Locale::Zh, "models.not_configured") => Some("未配置"),
+        (Locale::Zh, "models.not_configured_hint") => Some("填写 Base URL、模型 ID 和 API 密钥后才能使用这个模型。"),
+        (Locale::Zh, "models.untitled") => Some("未命名模型"),
         (Locale::Zh, "models.capability.vision") => Some("视觉"),
         (Locale::Zh, "models.capability.expert") => Some("高级专家"),
         (Locale::Zh, "settings.use_for_expert") => Some("高级专家模型（按需求助）"),
@@ -6585,7 +6651,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "settings.nav.usage") => Some("用量"),
         (Locale::Zh, "settings.storage.data_dir") => Some("数据目录"),
         (Locale::Zh, "settings.storage.data_dir_hint") => {
-            Some("wisp-science 在本机保存数据库、Python 环境和插件的位置")
+            Some("Wisp Science 在本机保存数据库、Python 环境和插件的位置")
         }
         (Locale::Zh, "settings.storage.workspace_hint") => Some("工作区：{dirs}"),
         (Locale::Zh, "settings.storage.loading") => Some("计算中…"),
@@ -6983,12 +7049,26 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "settings.provider.anthropic") => Some("Anthropic"),
         (Locale::Zh, "settings.provider.gemini") => Some("Gemini（原生生图）"),
         (Locale::Zh, "settings.api_url") => Some("Base URL（基础地址）"),
+        (Locale::Zh, "settings.api_url_ph") => Some("例如 https://api.deepseek.com 或 http://127.0.0.1:3425/v1"),
         (Locale::Zh, "settings.endpoint_suffix") => Some("Endpoint 后缀（可选）"),
         (Locale::Zh, "settings.endpoint_suffix_ph") => Some("例如 /anthropic 或 /v1/images/generations"),
         (Locale::Zh, "settings.label") => Some("显示名称（别名）"),
-        (Locale::Zh, "settings.label_ph") => Some("例如 gpt-5.5-closeai"),
+        (Locale::Zh, "settings.label_ph") => Some("可选；留空则显示模型 ID"),
         (Locale::Zh, "settings.model") => Some("模型 ID"),
         (Locale::Zh, "settings.model_ph") => Some("发给 API 的模型名，如 gpt-5.5"),
+        (Locale::Zh, "models.fetch") => Some("获取模型列表"),
+        (Locale::Zh, "models.fetching") => Some("正在获取…"),
+        (Locale::Zh, "models.fetch_hint") => Some("列出这个 Base URL 提供的模型 ID（GET /models）"),
+        (Locale::Zh, "models.fetch_found") => Some("找到 {count} 个模型，可在「模型 ID」的候选中选择。"),
+        (Locale::Zh, "models.fetch_prefilled") => Some("找到 {count} 个模型。{model} 的上下文窗口、最大输出和推理档位已改用这个接口提供的值。"),
+        (Locale::Zh, "models.fetch_failed") => Some("无法获取模型列表：{msg}"),
+        (Locale::Zh, "models.field.api_key") => Some("API 密钥"),
+        (Locale::Zh, "models.field.endpoint_suffix") => Some("Endpoint 后缀"),
+        (Locale::Zh, "models.fix_fields") => Some("请填写或修正标出的字段：{fields}。"),
+        (Locale::Zh, "models.advanced") => Some("高级选项"),
+        (Locale::Zh, "models.advanced_hint") => Some("Endpoint 后缀、token 上限、推理强度、Fast 模式、模型用途、网络线路和请求头"),
+        (Locale::Zh, "models.advanced_network_hint") => Some("网络线路和请求头"),
+        (Locale::Zh, "settings.api_key_local_hint") => Some("本机网关：API 密钥可以留空（填任意占位值也可以）。"),
         (Locale::Zh, "settings.api_key") => Some("API 密钥（保存在系统密钥环）"),
         (Locale::Zh, "settings.workspace_dir") => Some("工作区目录（留空=默认；重启后生效）"),
         (Locale::Zh, "settings.max_iter") => Some("每轮最大 Agent 迭代次数"),
@@ -7088,6 +7168,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "settings.reasoning_effort") => Some("推理强度"),
         (Locale::Zh, "settings.reasoning_effort.default") => Some("默认（由提供商决定）"),
         (Locale::Zh, "settings.reasoning_effort.known_hint") => Some("能力目录为此模型声明的档位：{list}"),
+        (Locale::Zh, "settings.reasoning_effort.endpoint_hint") => Some("这个接口的模型列表为此模型报告的档位：{list}"),
         (Locale::Zh, "settings.reasoning_effort.unknown_hint") => Some("暂未确认此模型的推理档位，仅可选择默认。"),
         (Locale::Zh, "settings.reasoning_effort.unsupported_hint") => Some("能力目录未为此模型声明可调节的推理档位。"),
         (Locale::Zh, "settings.service_tier") => Some("Fast 模式"),
@@ -7121,7 +7202,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "settings.video_resolution") => Some("默认分辨率"),
         (Locale::Zh, "settings.video_defaults_hint") => Some("当 generate_video 未指定时长、宽高比或分辨率时使用这些默认值；单次请求仍可由模型覆盖。"),
         (Locale::Zh, "settings.stored_key") => Some("（已保存 — 留空则保持不变）"),
-        (Locale::Zh, "settings.tip") => Some("请填写共享的 API 根地址。像 /anthropic 这样的协议入口或明确的生图接口，请填在对应模型的可选后缀中；Wisp 再按所选协议补全请求路径。"),
+        (Locale::Zh, "settings.tip") => Some("请填写共享的 API 根地址，带不带 /v1 都可以：以 /v1 结尾时 Wisp 直接补上 /chat/completions（或 /responses、/messages），否则先试原地址，再试它的 /v1 路径。像 /anthropic 这样的协议入口或明确的生图接口，请填在对应模型的可选后缀中。"),
         (Locale::Zh, "settings.check_updates") => Some("检查更新"),
         (Locale::Zh, "settings.validate") => Some("测试连接"),
         (Locale::Zh, "settings.cancel") => Some("取消"),
@@ -7210,7 +7291,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "status.settings_saved") => Some("设置已保存"),
         (Locale::Zh, "status.validating") => Some("正在验证当前设置…"),
         (Locale::Zh, "status.validation_succeeded") => Some("验证成功"),
-        (Locale::Zh, "status.validated") => Some("已验证 {provider} / {model}"),
+        (Locale::Zh, "status.validated") => Some("连接成功 · {provider} · {model}"),
         (Locale::Zh, "status.vision_ok") => Some(" —— 测试图片已被接受。"),
         (Locale::Zh, "status.save_failed") => Some("保存失败：{msg}"),
         (Locale::Zh, "status.save_response_unreadable") => {
@@ -7326,6 +7407,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "err.skill_exists") => Some("已存在名为 '{name}' 的技能。"),
         (Locale::Zh, "err.model_required") => Some("模型不能为空。"),
         (Locale::Zh, "err.api_key_required") => Some("API 密钥不能为空。"),
+        (Locale::Zh, "err.endpoint_suffix_invalid") => Some("Endpoint 后缀必须是 URL 路径，例如 /anthropic（只能包含字母、数字、- . _ ~ 和 /）。"),
         (Locale::Zh, "err.max_tokens_ceiling") => Some("{model} 的最大输出 tokens 上限为 {max}，请调低「最大输出 tokens」。"),
         (Locale::Zh, "err.unknown") => Some("未知错误"),
         (Locale::Zh, "err.openssh_too_old") => Some("本机 OpenSSH 版本过低（当前 OpenSSH {found}，Wisp 需要 8.4 或更高）。密码认证依赖 SSH_ASKPASS_REQUIRE（OpenSSH 8.4 起提供）。Windows 请在「设置 → 应用 → 可选功能」中更新 OpenSSH 客户端，或安装最新的 Win32-OpenSSH。重启 Wisp 并用 `ssh -V` 确认。"),
@@ -7337,7 +7419,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "err.validation_timeout") => Some("验证超时（30 秒）"),
         (Locale::Zh, "err.vision_probe_failed") => Some(" 因为勾选了「支持图片」，本次验证发送了一张测试图片。如果该模型不支持图片，请取消勾选后重新验证。"),
         (Locale::Zh, "err.file_not_found") => Some("文件未找到：{path}"),
-        (Locale::Zh, "chat.assistant") => Some("wisp-science"),
+        (Locale::Zh, "chat.assistant") => Some("Wisp Science"),
         (Locale::Zh, "chat.thinking") => Some("思考中"),
         (Locale::Zh, "chat.progress") => Some("进度"),
         (Locale::Zh, "execution_plan.title") => Some("执行计划"),
@@ -7363,7 +7445,9 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "chat.steps_n_time") => Some("已执行 {n} 步 · {t}"),
         (Locale::Zh, "chat.steps_1") => Some("已执行 1 步"),
         (Locale::Zh, "chat.steps_1_time") => Some("已执行 1 步 · {t}"),
+        (Locale::Zh, "chat.steps_n_tools") => Some("已执行 {n} 步 · {tools}"),
         (Locale::Zh, "chat.steps_running") => Some("执行中…"),
+        (Locale::Zh, "chat.steps_awaiting_approval") => Some("等待批准"),
         (Locale::Zh, "chat.model_waiting") => Some("等待模型继续…"),
         (Locale::Zh, "chat.turn_pending") => Some("等待模型响应…"),
         (Locale::Zh, "chat.iteration_limit_title") => Some("本轮已达到迭代上限"),
@@ -7375,6 +7459,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "chat.model_wait_4") => Some("模型正在谨慎挑选下一个 token…"),
         (Locale::Zh, "chat.step_lines") => Some("{n} 行"),
         (Locale::Zh, "chat.error") => Some("错误"),
+        (Locale::Zh, "chat.error_details") => Some("详情"),
         (Locale::Zh, "chat.jump_bottom") => Some("回到底部"),
         (Locale::Zh, "trajectory.title") => Some("轨迹"),
         (Locale::Zh, "trajectory.topbar") => Some("轨迹"),
@@ -7431,6 +7516,9 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "trajectory.export_saved") => Some("轨迹已保存到 {path}"),
         (Locale::Zh, "trajectory.export_failed") => Some("无法导出轨迹"),
         (Locale::Zh, "chat.resume") => Some("继续执行"),
+        (Locale::Zh, "chat.retry") => Some("重试"),
+        (Locale::Zh, "chat.open_model_settings") => Some("打开模型设置"),
+        (Locale::Zh, "chat.open_network_settings") => Some("打开网络设置"),
         (Locale::Zh, "chat.context_auto_compacted") => Some("上下文已自动压缩"),
         (Locale::Zh, "chat.auto_continued") => Some("输出达到上限，已自动继续（{count}/{limit}）"),
         (Locale::Zh, "chat.stream_recovery.waiting_title") => Some("模型响应流已中断，正在尝试恢复连接（第 {attempt}/{max} 次）"),
@@ -7494,9 +7582,22 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "err.hint.rate") => Some("请求过于频繁，被服务商限流。稍等片刻再重试。"),
         (Locale::Zh, "err.hint.server") => Some("服务商暂时过载或故障。请稍后重试。"),
         (Locale::Zh, "err.hint.network") => Some("无法连接到模型 API。常见原因是本机代理软件已关闭，但操作系统仍保留系统代理，或残留 HTTP_PROXY/HTTPS_PROXY。请打开 设置 → 网络，将「模型 API」设为「直连」，或填入仍在运行的代理地址。"),
+        (Locale::Zh, "err.hint.network_local") => Some("本机 {addr} 上没有服务在接受连接，本地模型网关很可能没有运行。请先启动它（Magpie 或其他本地网关）后点击「重试」；如果网关监听的是其他端口，请在 设置 → 模型 中修改 Base URL。"),
         (Locale::Zh, "err.hint.opencode_session") => Some("OpenCode 要求 x-opencode-session 会话头。请在“请求附加信息（高级）”中开启“附加会话标识”并使用此请求头名称，同时检查转发代理是否保留该请求头。"),
         (Locale::Zh, "err.hint.bad_request") => Some("请求被服务商拒绝。常见原因：对话过长，或消息包含该模型不支持的内容（如图片）。可尝试 /compact 或更换模型。"),
-        (Locale::Zh, "err.hint.tool_pairing") => Some("对话历史里有一条工具调用缺少对应结果（常见于工具中断或超时后）。更新后请再点「继续执行」，或发送 /compact 修复历史。"),
+        (Locale::Zh, "err.hint.tool_pairing") => Some("对话历史里有一条工具调用缺少对应结果（常见于工具中断或超时后）。更新后请再点「重试」，或发送 /compact 修复历史。"),
+        (Locale::Zh, "err.summary.balance") => Some("服务商账户余额不足"),
+        (Locale::Zh, "err.summary.auth") => Some("API 密钥被拒绝"),
+        (Locale::Zh, "err.summary.context") => Some("对话超出模型上下文上限"),
+        (Locale::Zh, "err.summary.image") => Some("当前模型不支持图片输入"),
+        (Locale::Zh, "err.summary.model_name") => Some("服务商不识别所配置的模型名"),
+        (Locale::Zh, "err.summary.rate") => Some("请求被服务商限流"),
+        (Locale::Zh, "err.summary.server") => Some("服务商暂时不可用"),
+        (Locale::Zh, "err.summary.network") => Some("无法连接到模型 API"),
+        (Locale::Zh, "err.summary.network_local") => Some("本地模型网关 {addr} 没有运行"),
+        (Locale::Zh, "err.summary.opencode_session") => Some("OpenCode 缺少会话请求头"),
+        (Locale::Zh, "err.summary.bad_request") => Some("请求被服务商拒绝"),
+        (Locale::Zh, "err.summary.tool_pairing") => Some("工具调用缺少对应结果"),
         (Locale::Zh, "outline.title") => Some("对话目录"),
         (Locale::Zh, "outline.show") => Some("展开对话目录"),
         (Locale::Zh, "outline.hide") => Some("收起对话目录"),
@@ -7824,14 +7925,17 @@ Do not leave generated files in the project root.",
         ),
         (Locale::Zh, "caps.ready") => Some("就绪"),
         (Locale::Zh, "caps.missing") => Some("缺失"),
-        (Locale::Zh, "onboard.welcome.title") => Some("欢迎使用 wisp-science"),
+        (Locale::Zh, "onboard.welcome.title") => Some("欢迎使用 Wisp Science"),
         (Locale::Zh, "onboard.welcome.body") => Some("本地科研助手——设计实验、分析数据，查询约 80 个生物数据库，无需离开本机。"),
         (Locale::Zh, "onboard.getkey.body") => Some("打开 DeepSeek 控制台，登录后创建一个密钥并复制。"),
         (Locale::Zh, "onboard.apikey.title") => Some("配置模型"),
         (Locale::Zh, "onboard.apikey.body") => Some("把密钥粘贴到这里。会配好默认的 deepseek-v4-flash，以及更贵的 deepseek-v4-pro（适合更重的活），每个会话可随时切换。密钥保存在系统密钥环，不会写入项目文件夹。其他模型（OpenAI、Anthropic 等）随时可在「设置 › 模型」里添加。"),
         (Locale::Zh, "onboard.apikey.get_key") => Some("打开 DeepSeek 控制台 →"),
         (Locale::Zh, "onboard.apikey.later") => Some("稍后配置"),
-        (Locale::Zh, "onboard.features.title") => Some("wisp-science 能做什么"),
+        (Locale::Zh, "onboard.apikey.placeholder") => Some("粘贴 DeepSeek API 密钥（sk-…）"),
+        (Locale::Zh, "onboard.apikey.other_provider") => Some("在「设置 › 模型」中使用其他模型服务"),
+        (Locale::Zh, "onboard.magpie.body") => Some("模型由 Magpie 提供（{model}），这里不需要填写 API 密钥；之后可随时在「设置 › 模型」中管理模型。"),
+        (Locale::Zh, "onboard.features.title") => Some("Wisp Science 能做什么"),
         (Locale::Zh, "onboard.features.body") => Some("在沙箱 REPL 中运行 Python、调用 bio-tools MCP 服务、在右侧面板预览 PDF/分子/结构，并从侧栏浏览项目文件。"),
         (Locale::Zh, "onboard.back") => Some("上一步"),
         (Locale::Zh, "onboard.next") => Some("下一步"),
@@ -8042,11 +8146,18 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "err.sync_not_ready") => Some("共享项目尚未就绪，请等待中继或网盘客户端完成更新后重试。"),
         (Locale::Zh, "err.sync_code_before_first") => Some("请先成功同步此项目，再复制设备码。"),
         (Locale::Zh, "projects.recent") => Some("最近会话"),
+        (Locale::Zh, "projects.recent_empty") => Some("还没有会话。打开一个项目即可开始对话。"),
+        (Locale::Zh, "projects.model_missing") => Some("还没有配置模型，消息暂时无法发送。请在「设置 › 模型」中添加 API 密钥或接入 Magpie。"),
+        (Locale::Zh, "projects.model_missing_action") => Some("去配置模型"),
         (Locale::Zh, "projects.name_ph") => Some("项目名称"),
         (Locale::Zh, "projects.choose_dir") => Some("选择文件夹"),
         (Locale::Zh, "projects.directory") => Some("项目目录"),
+        (Locale::Zh, "projects.need_name") => Some("请先填写项目名称。"),
+        (Locale::Zh, "projects.need_dir") => Some("请先选择存放项目文件的文件夹。"),
+        (Locale::Zh, "projects.suggested_dir") => Some("建议位置：{path}"),
+        (Locale::Zh, "projects.use_suggested_dir") => Some("使用此文件夹"),
         (Locale::Zh, "projects.standard_layout") => Some("使用标准科研目录结构"),
-        (Locale::Zh, "projects.standard_layout_hint") => Some("创建下方列出的目录。关闭则保留你自己的结构，改为在下方描述它。"),
+        (Locale::Zh, "projects.standard_layout_hint") => Some("在项目目录中创建以下文件夹。关闭则保留你自己的结构，可改为在 Agent 上下文中描述它。"),
         (Locale::Zh, "projects.layout_context") => Some(
             "本项目采用标准科研目录结构。产物请写入以下路径（相对项目根目录）：\n\
 - 图表 -> figures/\n\
@@ -8106,19 +8217,22 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "sess_status.running_n") => Some("{n} 个运行中"),
         (Locale::Zh, "sess_status.needs_you") => Some("待处理"),
         (Locale::Zh, "sess_status.needs_you_hint") => Some("包含未读回复和等待你确认的请求。打开项目后，点击「待处理」查看对应会话。"),
+        (Locale::Zh, "sess_status.new_reply") => Some("有新回复"),
         (Locale::Zh, "sidebar.all_sessions") => Some("全部会话"),
         (Locale::Zh, "sess_status.complete") => Some("已完成"),
         (Locale::Zh, "sess_status.needs_you_n") => Some("{n} 个待处理"),
         (Locale::Zh, "inbox.empty") => Some("没有待处理的会话"),
         (Locale::Zh, "inbox.other_projects") => Some("其他项目"),
+        (Locale::Zh, "inbox.reason_reply") => Some("回复已完成，尚未查看"),
+        (Locale::Zh, "inbox.reason_approval") => Some("等待你的确认"),
         (Locale::Zh, "sess_status.needs_you_other_n") => Some("{n} 个待处理 · 其他项目 {m} 个"),
         (Locale::Zh, "session_notice.region") => Some("其他项目的更新"),
         (Locale::Zh, "session_notice.open") => Some("打开会话"),
         (Locale::Zh, "session_notice.dismiss") => Some("关闭"),
         (Locale::Zh, "time.just_now") => Some("刚刚"),
-        (Locale::Zh, "time.minutes") => Some("{n} 分钟"),
-        (Locale::Zh, "time.hours") => Some("{n} 小时"),
-        (Locale::Zh, "time.days") => Some("{n} 天"),
+        (Locale::Zh, "time.minutes") => Some("{n} 分钟前"),
+        (Locale::Zh, "time.hours") => Some("{n} 小时前"),
+        (Locale::Zh, "time.days") => Some("{n} 天前"),
 
         _ => None,
     }
@@ -8152,6 +8266,16 @@ pub fn send_failed(locale: Locale, msg: &str) -> String {
         }
     };
     tf(locale, "status.send_failed", &[("msg", &detail)])
+}
+
+/// Status-bar text for a failed chat send/resume. A classified provider
+/// failure shows its short summary; the raw transport error stays in the
+/// transcript's error card, where it can be expanded and copied.
+pub fn send_failed_status(locale: Locale, msg: &str) -> String {
+    match api_error_summary(locale, msg.trim()) {
+        Some(summary) => tf(locale, "status.send_failed", &[("msg", &summary)]),
+        None => send_failed(locale, msg),
+    }
 }
 
 pub fn localize_backend(locale: Locale, msg: &str) -> String {
@@ -8254,6 +8378,9 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
         "API URL is required." => t(locale, "err.api_url_required"),
         "Model is required." => t(locale, "err.model_required"),
         "API key is required." => t(locale, "err.api_key_required"),
+        "Endpoint suffix must be a URL path such as /anthropic (letters, digits, - . _ ~ and /)." => {
+            t(locale, "err.endpoint_suffix_invalid")
+        }
         "No API key set. Open Settings and paste your provider API key." => {
             t(locale, "err.no_api_key")
         }
@@ -8591,10 +8718,18 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
         m if m.starts_with("Validated ") => {
             if let Some(rest) = m.strip_prefix("Validated ") {
                 if let Some((provider, model)) = rest.split_once(" with ") {
+                    // The protocol as the form names it, not the internal id.
+                    let protocol = match provider {
+                        "openai" => t(locale, "settings.provider.openai"),
+                        "openai_responses" => t(locale, "settings.provider.openai_responses"),
+                        "anthropic" => t(locale, "settings.provider.anthropic"),
+                        "gemini" => t(locale, "settings.provider.gemini"),
+                        other => other.to_string(),
+                    };
                     return tf(
                         locale,
                         "status.validated",
-                        &[("provider", provider), ("model", model)],
+                        &[("provider", &protocol), ("model", model)],
                     );
                 }
             }
@@ -8626,7 +8761,93 @@ fn found_openssh_version(msg: &str) -> Option<&str> {
 /// `http: ...` from wisp-llm). Provider error bodies vary too much to parse,
 /// so this is substring classification — specific causes first, generic last.
 pub fn api_error_hint(locale: Locale, msg: &str) -> Option<String> {
-    api_error_hint_key(msg).map(|key| t(locale, key))
+    let key = api_error_hint_key(msg)?;
+    if key == "err.hint.network" {
+        if let Some(addr) = loopback_endpoint(msg) {
+            return Some(tf(locale, "err.hint.network_local", &[("addr", &addr)]));
+        }
+    }
+    Some(t(locale, key))
+}
+
+/// One-line, human-readable headline for a classified provider failure — the
+/// error card's title and the status-bar text. `None` keeps the raw error as
+/// the headline (unclassified failures and ACP turns, whose detail is the
+/// only useful text).
+pub fn api_error_summary(locale: Locale, msg: &str) -> Option<String> {
+    let key = api_error_hint_key(msg)?;
+    if key == "err.hint.network" {
+        if let Some(addr) = loopback_endpoint(msg) {
+            return Some(tf(locale, "err.summary.network_local", &[("addr", &addr)]));
+        }
+    }
+    let summary = key.strip_prefix("err.hint.")?;
+    let summary_key = match summary {
+        "balance" => "err.summary.balance",
+        "auth" => "err.summary.auth",
+        "context" => "err.summary.context",
+        "image" => "err.summary.image",
+        "model_name" => "err.summary.model_name",
+        "rate" => "err.summary.rate",
+        "server" => "err.summary.server",
+        "network" => "err.summary.network",
+        "opencode_session" => "err.summary.opencode_session",
+        "bad_request" => "err.summary.bad_request",
+        "tool_pairing" => "err.summary.tool_pairing",
+        _ => return None,
+    };
+    Some(t(locale, summary_key))
+}
+
+/// True for a classified provider/transport failure (`api: …` / `http: …`):
+/// resuming such a turn re-sends the same model request, so the error card
+/// labels it Retry rather than Resume.
+pub fn is_model_request_error(msg: &str) -> bool {
+    api_error_hint_key(msg).is_some_and(|key| key != "err.hint.acp_no_fallback")
+}
+
+/// Settings section that fixes a connection or authentication failure:
+/// the key and a loopback gateway's Base URL live under Models; a remote
+/// host that cannot be reached is usually a proxy problem under Network.
+pub fn api_error_settings_section(msg: &str) -> Option<&'static str> {
+    match api_error_hint_key(msg)? {
+        "err.hint.auth" => Some("models"),
+        "err.hint.network" if loopback_endpoint(msg).is_some() => Some("models"),
+        "err.hint.network" => Some("network"),
+        _ => None,
+    }
+}
+
+/// `host[:port]` of the request URL when it targets this computer
+/// (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`). reqwest reports the
+/// URL as `… for url (http://127.0.0.1:3999/v1/chat/completions): …`. A
+/// failure routed through a proxy (`(via …)` annotation) is the proxy's
+/// fault, so it keeps the proxy explanation. Pure string parsing: the same
+/// on Windows, macOS and Linux.
+fn loopback_endpoint(msg: &str) -> Option<String> {
+    if msg.contains("(via ") {
+        return None;
+    }
+    const MARK: &str = "for url (";
+    let start = msg.find(MARK)? + MARK.len();
+    let rest = &msg[start..];
+    let url = &rest[..rest.find(')')?];
+    let after_scheme = url.split_once("://").map_or(url, |(_, tail)| tail);
+    let authority = after_scheme.split(['/', '?', '#']).next()?;
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = match authority.strip_prefix('[') {
+        Some(bracketed) => bracketed.split(']').next()?,
+        None => authority.split(':').next()?,
+    };
+    let host = host.to_ascii_lowercase();
+    let loopback = host == "localhost"
+        || host.ends_with(".localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    (loopback && !authority.is_empty()).then(|| authority.to_string())
 }
 
 /// True when the provider rejected the request because it cannot take image
@@ -8812,6 +9033,125 @@ mod api_error_hint_tests {
             r#"api: 400 {"error":{"message":"invalid context field"}}"#
         ));
         assert!(!is_context_limit_error("context window exceeded"));
+    }
+
+    const LOCAL_REFUSED: &str = "http: error sending request for url (http://127.0.0.1:3999/v1/chat/completions): client error (Connect): tcp connect error: Connection refused (os error 61)";
+
+    #[test]
+    fn loopback_connect_failures_point_at_the_local_gateway() {
+        for (msg, addr) in [
+            (LOCAL_REFUSED, "127.0.0.1:3999"),
+            (
+                "http: error sending request for url (http://localhost:8080/v1/messages): client error (Connect): tcp connect error: Connection refused (os error 111)",
+                "localhost:8080",
+            ),
+            (
+                "http: error sending request for url (http://[::1]:11434/v1/chat/completions): client error (Connect): tcp connect error: No connection could be made because the target machine actively refused it. (os error 10061)",
+                "[::1]:11434",
+            ),
+            (
+                "http: error sending request for url (http://magpie.localhost/v1/chat/completions): client error (Connect): tcp connect error: Connection refused (os error 61)",
+                "magpie.localhost",
+            ),
+        ] {
+            assert_eq!(loopback_endpoint(msg).as_deref(), Some(addr), "for: {msg}");
+            for locale in [Locale::En, Locale::Zh] {
+                let hint = api_error_hint(locale, msg).unwrap();
+                assert!(hint.contains(addr), "{hint}");
+                assert!(hint.contains("Magpie"), "{hint}");
+                assert!(!hint.contains("HTTP_PROXY"), "{hint}");
+                let summary = api_error_summary(locale, msg).unwrap();
+                assert!(summary.contains(addr), "{summary}");
+                assert!(!summary.contains("os error"), "{summary}");
+            }
+            assert_eq!(api_error_settings_section(msg), Some("models"));
+        }
+        assert_eq!(
+            api_error_summary(Locale::Zh, LOCAL_REFUSED).as_deref(),
+            Some("本地模型网关 127.0.0.1:3999 没有运行")
+        );
+    }
+
+    #[test]
+    fn remote_and_proxied_connect_failures_keep_the_proxy_hint() {
+        for msg in [
+            "http: error sending request for url (https://api.deepseek.com/v1/chat/completions): client error (Connect): tcp connect error: Connection refused (os error 61)",
+            // Looks local only because of the proxy annotation.
+            "http: error sending request for url (https://opencode.ai/zen/go/v1/chat/completions): client error (Connect): tunnel error: failed to create underlying connection: tcp connect error: Connection refused (os error 61) (via system proxy http://127.0.0.1:10080)",
+            // A loopback target routed through a leftover proxy is the proxy's fault.
+            "http: error sending request for url (http://127.0.0.1:3999/v1/chat/completions): client error (Connect): Connection refused (via leftover HTTPS_PROXY=http://127.0.0.1:7890)",
+            // A host that merely starts with 127 is not loopback.
+            "http: error sending request for url (https://127.example.com/v1): client error (Connect): tcp connect error: Connection refused",
+            // No URL in the message.
+            "http: error sending request: tcp connect error",
+        ] {
+            assert_eq!(loopback_endpoint(msg), None, "for: {msg}");
+            assert_eq!(hint_key(msg), Some(t(Locale::En, "err.hint.network")), "for: {msg}");
+            assert_eq!(
+                api_error_summary(Locale::En, msg),
+                Some(t(Locale::En, "err.summary.network"))
+            );
+            assert_eq!(api_error_settings_section(msg), Some("network"));
+        }
+    }
+
+    #[test]
+    fn summaries_replace_raw_errors_in_the_headline_and_status() {
+        let auth = r#"api: 401 {"error":{"message":"invalid x-api-key"}}"#;
+        assert_eq!(
+            api_error_summary(Locale::En, auth).as_deref(),
+            Some("The API key was rejected")
+        );
+        assert_eq!(api_error_settings_section(auth), Some("models"));
+        assert!(is_model_request_error(auth));
+        assert_eq!(
+            send_failed_status(Locale::Zh, LOCAL_REFUSED),
+            "发送失败：本地模型网关 127.0.0.1:3999 没有运行"
+        );
+        assert!(!send_failed_status(Locale::En, LOCAL_REFUSED).contains("os error"));
+        // Unclassified failures keep the raw text; nothing to retry or fix
+        // in settings.
+        for msg in ["stream ended without completion", "tool `python` failed"] {
+            assert_eq!(api_error_summary(Locale::En, msg), None);
+            assert_eq!(api_error_settings_section(msg), None);
+            assert!(!is_model_request_error(msg));
+            assert_eq!(
+                send_failed_status(Locale::En, msg),
+                send_failed(Locale::En, msg)
+            );
+        }
+        // Rate limits are not a settings problem.
+        assert_eq!(api_error_settings_section("api: 429 rate limit"), None);
+        // ACP turns never offer an HTTP retry or a model-settings shortcut.
+        let acp = format!("{}api: 401 unauthorized", crate::dto::ACP_TURN_ERROR_PREFIX);
+        assert_eq!(api_error_summary(Locale::En, &acp), None);
+        assert_eq!(api_error_settings_section(&acp), None);
+        assert!(!is_model_request_error(&acp));
+    }
+
+    #[test]
+    fn every_hint_has_a_summary_in_both_locales() {
+        for msg in [
+            r#"api: 402 {"error":{"message":"Insufficient Balance"}}"#,
+            "api: 401 invalid api key",
+            "api: 400 context_length_exceeded",
+            "api: 400 image_url",
+            "api: 400 model_not_found",
+            "api: 429 rate limit",
+            "api: 503 overloaded",
+            "http: error sending request: tcp connect error",
+            "api: 400 No tool output found for tool call call_1",
+            "api: 400 missing x-opencode-session",
+            "api: 400 invalid argument",
+        ] {
+            for locale in [Locale::En, Locale::Zh] {
+                let summary = api_error_summary(locale, msg).unwrap_or_default();
+                assert!(
+                    !summary.is_empty() && !summary.starts_with("err."),
+                    "for: {msg}"
+                );
+            }
+        }
     }
 
     #[test]

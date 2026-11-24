@@ -526,6 +526,10 @@ pub(crate) fn WorkspaceFilePreview(
     path: String,
     kind: String,
     #[prop(optional)] filename: Option<String>,
+    /// Open images fitted inside a bounded viewport (the artifact modal)
+    /// instead of at 100% of its width, where a tall figure shows only its top.
+    #[prop(optional)]
+    fit_image: bool,
 ) -> impl IntoView {
     match kind.as_str() {
         "csv" => view! { <CsvFilePreview path=path /> }.into_view(),
@@ -540,7 +544,8 @@ pub(crate) fn WorkspaceFilePreview(
         // Image + PDF share the zoom viewport: the wheel zooms, and PDF pages are
         // stepped with the toolbar buttons / arrow keys / Page Up-Down.
         "image" | "pdf" => {
-            view! { <ZoomableFilePreview dom_id=dom_id path=path kind=kind /> }.into_view()
+            view! { <ZoomableFilePreview dom_id=dom_id path=path kind=kind fit_image=fit_image /> }
+                .into_view()
         }
         _ => view! { <FilePreview dom_id=dom_id path=path kind=kind /> }.into_view(),
     }
@@ -703,13 +708,22 @@ mod preview_open_error_tests {
 }
 
 #[component]
-fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
+fn ZoomableFilePreview(
+    dom_id: String,
+    path: String,
+    kind: String,
+    #[prop(optional)] fit_image: bool,
+) -> impl IntoView {
     let locale = use_locale();
     let zoom = create_rw_signal(if kind == "pdf" {
         remembered_pdf_zoom(&path)
     } else {
         100u16
     });
+    // Fit: the whole image inside the viewport (CSS container units cap both
+    // edges). Any explicit zoom leaves fit and steps from 100%.
+    let can_fit = fit_image && kind == "image";
+    let fit = create_rw_signal(can_fit);
     if kind == "pdf" {
         let store_path = path.clone();
         create_effect(move |_| remember_pdf_zoom(&store_path, zoom.get()));
@@ -876,6 +890,10 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
         });
     }
     let adjust_zoom = move |delta: i16| {
+        if fit.get_untracked() {
+            fit.set(false);
+            zoom.set(100);
+        }
         zoom.update(|value| {
             *value = ((*value as i16) + delta).clamp(25, 400) as u16;
         });
@@ -915,10 +933,25 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
                     disabled=move || { zoom.get() <= 25 }
                     on:click=move |_| adjust_zoom(-25)>{crate::app_support::compose_icon("minus")}</button>
                 <button type="button" aria-label=move || t(locale.get(), "preview.zoom_reset")
-                    on:click=move |_| zoom.set(100)>{move || format!("{}%", zoom.get())}</button>
+                    on:click=move |_| {
+                        fit.set(false);
+                        zoom.set(100);
+                    }>{move || if fit.get() {
+                        t(locale.get(), "preview.zoom_fit").to_string()
+                    } else {
+                        format!("{}%", zoom.get())
+                    }}</button>
                 <button type="button" aria-label=move || t(locale.get(), "preview.zoom_in")
-                    disabled=move || { zoom.get() >= 400 }
+                    disabled=move || { !fit.get() && zoom.get() >= 400 }
                     on:click=move |_| adjust_zoom(25)>{crate::app_support::compose_icon("plus")}</button>
+                {move || (can_fit && !fit.get()).then(|| view! {
+                    <button type="button" class="file-preview-fit-btn" data-testid="preview-zoom-fit"
+                        title=move || t(locale.get(), "preview.zoom_fit_title")
+                        aria-label=move || t(locale.get(), "preview.zoom_fit_title")
+                        on:click=move |_| fit.set(true)>
+                        {move || t(locale.get(), "preview.zoom_fit")}
+                    </button>
+                })}
                 {is_image.then(|| view! {
                     <button type="button" class="file-preview-crop-btn"
                         class:active=move || crop_mode.get()
@@ -949,6 +982,7 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
                 })}
             </div>
             <div id=viewport_id class="file-preview-zoom-viewport"
+                class:is-fit=move || fit.get()
                 class:is-dragging=move || { is_dragging.get() }
                 class:is-cropping=move || { crop_mode.get() }
                 on:pointerdown=move |ev: web_sys::PointerEvent| {
@@ -2174,6 +2208,7 @@ pub(crate) fn ArtifactModal(
                         path=path_head.clone()
                         kind=kind.clone()
                         filename=name.clone()
+                        fit_image=true
                     />
                 </div>
                 <div class="am-tabs">

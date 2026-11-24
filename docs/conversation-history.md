@@ -4,7 +4,11 @@ Project cards show separate **Needs you** and **Running** counts. **Needs you**
 (**待处理** in Chinese) includes unread assistant replies and requests waiting for
 your confirmation; it does not mean every listed conversation is still running.
 
-The sidebar marks these conversations with an icon and a visible status label.
+The sidebar marks these conversations with an icon and a visible status label
+that says why: **New reply** (**有新回复**) for a finished reply you have not
+opened yet, and **Needs you** (**待处理**) for a conversation waiting for your
+approval. Recent sessions on the home screen use the same labels, and each entry
+in the topbar inbox shows its reason under the title.
 Choose **Needs you** above the conversation list to see all pending conversations
 in the current project, including older history and sessions in collapsed groups
 or branches. **All sessions** restores the normal grouping and sort order. The
@@ -20,6 +24,13 @@ disclosure in their original order; they no longer create repeated summaries
 with the same turn duration. Expand it to inspect the full process. The final
 answer, trailing usage, approval/question cards, and dedicated run/media cards
 remain separate. Active turns continue to show live progress.
+
+While a turn runs, each settled group of tool steps is titled by what ran: one
+step names the tool and a short target (`python · import matplotlib…`,
+`write_file · hist_plot.py`), a larger group gives the count and the distinct
+tool names (`Ran 3 steps · write_file, python, shell` / `已执行 3 步 · …`). The
+group's duration sits at the right. Long targets are cut with an ellipsis and
+the full text is in the header's tooltip.
 
 While a later turn is running, earlier messages keep **Copy**, **Memory**, and
 **Branch** available. Memory uses only the selected historical turn and still

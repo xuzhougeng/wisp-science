@@ -20,8 +20,9 @@ To try an unreleased plugin, pass its source checkout instead:
 
 Restart Wisp Science after every connection, model change, or disconnection.
 The desktop and CLI read the connection once per process, so live agents and
-their context limits use one consistent model. Runtime session labels show
-`Magpie · <model>`. To disconnect, run `magpie wisp-science default` once and
+their context limits use one consistent model. Runtime session labels, and
+the model badge on each reply in the conversation, show `Magpie · <model>`
+rather than the name of a saved model profile. To disconnect, run `magpie wisp-science default` once and
 restart the application. A newly launched CLI process also picks up the change.
 
 The GPUI desktop reads the same file at startup: its built-in conversations,
@@ -51,8 +52,11 @@ their own model management. A model must support any requested tools or images.
 The desktop app shows the override wherever a model is picked. The composer,
 side chat, reviewer and subagent pickers offer only `Magpie · <model>`, plus
 any ACP agents, and the Fast toggle is hidden because Magpie turns send no
-service tier. Switch models in Magpie. Settings → Models keeps the personal
-profiles editable and says they apply again after a disconnect. Stored
+service tier. Switch models in Magpie. Settings → Models shows an info callout
+with the disconnect command `magpie wisp-science default` as code and a copy
+button, and marks every personal profile **Not in effect** (no **Default**
+badge or **Set as default** button) while keeping it editable; they apply
+again after a disconnect and restart. Stored
 per-conversation, reviewer and subagent choices are left as they were, so they
 return after you disconnect.
 

@@ -4094,13 +4094,81 @@ fn resolve_workspace(env: Option<String>, stored: Option<String>, default: PathB
     default
 }
 
+/// The UI language: the saved preference always wins; without one, the
+/// system's preferred language, so a first launch on a Chinese system opens
+/// in Chinese. Every reader (settings, menus, configure tool) goes through
+/// here, so what they report matches what the user sees.
 async fn load_locale(store: &Store) -> String {
     let raw = store.get_setting("locale").await.ok().flatten();
-    match raw.as_deref().map(str::trim) {
+    let saved = raw.as_deref().map(str::trim).filter(|raw| !raw.is_empty());
+    let system = saved.is_none().then(system_language).flatten();
+    resolve_locale(saved, system.as_deref())
+}
+
+fn resolve_locale(saved: Option<&str>, system: Option<&str>) -> String {
+    match saved.map(str::trim) {
         Some("zh") | Some("zh-CN") | Some("zh-TW") => "zh".into(),
         Some(other) if !other.is_empty() => other.to_string(),
-        _ => "en".into(),
+        _ => supported_locale(system.unwrap_or_default()).into(),
     }
+}
+
+/// Map a system language tag (`zh-Hans-CN`, `zh_CN.UTF-8`, `en-US`) onto a
+/// supported UI locale, the same way the WebView's `Locale::from_code` does.
+fn supported_locale(tag: &str) -> &'static str {
+    if tag.trim().to_ascii_lowercase().starts_with("zh") {
+        "zh"
+    } else {
+        "en"
+    }
+}
+
+/// The user's first preferred language as the OS reports it, without
+/// launching a process. macOS reads `NSLocale.preferredLanguages`, Windows the
+/// per-user UI language from the registry, and other systems the POSIX locale
+/// variables; each falls back to those variables when it has no answer.
+fn system_language() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let preferred = objc2_foundation::NSLocale::preferredLanguages()
+            .firstObject()
+            .map(|tag| tag.to_string())
+            .filter(|tag| !tag.trim().is_empty());
+        if preferred.is_some() {
+            return preferred;
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::RegKey;
+        let user = RegKey::predef(HKEY_CURRENT_USER);
+        let preferred = user
+            .open_subkey("Control Panel\\Desktop")
+            .and_then(|key| key.get_value::<Vec<String>, _>("PreferredUILanguages"))
+            .ok()
+            .and_then(|languages| languages.into_iter().find(|tag| !tag.trim().is_empty()))
+            .or_else(|| {
+                user.open_subkey("Control Panel\\International")
+                    .and_then(|key| key.get_value::<String, _>("LocaleName"))
+                    .ok()
+                    .filter(|tag| !tag.trim().is_empty())
+            });
+        if preferred.is_some() {
+            return preferred;
+        }
+    }
+    posix_language(|name| std::env::var(name).ok())
+}
+
+/// `LC_ALL`, then `LC_MESSAGES`, then `LANG`; `C`/`POSIX` say nothing about
+/// the user's language.
+fn posix_language(var: impl Fn(&str) -> Option<String>) -> Option<String> {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .filter_map(var)
+        .map(|value| value.trim().to_string())
+        .find(|value| !value.is_empty() && value != "C" && value != "POSIX")
 }
 
 #[cfg(target_os = "macos")]
@@ -4336,7 +4404,7 @@ fn wire_macos_menu_events(window: &crate::workspace_surface::WorkspaceSurface) {
 fn install_macos_app_menu(app: &AppHandle, locale_tag: &str) -> Result<(), String> {
     let labels = mac_menu_labels(AppMenuLocale::from_tag(locale_tag));
     let about = AboutMetadata {
-        name: Some("wisp-science".into()),
+        name: Some("Wisp Science".into()),
         version: Some(env!("CARGO_PKG_VERSION").into()),
         ..Default::default()
     };
@@ -5751,7 +5819,10 @@ fn build_stored_provider_config(
     if model.is_empty() {
         return Err("Model is required.".into());
     }
-    if api_key.is_empty() {
+    // A local gateway (localhost, 127.0.0.1, [::1]) usually needs no key; the
+    // providers then omit the auth header instead of sending an empty one.
+    let keyless_local = models::keyless_local_gateway(provider.as_str(), api_url);
+    if api_key.is_empty() && !keyless_local {
         return Err(if provider == "openai_chatgpt" {
             "Sign in with ChatGPT from Settings → Models, or run `wisp-science login chatgpt`."
                 .into()
@@ -7238,7 +7309,7 @@ fn list_memory_files(memory: &MemoryManager) -> Vec<MemoryFile> {
 
 async fn build_project_info(state: &AppState, label: &str) -> Result<ProjectInfo, String> {
     let ap = state.require_active(label)?;
-    let (_, _, _, api_key) = load_settings(&state.store).await;
+    let (provider, api_url, model, api_key) = load_settings(&state.store).await;
     let mcp = list_mcp_servers(&ap.root);
     // Prefer the user-set project name (Project Settings) over the folder name.
     let db_name = state
@@ -7265,7 +7336,7 @@ async fn build_project_info(state: &AppState, label: &str) -> Result<ProjectInfo
         skill_count: ap.skills.all().len(),
         mcp_server_count: mcp.len(),
         memory_file_count: count_memory_files(&ap.memory),
-        has_api_key: !api_key.is_empty(),
+        has_api_key: models::model_access_ready(&provider, &api_url, &model, &api_key),
     })
 }
 
@@ -8415,6 +8486,7 @@ pub fn run() {
             model_catalog::model_catalog_lookup,
             magpie::magpie_model_info,
             settings_commands::validate_settings,
+            settings_commands::list_endpoint_models,
             list_dir,
             create_file,
             file_browser::upload_local_files,
@@ -8435,6 +8507,7 @@ pub fn run() {
             artifact_commands::search_artifacts,
             session_commands::search_sessions,
             session_commands::list_needs_you_sessions,
+            session_commands::list_awaiting_sessions,
             session_commands::search_project_chats,
             session_commands::locate_project_chat_match,
             artifact_commands::read_artifact,

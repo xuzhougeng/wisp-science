@@ -863,6 +863,69 @@ pub(super) async fn validate_settings(
     ))
 }
 
+/// `GET {base}/models` for the model form's Model ID suggestions, through the
+/// same key and route a save would use. `profile_id` names a saved profile
+/// whose stored key applies when the form has none typed; the key itself never
+/// crosses back to the UI.
+#[tauri::command]
+pub(super) async fn list_endpoint_models(
+    state: State<'_, AppState>,
+    provider: String,
+    api_url: String,
+    key: Option<String>,
+    profile_id: Option<String>,
+    proxy_url: Option<String>,
+) -> Result<Vec<wisp_dto::EndpointModelDto>, String> {
+    let provider_name = normalized_provider(&provider);
+    let api_url = api_url.trim();
+    if api_url.is_empty() {
+        return Err("API URL is required.".into());
+    }
+    let stored_key = match profile_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        Some(id) => models::profile_key(&state.store, id)
+            .await
+            .unwrap_or_default(),
+        None => String::new(),
+    };
+    let api_key = effective_api_key(key, stored_key);
+    let mut cfg = match provider_name.as_str() {
+        "anthropic" => wisp_llm::ProviderConfig::anthropic(api_url, api_key.trim(), ""),
+        "openai_responses" => {
+            wisp_llm::ProviderConfig::openai_responses(api_url, api_key.trim(), "")
+        }
+        "openai" => wisp_llm::ProviderConfig::openai(api_url, api_key.trim(), ""),
+        _ => {
+            return Err(format!(
+                "Model lists are not available for {provider_name}."
+            ))
+        }
+    };
+    cfg.proxy = crate::network::model_proxy(&provider_name, api_url);
+    if let Some(proxy_url) = proxy_url {
+        let proxy_url = crate::network::normalize_proxy("Model API proxy", &proxy_url)?;
+        let route =
+            crate::network::resolve_route(&proxy_url, &crate::llm_proxy().unwrap_or_default());
+        cfg.proxy = (!route.is_empty()).then_some(route);
+    }
+    let proxy = cfg.proxy.clone();
+    let models = wisp_llm::model_list::fetch(&cfg)
+        .await
+        .map_err(|error| annotate_provider_error(error, proxy.as_deref()))?;
+    Ok(models
+        .into_iter()
+        .map(|model| wisp_dto::EndpointModelDto {
+            id: model.id,
+            context_window: model.context_window,
+            max_output_tokens: model.max_output_tokens,
+            reasoning_levels: model.reasoning_levels,
+        })
+        .collect())
+}
+
 /// 16x16 PNG — small enough to be free, large enough that vision APIs with a
 /// minimum-dimension rule don't reject it for the wrong reason.
 fn vision_probe_message() -> Message {

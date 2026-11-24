@@ -281,6 +281,19 @@ fn network_settings_support_partial_persisted_configuration() {
 }
 
 #[test]
+fn onboarding_state_carries_model_readiness() {
+    let backend = crate::OnboardingState {
+        show: false,
+        has_api_key: false,
+    };
+    let ui: wisp_dto::OnboardingState = roundtrip(&backend);
+    assert!(!ui.show);
+    assert_eq!(ui.has_api_key, Some(false));
+    let legacy: wisp_dto::OnboardingState = serde_json::from_value(json!({"show": true})).unwrap();
+    assert_eq!(legacy.has_api_key, None);
+}
+
+#[test]
 fn restored_acp_session_state_contract() {
     let backend = wisp_dto::AcpSessionState {
         frame_id: "frame-a".into(),
@@ -413,6 +426,7 @@ fn model_profile_contract() {
         max_tokens: 4096,
         context_window: 200_000,
         reasoning_effort: "high".into(),
+        endpoint_efforts: vec!["none".into(), "high".into()],
         service_tier: "priority".into(),
         user_agent: "research-client/1.0".into(),
         send_user_agent: false,
@@ -446,6 +460,7 @@ fn model_profile_contract() {
     assert_eq!(dto.max_tokens, 4096);
     assert_eq!(dto.context_window, 200_000);
     assert_eq!(dto.reasoning_effort, "high");
+    assert_eq!(dto.endpoint_efforts, ["none", "high"]);
     assert_eq!(dto.service_tier, "priority");
     assert_eq!(dto.user_agent, "research-client/1.0");
     assert!(!dto.send_user_agent);

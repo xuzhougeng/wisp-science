@@ -111,10 +111,39 @@ test("Settings says personal models apply again after a Magpie disconnect", asyn
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByTestId("settings-nav-models").click();
   const notice = page.getByTestId("models-magpie-notice");
+  await expect(notice).toHaveClass(/settings-callout-info/);
+  await expect(notice).toHaveAttribute("role", "note");
   await expect(notice).toContainText(MAGPIE);
-  await expect(notice).toContainText("magpie wisp-science default");
-  // The profiles themselves stay editable.
-  await expect(page.locator(".settings-list-row").filter({ hasText: "opus-4.8" })).toBeVisible();
+  // The command is code, not prose with literal backticks, and copies in one click.
+  await expect(notice.getByTestId("models-magpie-command")).toHaveText("magpie wisp-science default");
+  await expect(notice).not.toContainText("`");
+  await page.evaluate(() => {
+    (window as any).__copied = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text: string) => { (window as any).__copied.push(text); } },
+    });
+  });
+  await notice.getByTestId("models-magpie-copy").click();
+  await expect.poll(() => page.evaluate(() => (window as any).__copied)).toEqual(["magpie wisp-science default"]);
+  // The profiles themselves stay editable, but none of them claims to be in effect.
+  const rows = page.getByTestId("model-profile-row");
+  await expect(rows.filter({ hasText: "opus-4.8" })).toBeVisible();
+  await expect(rows.first().getByTestId("model-not-in-effect")).toHaveText("Not in effect");
+  await expect(page.locator(".model-settings-pane .settings-model-default")).toHaveCount(0);
+  await expect(rows.getByRole("button", { name: "Set as default" })).toHaveCount(0);
+});
+
+test("the Magpie callout and the not-in-effect marks are translated", async ({ page }) => {
+  await page.goto("/?mockMagpie=1&mockLocale=zh");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByTestId("settings-nav-models").click();
+  const notice = page.getByTestId("models-magpie-notice");
+  await expect(notice).toContainText("已接入 Magpie");
+  await expect(notice.getByTestId("models-magpie-copy")).toHaveAttribute("aria-label", "复制命令");
+  await expect(page.getByTestId("model-not-in-effect").first()).toHaveText("未生效");
+  await expect(page.getByText("当前默认", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("设为默认模型", { exact: true })).toHaveCount(0);
 });
 
 test("Settings shows no Magpie notice when Magpie is not connected", async ({ page }) => {
@@ -123,4 +152,35 @@ test("Settings shows no Magpie notice when Magpie is not connected", async ({ pa
   await page.getByTestId("settings-nav-models").click();
   await expect(page.locator(".settings-list-row").filter({ hasText: "opus-4.8" })).toBeVisible();
   await expect(page.getByTestId("models-magpie-notice")).toHaveCount(0);
+});
+
+test("a reply's model badge names the Magpie model, not the personal default", async ({ page }) => {
+  await enterProject(page);
+  await page.locator("#composer-input").fill("badge check");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  const reply = page.locator(".msg.assistant").last();
+  await expect(reply).toContainText("Hello from mock wisp-science.");
+  await expect(reply.locator(".role-model")).toHaveText(MAGPIE);
+});
+
+test("the backend's usage label re-stamps the running reply's badge", async ({ page }) => {
+  await enterProject(page, "");
+  await page.locator("#composer-input").fill("PENDINGDEMO · which model answered");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByTestId("turn-pending")).toBeVisible();
+  const frameId = await page.evaluate(() => {
+    const calls = (window as any).__skillInvokeLog as { cmd: string; args: any }[];
+    const args = calls.filter(call => call.cmd === "send_message").at(-1)!.args;
+    return (args instanceof Map ? args.get("sessionId") : args.sessionId) as string;
+  });
+  const emit = (event: Record<string, unknown>) =>
+    page.evaluate(payload => (window as any).__tauriEmit("agent", payload), { frame_id: frameId, ...event });
+  await emit({ kind: "Text", delta: "Answered." });
+  await emit({ kind: "Usage", model: "Magpie · gateway/served", input: 10, output: 2, ctx_tokens: 12, max_context: 128000 });
+  // The streaming row carries no badge; it appears once the reply settles.
+  await page.evaluate(() => (window as any).__finishPendingTurn());
+  const reply = page.locator(".msg.assistant").last();
+  await expect(reply).toContainText("Answered.");
+  // No Magpie connection here, so only the usage label can produce this text.
+  await expect(reply.locator(".role-model")).toHaveText("Magpie · gateway/served");
 });

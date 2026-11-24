@@ -81,7 +81,12 @@ rewrites the exported snapshot. If publishing project-owned storage fails after
 valid records have been imported, those records remain in the application database
 for migration recovery. Importing a project ID already on the
 current device is rejected; open that project from the project list instead.
-To start a new project using ordinary files, use **New project**.
+To start a new project using ordinary files, use **New project**. The form
+says what is still missing before **Create** becomes available and, once a name
+is typed, offers a folder named after the project beside the default workspace
+(on a fresh install, `Documents/<name>`); choose **Use this folder** or pick
+another one. The **standard research layout** switch lists the folders it will
+create (`data/raw/`, `results/tables/`, `figures/`, `literature/` and so on).
 
 The package's workspace remains editable after import. Manifest file totals
 record the original snapshot, so they are checked when exporting but do not

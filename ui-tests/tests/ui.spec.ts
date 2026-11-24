@@ -18,6 +18,15 @@ function providerSelect(page: Page) {
   return page.getByTestId("settings-provider");
 }
 
+// Settings › Models keeps everything past address, key, protocol, model ID and
+// display name in one collapsed "Advanced" disclosure.
+async function openModelAdvanced(page: Page) {
+  const advanced = page.getByTestId("model-advanced-section");
+  if (!(await advanced.evaluate((el) => (el as HTMLDetailsElement).open))) {
+    await advanced.locator(":scope > summary").click();
+  }
+}
+
 function globalSettingsButton(page: Page) {
   // "Project settings" on landing cards also matches name: "Settings" unless exact.
   return page.getByRole("button", { name: "Settings", exact: true });
@@ -318,7 +327,11 @@ test("Example project shows bundled demos as read-only transcripts", async ({ pa
   await expect(page.getByText("What specific samples are included in GSE153250")).toBeVisible();
   await expect(page.getByText("Based on the upstream Counts data from GSE153250")).toBeVisible();
   await expect(page.getByText("Based on the Counts data from our study")).toBeVisible();
-  await page.getByText("Connect to the remote compute host, locate the FASTQ data").click();
+  // The first example opens on entry, so the read-only view never sits on the
+  // empty "what's next?" hero above a disabled composer.
+  await expect(page.locator(".msg.assistant").first()).toBeVisible();
+  expect(await invokeArgsList(page, "load_demo")).toContainEqual({ id: "manifest_esr1_01_datasets" });
+  await page.locator(".side-item.ses", { hasText: "Connect to the remote compute host, locate the FASTQ data" }).click();
 
   // The demo request renders as the user turn…
   await expect(
@@ -1933,8 +1946,12 @@ test("post-start API errors keep the user bubble when an Error event lands first
   await expect(page.locator(".finding.err")).toContainText("max_tokens too high");
   await expect(page.locator(".finding.err")).not.toContainText("[turn-started]");
   await expect(composer(page)).toHaveValue("");
-  // Resume must still see the original question in the transcript.
-  await expect(page.getByRole("button", { name: /Resume|继续执行/ })).toBeVisible();
+  // Retry (Resume of a failed model request) must still see the original
+  // question in the transcript.
+  await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+  // The headline is the plain-language summary; the raw body stays in Details.
+  await expect(page.locator(".finding.err .finding-title")).toHaveText("The provider rejected the request");
+  await expect(page.locator(".finding.err .finding-raw pre")).toContainText("max_tokens too high");
 });
 
 for (const locale of ["zh", "en"]) {
@@ -1949,8 +1966,13 @@ for (const locale of ["zh", "en"]) {
       + "https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof-" + "connection".repeat(30);
     await emitTauriEvent(page, "agent", { kind: "Error", frame_id: send.sessionId, message });
     const card = page.locator(".finding.err");
-    await expect(card.locator(".finding-title")).toHaveText(message);
-    await expect(card.getByRole("button", { name: locale === "zh" ? "继续执行" : "Resume", exact: true })).toBeVisible();
+    // The plain-language summary is the headline; the raw transport error is
+    // folded into Details.
+    await expect(card.locator(".finding-title")).toHaveText(locale === "zh" ? "无法连接到模型 API" : "Could not reach the model API");
+    await expect(card.locator(".finding-raw pre")).toHaveText(message);
+    await expect(card.locator(".finding-raw")).not.toHaveAttribute("open", /.*/);
+    // Resuming a failed model request re-sends it.
+    await expect(card.getByRole("button", { name: locale === "zh" ? "重试" : "Retry", exact: true })).toBeVisible();
     await expect(card.getByRole("button", { name: locale === "zh" ? "复制" : "Copy", exact: true })).toBeVisible();
     for (const width of [1440, 820, 360]) {
       await page.setViewportSize({ width: Math.max(width, 820), height: 1200 });
@@ -1960,8 +1982,8 @@ for (const locale of ["zh", "en"]) {
       await card.scrollIntoViewIfNeeded();
       const layout = await card.evaluate(el => {
         const bounds = el.getBoundingClientRect();
-        const controls = Array.from(el.querySelectorAll(".finding-tag, button"));
-        const buttonCenters = Array.from(el.querySelectorAll("button"), button => {
+        const controls = Array.from(el.querySelectorAll(".finding-tag, .finding-actions button"));
+        const buttonCenters = Array.from(el.querySelectorAll(".finding-actions button"), button => {
           const rect = button.getBoundingClientRect();
           return rect.top + rect.height / 2;
         });
@@ -2022,9 +2044,9 @@ test("automatic reviewer resolves its finding and jumps past UI-only rows (#550)
 
   const handoffs = page.locator(".review-transition");
   await expect(handoffs).toHaveCount(2);
-  await expect(handoffs.nth(0)).toContainText("wisp-science nudged Reviewer");
+  await expect(handoffs.nth(0)).toContainText("Wisp Science nudged Reviewer");
   await expect(handoffs.nth(0)).toHaveAttribute("data-phase", "reviewing");
-  await expect(handoffs.nth(1)).toContainText("Reviewer nudged wisp-science");
+  await expect(handoffs.nth(1)).toContainText("Reviewer nudged Wisp Science");
   await expect(handoffs.nth(1)).toContainText("deepseek-v4-pro");
   await expect(handoffs.nth(1)).toHaveAttribute("data-phase", "correcting");
 
@@ -3970,7 +3992,7 @@ test("Ctrl+P command palette runs commands and switches themes", async ({ page }
 test("privacy mode hides selected projects and recent sessions, then restores them", async ({ page }) => {
   await pinNonMacPlatform(page);
   await page.goto("/");
-  const privateProject = page.locator(".proj-card", { hasText: "wisp-science" });
+  const privateProject = page.locator(".proj-card:not(.proj-recent)", { hasText: "wisp-science" });
   const otherProject = page.locator(".proj-card", { hasText: "Other project" });
   await expect(privateProject).toBeVisible();
   await expect(page.getByTestId("recent-session-card")).toHaveCount(2);
@@ -4029,7 +4051,7 @@ test("a saved host privacy choice takes precedence over a stale window, and refr
     localStorage.setItem("wisp-privacy-mode-projects", "[]");
   });
   await page.goto("/");
-  const privateCard = page.locator(".proj-card", { hasText: "wisp-science" });
+  const privateCard = page.locator(".proj-card:not(.proj-recent)", { hasText: "wisp-science" });
   await expect(page.locator(".proj-card", { hasText: "Other project" })).toBeVisible();
   await expect(privateCard).toHaveCount(0);
   await expect(page.getByTestId("recent-session-card")).toHaveCount(0);
@@ -4047,7 +4069,7 @@ test("a saved host privacy choice takes precedence over a stale window, and refr
 
 test("privacy mode select all toggles every project at once", async ({ page }) => {
   await page.goto("/");
-  const privateProject = page.locator(".proj-card", { hasText: "wisp-science" });
+  const privateProject = page.locator(".proj-card:not(.proj-recent)", { hasText: "wisp-science" });
   const otherProject = page.locator(".proj-card", { hasText: "Other project" });
   await expect(privateProject).toBeVisible();
   await expect(otherProject).toBeVisible();
@@ -5724,12 +5746,11 @@ test("Generated artifacts survive follow-up tool commentary and ignore mentioned
   });
   await expect(reply).toBeVisible({ timeout: 10_000 });
   await expect(reply.locator(".message-artifacts-label")).toHaveText("Generated · 1");
-  await reply.locator(".message-artifacts-label").click();
-  await reply.locator(".generated-directory > summary").filter({ hasText: "results" }).click();
-  await expect(reply.locator('.message-artifact-card[data-artifact-name="new.png"]')).toBeVisible();
-  await expect(reply.locator('.message-artifact-card[data-artifact-name="old.csv"]')).toHaveCount(0);
-  await expect(reply.locator('.message-artifact-card[data-artifact-name="old.png"]')).toHaveCount(0);
-  await expect(reply.locator('.message-artifact-card[data-artifact-name="old-report.md"]')).toHaveCount(0);
+  // A single generated image is shown inline, expanded, without any click.
+  await expect(reply.locator('.message-artifact-image[data-artifact-name="new.png"]')).toBeVisible();
+  await expect(reply.locator('[data-artifact-name="old.csv"]')).toHaveCount(0);
+  await expect(reply.locator('[data-artifact-name="old.png"]')).toHaveCount(0);
+  await expect(reply.locator('[data-artifact-name="old-report.md"]')).toHaveCount(0);
   // Suggested/mentioned filenames are not workspace files unless they exist.
   // Deleted temp paths stay as code even when they look like project files.
   await expect(reply.locator('a.workspace-path-link[href="old.csv"]')).toHaveCount(0);
@@ -5800,7 +5821,7 @@ test("Generated artifacts survive follow-up tool commentary and ignore mentioned
 
   // The backing artifact path remains absolute for loading, but project UI
   // must present the portable project-relative form.
-  await reply.locator('.message-artifact-card[data-artifact-name="new.png"]').click();
+  await reply.locator('.message-artifact-image[data-artifact-name="new.png"]').click();
   const modal = page.locator(".artifact-modal");
   await expect(modal).toBeVisible();
   await modal.getByRole("button", { name: "Open in center" }).click();
@@ -10068,6 +10089,8 @@ test("image crop stays highlighted until it is added to chat", async ({ page }) 
   await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
   const image = page.locator(".artifact-modal .rp-img");
   await expect(image).toBeVisible();
+  // The modal opens fitted; the 1×1 mock image needs 100% width to drag on.
+  await page.locator(".artifact-modal").getByRole("button", { name: "Reset zoom" }).click();
 
   // Toggle crop mode → the capture layer appears.
   await page.getByRole("button", { name: "Select a region to ask about" }).click();
@@ -10109,6 +10132,8 @@ test("image region comments become numbered pins and a revision request", async 
   await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
   const image = page.locator(".artifact-modal .rp-img");
   await expect(image).toBeVisible();
+  // The modal opens fitted; the 1×1 mock image needs 100% width to drag on.
+  await page.locator(".artifact-modal").getByRole("button", { name: "Reset zoom" }).click();
 
   await page.getByRole("button", { name: "Select a region to ask about" }).click();
   const box = (await image.boundingBox())!;
@@ -10190,6 +10215,7 @@ test("settings page shows the saved protocol", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);
   await expect(providerSelect(page)).toHaveValue("openai");
+  await openModelAdvanced(page);
   await expect(page.locator("label.settings-check", { hasText: "Supports image input" })).toHaveCSS("flex-direction", "row");
   await expect(page.locator("label.settings-check", { hasText: "Use for image analysis" })).toHaveCSS("flex-direction", "row");
   await expect(page.locator("label.settings-check", { hasText: "Use for image generation" })).toHaveCSS("flex-direction", "row");
@@ -10205,6 +10231,7 @@ for (const locale of ["en", "zh"]) {
     await page.locator(".settings-list-row").first().click();
     await providerSelect(page).selectOption("anthropic");
     await page.getByRole("textbox", { name: locale === "zh" ? "模型 ID" : "Model ID", exact: true }).fill("glm-5.3");
+    await openModelAdvanced(page);
     const form = page.locator(".model-form");
     const effort = page.getByRole("combobox", { name: locale === "zh" ? "推理强度" : "Reasoning effort", exact: true });
     await expect(effort).toHaveAccessibleDescription(/.+/);
@@ -10597,6 +10624,7 @@ test("advanced identity controls persist and validate a custom session header", 
   await enterApp(page);
   await openModelsSettings(page);
   const advanced = page.getByTestId("model-advanced-options");
+  await openModelAdvanced(page);
   await advanced.locator("summary").click();
   await expect(page.getByTestId("model-send-user-agent")).toBeChecked();
   await expect(page.getByTestId("model-send-session-id")).not.toBeChecked();
@@ -10614,6 +10642,7 @@ test("advanced identity controls persist and validate a custom session header", 
     send_user_agent: false, send_session_id: true, session_header_name: "x-custom-session",
   }});
   await page.locator(".settings-list-row").first().click();
+  await openModelAdvanced(page);
   await advanced.locator("summary").click();
   await expect(page.getByTestId("model-send-user-agent")).not.toBeChecked();
   await expect(page.getByTestId("model-send-session-id")).toBeChecked();
@@ -10629,6 +10658,7 @@ test("OpenCode defaults to session identity but permits disabling both headers",
   await enterApp(page);
   await openSettingsSection(page, "Models");
   await page.getByTestId("model-presets").getByRole("button", { name: "OpenCode", exact: true }).click();
+  await openModelAdvanced(page);
   await page.getByTestId("model-advanced-options").locator("summary").click();
   await expect(page.getByTestId("model-send-user-agent")).toBeChecked();
   await expect(page.getByTestId("model-send-session-id")).toBeChecked();
@@ -10657,6 +10687,7 @@ test("model User-Agent advanced option validates, persists, and resets", async (
   const userAgent = page.getByTestId("model-user-agent");
   await expect(advanced).not.toHaveAttribute("open", "");
   await expect(userAgent).toBeHidden();
+  await openModelAdvanced(page);
   await advanced.locator("summary").click();
   await expect(userAgent).toHaveValue("");
   await expect(userAgent).toHaveAttribute("placeholder", "wisp-science");
@@ -10668,6 +10699,7 @@ test("model User-Agent advanced option validates, persists, and resets", async (
   await expect.poll(() => lastInvokeArgs(page, "save_model"))
     .toMatchObject({ profile: { user_agent: "research-client/1.0" } });
   await page.locator(".settings-list-row").first().click();
+  await openModelAdvanced(page);
   await advanced.locator("summary").click();
   await expect(userAgent).toHaveValue("research-client/1.0");
   await userAgent.fill("");
@@ -10675,6 +10707,7 @@ test("model User-Agent advanced option validates, persists, and resets", async (
   await expect.poll(() => lastInvokeArgs(page, "save_model"))
     .toMatchObject({ profile: { user_agent: "" } });
   await page.locator(".settings-list-row").first().click();
+  await openModelAdvanced(page);
   await advanced.locator("summary").click();
   await expect(userAgent).toHaveValue("");
 });
@@ -10689,6 +10722,7 @@ test("new API access applies its advanced User-Agent to every added model", asyn
   await page.getByTestId("provider-add-model").click();
   await page.getByTestId("provider-model-row").last().getByLabel("Model ID").fill("research-two");
   await expect(page.getByTestId("model-user-agent")).toBeHidden();
+  await openModelAdvanced(page);
   await page.getByTestId("model-advanced-options").locator("summary").click();
   await page.getByTestId("model-user-agent").fill("research-client/2.0");
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
@@ -10711,6 +10745,7 @@ test("vision assignment keeps model fields and stored key placeholder untouched"
   const effort = page.getByLabel("Reasoning effort");
   const key = page.getByLabel("API key (stored in OS keyring)");
   const useForVision = page.getByLabel("Use for image analysis");
+  await openModelAdvanced(page);
 
   await providerSelect(page).selectOption("openai_responses");
   await page.getByLabel("Base URL").fill("https://api.openai-proxy.org/v1");
@@ -10765,6 +10800,7 @@ test("Fast profile toggle is available for both OpenAI HTTP protocols", async ({
     await providerSelect(page).selectOption(provider);
     await page.getByLabel("Base URL").fill("https://api.openai.com/v1");
     await page.getByRole("textbox", { name: "Model ID", exact: true }).fill("gpt-5.6-luna");
+    await openModelAdvanced(page);
     await page.getByLabel("Reasoning effort").selectOption("high");
     const row = page.getByTestId("service-tier-toggle-row");
     const toggle = page.getByTestId("service-tier-toggle");
@@ -10855,6 +10891,7 @@ for (const [label, field, value] of [
   test(`model settings keeps ${field} focused while typing and deleting (#1243)`, async ({ page }) => {
     await enterApp(page);
     await openModelsSettings(page);
+    await openModelAdvanced(page);
     const input = page.getByLabel(label, { exact: true });
     await input.click();
     await page.keyboard.press("ControlOrMeta+A");
@@ -10888,6 +10925,7 @@ test("model settings rejects max output tokens above the known ceiling", async (
   await openModelsSettings(page);
 
   // deepseek-v4-pro is in the baked catalog (384K output ceiling).
+  await openModelAdvanced(page);
   const maxTokens = page.getByLabel("Max output tokens");
   await maxTokens.fill("1000000");
   await page.getByRole("button", { name: "Save" }).click();
@@ -10956,16 +10994,16 @@ test("API access creates several models with one key, including an explicit imag
       };
     }))).toEqual([
       {
-        model: "gpt-image-2",
-        provider: "openai_responses",
-        apiUrl: "https://api.openai.com",
-        suffix: "/v1/images/generations",
-      },
-      {
         model: "gpt-5.5",
         provider: "openai_responses",
         apiUrl: "https://api.openai.com",
         suffix: "",
+      },
+      {
+        model: "gpt-image-2",
+        provider: "openai_responses",
+        apiUrl: "https://api.openai.com",
+        suffix: "/v1/images/generations",
       },
     ]);
 });
@@ -10983,13 +11021,14 @@ test("API access reuses a stored key for the same Base URL", async ({ page }) =>
   await expect(page.getByTestId("provider-separate-key-hint"))
     .toContainText("Paste a different key");
   await page.getByRole("button", { name: "Save" }).click();
+  // Both default models are saved, the landing one first, neither with a key.
   await expect.poll(async () => {
-    const args = await lastInvokeArgs(page, "save_model");
-    return args ? { ...args, key: args.key ?? null } : null;
-  }).toMatchObject({
-    key: null,
-    profile: { model: "deepseek-v4-flash" },
-  });
+    const calls = await invokeArgsList(page, "save_model");
+    return calls.map((args) => ({ key: args.key ?? null, model: args.profile?.model }));
+  }).toEqual([
+    { key: null, model: "deepseek-v4-flash" },
+    { key: null, model: "deepseek-v4-pro" },
+  ]);
 });
 
 test("API access can paste a second key on the same Base URL", async ({ page }) => {
@@ -11016,14 +11055,14 @@ test("API access can paste a second key on the same Base URL", async ({ page }) 
       };
     }))).toEqual([
       {
-        model: "deepseek-v4-pro",
-        label: "pro-work",
+        model: "deepseek-v4-flash",
+        label: "flash-work",
         key: "sk-work",
         apiUrl: "https://api.deepseek.com",
       },
       {
-        model: "deepseek-v4-flash",
-        label: "flash-work",
+        model: "deepseek-v4-pro",
+        label: "pro-work",
         key: "sk-work",
         apiUrl: "https://api.deepseek.com",
       },
@@ -11057,36 +11096,36 @@ test("one DeepSeek Base URL can save Responses and Anthropic protocol models", a
       };
     }))).toEqual([
       {
-        model: "deepseek-v4-pro",
-        protocol: "anthropic",
-        baseUrl: "https://api.deepseek.com",
-        suffix: "/anthropic",
-      },
-      {
         model: "deepseek-v4-flash",
         protocol: "openai_responses",
         baseUrl: "https://api.deepseek.com",
         suffix: "",
       },
+      {
+        model: "deepseek-v4-pro",
+        protocol: "anthropic",
+        baseUrl: "https://api.deepseek.com",
+        suffix: "/anthropic",
+      },
     ]);
 });
 
-test("onboarding key setup lands on flash after adding pro", async ({ page }) => {
+test("onboarding key setup saves flash first so it becomes the default", async ({ page }) => {
   await page.goto("/?mockOnboarding=1");
   await expect(page.locator(".onboard-overlay")).toBeVisible();
   await page.locator(".onboard-overlay").getByRole("button", { name: "Next" }).click();
   await page.locator(".onboard-overlay").getByRole("button", { name: "Next" }).click();
   await page.getByLabel("API key (stored in OS keyring)").fill("sk-onboard");
   await page.keyboard.press("Enter");
-  // Order matters: save_model activates each new profile, so flash must land
-  // last for the user to start on the cheaper default.
+  // Order matters: save_model makes a new profile the default only while
+  // there is no usable default, so flash must be saved first.
   await expect.poll(() => page.evaluate(() => ((window as any).__skillInvokeLog ?? [])
     .filter((c: any) => c.cmd === "save_model")
     .map((c: any) => {
       const args = c.args instanceof Map ? Object.fromEntries(c.args) : c.args;
       const profile = args.profile instanceof Map ? Object.fromEntries(args.profile) : args.profile;
       return profile.model;
-    }))).toEqual(["deepseek-v4-pro", "deepseek-v4-flash"]);
+    }))).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
   // The built-in Reader gets bound to the flash profile so reading-heavy
   // work runs on the cheap tier out of the box.
   await expect.poll(() => page.evaluate(() => ((window as any).__skillInvokeLog ?? [])
@@ -11095,7 +11134,50 @@ test("onboarding key setup lands on flash after adding pro", async ({ page }) =>
       const args = c.args instanceof Map ? Object.fromEntries(c.args) : c.args;
       const spec = args.spec instanceof Map ? Object.fromEntries(args.spec) : args.spec;
       return { id: spec.id, model_id: spec.model_id };
-    }))).toEqual([{ id: "reader", model_id: "m2" }]);
+    }))).toEqual([{ id: "reader", model_id: "m1" }]);
+});
+
+test("onboarding model step keeps skipping secondary and offers other providers", async ({ page }) => {
+  await page.goto("/?mockOnboarding=1");
+  const onboard = page.locator(".onboard-overlay");
+  await onboard.getByRole("button", { name: "Next" }).click();
+  await onboard.getByRole("button", { name: "Next" }).click();
+  await expect(onboard.getByRole("heading")).toHaveText("Set up your model");
+  const key = onboard.getByLabel("API key (stored in OS keyring)");
+  await expect(key).toHaveAttribute("placeholder", /DeepSeek API key/);
+  // With no key, skipping is offered as a plain button and the primary one waits.
+  const later = onboard.getByRole("button", { name: "Set up later" });
+  const next = onboard.locator(".row > .primary");
+  await expect(later).toBeVisible();
+  await expect(later).not.toHaveClass(/primary/);
+  await expect(next).toHaveText("Next");
+  await expect(next).toBeDisabled();
+  await key.fill("sk-onboard");
+  await expect(next).toBeEnabled();
+  await key.fill("");
+  // Other providers: the guide steps aside for Settings › Models.
+  await onboard.getByTestId("onboard-other-provider").click();
+  await expect(onboard).toBeHidden();
+  await expect(page.locator(".settings-page")).toBeVisible();
+  await expect(page.locator(".settings-nav button.active")).toHaveText("Models");
+  await expect.poll(() => page.evaluate(() => ((window as any).__skillInvokeLog ?? [])
+    .filter((call: any) => call.cmd === "dismiss_onboarding").length)).toBe(1);
+  expect(await lastInvokeArgs(page, "save_model")).toBeNull();
+});
+
+test("onboarding model step says Magpie provides the model and asks for no key", async ({ page }) => {
+  await page.goto("/?mockOnboarding=1&mockMagpie=1&mockLocale=zh");
+  const onboard = page.locator(".onboard-overlay");
+  await onboard.getByRole("button", { name: "下一步" }).click();
+  await onboard.getByRole("button", { name: "下一步" }).click();
+  await expect(onboard.getByRole("heading")).toHaveText("配置模型");
+  await expect(onboard.getByTestId("onboard-magpie")).toContainText("Magpie");
+  await expect(onboard.getByTestId("onboard-magpie")).toContainText("fixture/reasoner");
+  await expect(onboard.locator('input[type="password"]')).toHaveCount(0);
+  await expect(onboard.getByRole("button", { name: "稍后配置" })).toHaveCount(0);
+  await onboard.locator(".row > .primary").click();
+  await expect(onboard.getByRole("heading")).toHaveText("本地环境（可选）");
+  expect(await lastInvokeArgs(page, "save_model")).toBeNull();
 });
 
 test("API access on xAI suggests grok chat and imagine image", async ({ page }) => {
@@ -11114,6 +11196,7 @@ for (const modelId of ["gpt-image-2.5", "gateway/custom-image-v3"]) {
     await enterApp(page);
     await openSettingsSection(page, "Models");
     await page.locator(".settings-list-row", { hasText: "opus-4.8" }).click();
+    await openModelAdvanced(page);
     await providerSelect(page).selectOption("openai");
     await page.getByRole("textbox", { name: "Model ID", exact: true }).fill(modelId);
     await page.getByTestId("use-for-image-generation").check();
@@ -11125,7 +11208,7 @@ for (const modelId of ["gpt-image-2.5", "gateway/custom-image-v3"]) {
       useForImageGeneration: true,
       settings: { provider: "openai", model: modelId, supports_vision: false },
     });
-    await expect(page.locator(".settings-status")).toHaveText(`Validated openai with ${modelId}`);
+    await expect(page.locator(".settings-status")).toHaveText(`Connection OK · OpenAI Chat Completions · ${modelId}`);
     await page.getByRole("button", { name: "Save" }).click();
     await expect.poll(() => lastInvokeArgs(page, "save_model")).toMatchObject({
       useForImageGeneration: true,
@@ -11134,6 +11217,7 @@ for (const modelId of ["gpt-image-2.5", "gateway/custom-image-v3"]) {
     const row = page.locator(".settings-list-row", { hasText: "opus-4.8" });
     await expect(row.getByRole("button", { name: "Set as default" })).toHaveCount(0);
     await row.click();
+    await openModelAdvanced(page);
     await page.getByTestId("use-for-image-generation").uncheck();
     await expect(page.getByTestId("image-size")).toBeVisible();
     await page.getByRole("button", { name: "Save" }).click();
@@ -11151,6 +11235,7 @@ test("misclassified chat model can recover its role without changing identity or
   await openSettingsSection(page, "Models");
   const row = page.locator(".settings-list-row", { hasText: "deepseek-v4-pro" });
   await row.click();
+  await openModelAdvanced(page);
   await expect(page.getByTestId("use-for-image-generation")).toHaveAccessibleDescription(/Sessions using this profile/);
   await page.getByTestId("use-for-image-generation").check();
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -11159,11 +11244,14 @@ test("misclassified chat model can recover its role without changing identity or
   await expect(page.locator(".settings-list-row", { hasText: "opus-4.8" }).locator(".settings-model-default")).toBeVisible();
 
   await row.click();
+
+  await openModelAdvanced(page);
   await page.getByTestId("use-for-image-generation").uncheck();
   await expect(page.getByTestId("image-size")).toBeVisible();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(row.getByTestId("image-role-badge")).toBeVisible();
   await row.click();
+  await openModelAdvanced(page);
   await page.getByRole("button", { name: "Restore as chat model" }).click();
   // Re-selecting then deselecting the assignment must not display chat fields
   // while the backend would still inherit the original image role.
@@ -11179,6 +11267,7 @@ test("misclassified chat model can recover its role without changing identity or
 
   // A rejected save leaves both the saved role and the existing default alone.
   await row.click();
+  await openModelAdvanced(page);
   await page.getByTestId("restore-chat-model").click();
   await page.getByLabel("Supports image input").check();
   await page.getByLabel("Use for image analysis").check();
@@ -11188,6 +11277,7 @@ test("misclassified chat model can recover its role without changing identity or
   await page.locator(".settings-footer").getByRole("button", { name: "Cancel" }).click();
   await expect(row.getByTestId("image-role-badge")).toBeVisible();
   await row.click();
+  await openModelAdvanced(page);
   await expect(page.getByTestId("image-size")).toBeVisible();
   await page.getByTestId("restore-chat-model").click();
   await page.getByLabel("Supports image input").check();
@@ -11207,6 +11297,7 @@ test("misclassified chat model can recover its role without changing identity or
   await row.getByRole("button", { name: "Set as default" }).click();
   await expect(row.locator(".settings-model-default")).toBeVisible();
   await row.click();
+  await openModelAdvanced(page);
   await expect(page.getByLabel("Supports image input")).toBeChecked();
   await expect(page.getByLabel("Use for image analysis")).toBeChecked();
   await expect(page.getByLabel("Model ID", { exact: true })).toHaveValue("deepseek-v4-pro");
@@ -11223,6 +11314,7 @@ test("gpt-image-2 can be assigned for generation but not selected for chat", asy
   await openSettingsSection(page, "Models");
   const opus = page.locator(".settings-list-row", { hasText: "opus-4.8" });
   await opus.click();
+  await openModelAdvanced(page);
 
   await providerSelect(page).selectOption("openai_responses");
   await page.getByLabel("Base URL").fill("https://api.openai.com/v1");
@@ -11237,7 +11329,7 @@ test("gpt-image-2 can be assigned for generation but not selected for chat", asy
   await expect(page.getByTestId("use-for-image-generation")).toBeChecked();
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toHaveText(
-    "Validated openai_responses with gpt-image-2",
+    "Connection OK · OpenAI Responses · gpt-image-2",
   );
   await page.getByRole("button", { name: "Save" }).click();
 
@@ -11269,6 +11361,7 @@ test("grok-imagine-image-2.0 can be assigned for generation but not selected for
   await openSettingsSection(page, "Models");
   const opus = page.locator(".settings-list-row", { hasText: "opus-4.8" });
   await opus.click();
+  await openModelAdvanced(page);
 
   await providerSelect(page).selectOption("openai");
   await page.getByLabel("Base URL").fill("https://api.x.ai");
@@ -11285,7 +11378,7 @@ test("grok-imagine-image-2.0 can be assigned for generation but not selected for
   await expect(page.getByTestId("use-for-image-generation")).toBeChecked();
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toHaveText(
-    "Validated openai with grok-imagine-image-2.0",
+    "Connection OK · OpenAI Chat Completions · grok-imagine-image-2.0",
   );
   await page.getByRole("button", { name: "Save" }).click();
 
@@ -11318,6 +11411,7 @@ test("gemini image models can be configured with Gemini protocol and excluded fr
   await openSettingsSection(page, "Models");
   const opus = page.locator(".settings-list-row", { hasText: "opus-4.8" });
   await opus.click();
+  await openModelAdvanced(page);
 
   await providerSelect(page).selectOption("gemini");
   await page.getByLabel("Base URL").fill("https://generativelanguage.googleapis.com");
@@ -11334,7 +11428,7 @@ test("gemini image models can be configured with Gemini protocol and excluded fr
   await expect(page.getByTestId("use-for-image-generation")).toBeChecked();
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toHaveText(
-    "Validated gemini with gemini-3.1-flash-image-preview",
+    "Connection OK · Gemini (Image generation) · gemini-3.1-flash-image-preview",
   );
   await page.getByRole("button", { name: "Save" }).click();
 
@@ -11366,6 +11460,7 @@ test("grok-imagine-video can be assigned for generation but not selected for cha
   await openSettingsSection(page, "Models");
   const opus = page.locator(".settings-list-row", { hasText: "opus-4.8" });
   await opus.click();
+  await openModelAdvanced(page);
 
   await providerSelect(page).selectOption("openai");
   await page.getByLabel("Base URL").fill("https://api.x.ai");
@@ -11382,7 +11477,7 @@ test("grok-imagine-video can be assigned for generation but not selected for cha
   await expect(page.getByTestId("use-for-video-generation")).toBeChecked();
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
   await expect(page.locator(".settings-status")).toHaveText(
-    "Validated openai with grok-imagine-video",
+    "Connection OK · OpenAI Chat Completions · grok-imagine-video",
   );
   await page.getByRole("button", { name: "Save" }).click();
 
@@ -11415,7 +11510,7 @@ test("settings normalizes a blank stored provider to openai", async ({ page }) =
   await openModelsSettings(page);
   await expect(providerSelect(page)).toHaveValue("openai");
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
-  await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
+  await expect(page.locator(".settings-status")).toContainText("Connection OK · OpenAI Chat Completions · deepseek-v4-pro");
 });
 
 test("editing Base URL keeps protocol state and display aligned", async ({ page }) => {
@@ -11424,19 +11519,24 @@ test("editing Base URL keeps protocol state and display aligned", async ({ page 
   await page.getByLabel("Base URL").fill("https://api.deepseek.com");
   await expect(providerSelect(page)).toHaveValue("openai");
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
-  await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
+  await expect(page.locator(".settings-status")).toContainText("Connection OK · OpenAI Chat Completions · deepseek-v4-pro");
 });
 
 test("model Base URL explains per-model endpoint suffixes", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);
 
+  // The hint states how the request path is built, so users know whether to include /v1.
   await expect(page.getByTestId("model-api-url-hint")).toHaveText(
-    "Enter the shared API root. Put protocol-specific paths such as /anthropic or an explicit image endpoint in that model's optional suffix; Wisp then completes the protocol request path.",
+    "Enter the shared API root, with or without /v1: Wisp adds /chat/completions (or /responses, /messages) after a URL that ends in /v1, and otherwise tries the URL itself and then its /v1 path. Put protocol-specific paths such as /anthropic or an explicit image endpoint in that model's optional suffix.",
   );
   await expect(page.getByLabel("Base URL")).toHaveAttribute(
     "aria-describedby",
     "model-api-url-hint",
+  );
+  await expect(page.getByLabel("Base URL")).toHaveAttribute(
+    "placeholder",
+    "e.g. https://api.deepseek.com or http://127.0.0.1:3425/v1",
   );
 });
 
@@ -11447,12 +11547,13 @@ test("settings can validate current API config", async ({ page }) => {
   // The mock profile has "supports images" on, so validation probes with a
   // test image and says so.
   await expect(page.locator(".settings-status")).toHaveText(
-    "Validated openai with deepseek-v4-pro — the test image was accepted.",
+    "Connection OK · OpenAI Chat Completions · deepseek-v4-pro — the test image was accepted.",
   );
 
+  await openModelAdvanced(page);
   await page.getByLabel("Supports image input").uncheck();
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
-  await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
+  await expect(page.locator(".settings-status")).toHaveText("Connection OK · OpenAI Chat Completions · deepseek-v4-pro");
 });
 
 test("editing a saved model validates with that model profile id", async ({ page }) => {
@@ -11464,7 +11565,7 @@ test("editing a saved model validates with that model profile id", async ({ page
   await expect(page.getByLabel("Model ID")).toHaveValue("opus-4.8");
 
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
-  await expect(page.locator(".settings-status")).toContainText("Validated openai with deepseek-v4-pro");
+  await expect(page.locator(".settings-status")).toContainText("Connection OK · OpenAI Chat Completions · deepseek-v4-pro");
   await expect.poll(() => lastInvokeArgs(page, "validate_settings")).toMatchObject({
     profileId: "opus",
     key: "",
@@ -12543,7 +12644,10 @@ test("settings validation rejects blank required fields", async ({ page }) => {
   await openModelsSettings(page);
   await page.getByLabel("Base URL").fill("");
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
-  await expect(page.locator(".settings-status")).toHaveText("Validation failed: API URL is required.");
+  // Every missing field at once, marked and focused, not one status line at a time.
+  await expect(page.locator(".settings-status")).toHaveText("Fill in or fix the highlighted fields: Base URL.");
+  await expect(page.getByLabel("Base URL")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByLabel("Base URL")).toBeFocused();
 });
 
 test("protocol switch keeps the current Base URL, endpoint suffix, and model ID", async ({ page }) => {
@@ -12553,6 +12657,7 @@ test("protocol switch keeps the current Base URL, endpoint suffix, and model ID"
   const baseUrl = page.getByLabel("Base URL");
   const endpointSuffix = page.getByLabel("Endpoint suffix (optional)");
   const model = page.getByLabel("Model ID");
+  await openModelAdvanced(page);
   await endpointSuffix.fill("/anthropic");
 
   await providerSelect(page).selectOption("openai_responses");
@@ -12595,7 +12700,7 @@ test("inline approval card keeps its buttons reachable with a long preview (#63)
   await page.getByRole("button", { name: "Send" }).click();
   // A very long preview must not push the allow button off-screen; the card
   // scrolls the code block internally so the actions stay in view.
-  const allow = page.getByRole("button", { name: "Allow once" });
+  const allow = page.getByRole("button", { name: "Allow", exact: true });
   await expect(allow).toBeVisible({ timeout: 10_000 });
   await expect(allow).toBeInViewport();
 });
@@ -12605,7 +12710,7 @@ test("native approval remains clickable while the agent turn is blocked", async 
   await composer(page).fill("BLOCKINGCONFIRM");
   await page.getByRole("button", { name: "Send" }).click();
 
-  const allow = page.getByRole("button", { name: "Allow once" });
+  const allow = page.getByRole("button", { name: "Allow", exact: true });
   await expect(allow).toBeVisible({ timeout: 10_000 });
   await expect.poll(() => page.evaluate(() =>
     Object.values((window as any).__nativeConfirmPending ?? {}).some(Boolean)
@@ -12629,6 +12734,11 @@ test("approval card can enable Full Permission through the warning", async ({ pa
 
   const shortcut = page.getByTestId("approval-full-permission");
   await expect(shortcut).toBeVisible({ timeout: 10_000 });
+  // Tertiary: a quiet text action after Allow / Deny, never a filled button.
+  await expect(shortcut).toHaveClass(/approval-full-permission/);
+  await expect(shortcut).not.toHaveClass(/primary/);
+  await expect(page.locator(".approval-actions button").last()).toHaveAttribute("data-testid", "approval-full-permission");
+  expect(await shortcut.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
   await shortcut.click();
   const warning = page.getByRole("heading", { name: "Enable Full Permission?" });
   await expect(warning).toBeVisible();
@@ -12647,6 +12757,34 @@ test("approval card can enable Full Permission through the warning", async ({ pa
   });
   // The backend settles the waiting request itself when the mode turns on.
   expect(await invokeArgsList(page, "confirm_response")).toHaveLength(0);
+});
+
+test("a tool waiting on approval reads Awaiting approval, not Working", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("TOOLCONFIRM");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const allow = page.getByRole("button", { name: "Allow", exact: true });
+  await expect(allow).toBeVisible({ timeout: 10_000 });
+  // Shell previews are labelled as a command, not code.
+  await expect(page.locator(".approval-code > summary")).toHaveText("Command");
+
+  const group = page.locator(".steps.is-live").last();
+  await expect(group.locator(".steps-title")).toHaveText("Awaiting approval");
+  await expect(group.getByTestId("steps-indicator")).toHaveAttribute("data-state", "awaiting");
+  await expect(group.locator(".steps-indicator")).not.toHaveClass(/running/);
+  await expect(group.locator(".steps-meta")).toHaveCount(0);
+
+  await allow.click();
+  await expect(group.locator(".steps-title")).toHaveText("Working…");
+  await expect(group.getByTestId("steps-indicator")).toHaveAttribute("data-state", "running");
+});
+
+test("code tool previews keep the Code label", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("NEEDRCONFIRM");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator(".approval-code > summary")).toHaveText("Code", { timeout: 10_000 });
 });
 
 test("background approval targets its session after switching conversations", async ({ page }) => {
@@ -13057,9 +13195,12 @@ test("inline approval scope is sent with confirmation", async ({ page }) => {
   await composer(page).fill("NEEDCONFIRM");
   await page.getByRole("button", { name: "Send" }).click();
 
-  await expect(page.getByRole("button", { name: "Allow once" })).toBeVisible({ timeout: 10_000 });
+  const allow = page.getByRole("button", { name: "Allow", exact: true });
+  await expect(allow).toBeVisible({ timeout: 10_000 });
   await page.getByLabel("Approval scope").selectOption("project");
-  await page.getByRole("button", { name: "Allow for this project" }).click();
+  // The select states the scope; the button does not repeat it.
+  await expect(allow).toHaveText("Allow");
+  await allow.click();
 
   await expect.poll(async () => page.evaluate(() => {
     const calls = ((window as any).__skillInvokeLog ?? []).map((c: any) => ({
@@ -13116,7 +13257,7 @@ test("awaiting approval marks the session dot and requests a desktop notificatio
   await expect(newSessionButton(page)).toBeVisible();
   await composer(page).fill("NEEDCONFIRM");
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByRole("button", { name: "Allow once" })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("button", { name: "Allow", exact: true })).toBeVisible({ timeout: 10_000 });
   // The waiting state shows on the sidebar session row as a circle-alert icon.
   const waiting = page.locator(".side-item.ses.attention");
   await expect(waiting).toHaveCount(1);
@@ -13136,7 +13277,7 @@ test("awaiting approval marks the session dot and requests a desktop notificatio
     body: "Long transcript · shell",
   });
   // Responding clears the badge.
-  await page.getByRole("button", { name: "Allow once" }).click();
+  await page.getByRole("button", { name: "Allow", exact: true }).click();
   await expect(page.locator(".side-item.ses.attention")).toHaveCount(0);
 });
 
@@ -13702,7 +13843,8 @@ test("recent sessions show title, project and age, with a badge only when attent
 
   const first = cards.first();
   await expect(first.locator(".pc-name")).toHaveText("帮我找一篇单细胞的文章");
-  await expect(first.locator(".sess-status-needs-you")).toBeVisible();
+  // Not blocked on an approval, so the unread reply reads "New reply".
+  await expect(first.locator(".sess-status-new-reply")).toHaveText("New reply");
   await expect(first.locator(".pc-hint")).toHaveCount(0);
   await expect(first.locator(".pc-meta-row")).toHaveCount(0);
 
@@ -13733,6 +13875,60 @@ test("recent sessions show title, project and age, with a badge only when attent
     const style = getComputedStyle(node);
     return { flexShrink: style.flexShrink, whiteSpace: style.whiteSpace };
   })).toEqual({ flexShrink: "0", whiteSpace: "nowrap" });
+  await expect(page.getByTestId("recent-sessions-empty")).toHaveCount(0);
+});
+
+test("home screen says when there are no recent sessions yet", async ({ page }) => {
+  await page.goto("/?mockNoRecentSessions=1&mockLocale=zh");
+  await expect(page.locator('[data-testid="recent-session-card"]')).toHaveCount(0);
+  await expect(page.getByTestId("recent-sessions-empty")).toHaveText("还没有会话。打开一个项目即可开始对话。");
+});
+
+test("home icon buttons carry visible tooltips and accessible names", async ({ page }) => {
+  await page.goto("/");
+  const buttons = page.locator(".projects-quick-actions .projects-icon-btn");
+  await expect(buttons).toHaveCount(5);
+  for (const name of ["Research calendar", "Library", "Search", "Settings", "Documentation"]) {
+    const button = page.locator(".projects-quick-actions").getByRole("button", { name, exact: true });
+    await expect(button).toBeVisible();
+    await expect(button).toHaveAttribute("title", name);
+  }
+});
+
+test("home and composer say when no model is set up and open Settings › Models", async ({ page }) => {
+  await page.goto("/?mockNoModel=1");
+  const notice = page.getByTestId("home-model-missing");
+  await expect(notice).toContainText("No model is set up yet");
+  await notice.getByRole("button", { name: "Set up a model" }).click();
+  await expect(page.getByTestId("settings-nav-models")).toHaveAttribute("aria-current", "page");
+});
+
+test("composer shows the missing-model notice inside a project", async ({ page }) => {
+  await page.goto("/?mockNoModel=1&mockLocale=zh");
+  await page.locator(".proj-card-main").first().click();
+  const notice = page.getByTestId("composer-model-missing");
+  await expect(notice).toContainText("还没有配置模型");
+  await notice.getByRole("button", { name: "去配置模型" }).click();
+  await expect(page.getByTestId("settings-nav-models")).toHaveAttribute("aria-current", "page");
+});
+
+test("a configured key or a Magpie connection hides the missing-model notice", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".proj-card-main").first()).toBeVisible();
+  await expect(page.getByTestId("home-model-missing")).toHaveCount(0);
+  await page.goto("/?mockNoModel=1&mockMagpie=1");
+  await expect(page.locator(".proj-card-main").first()).toBeVisible();
+  await expect.poll(() => invokeArgsList(page, "magpie_model_info").then((calls) => calls.length)).toBeGreaterThan(0);
+  await expect(page.getByTestId("home-model-missing")).toHaveCount(0);
+});
+
+test("relative times read as elapsed time in both languages", async ({ page }) => {
+  const minutesAgo = Math.floor(Date.now() / 1000) - 4 * 60;
+  await page.addInitScript((ts) => { (window as any).__mockRecentSessionTs = ts; }, minutesAgo);
+  await page.goto("/?mockLocale=zh");
+  await expect(page.locator('[data-testid="recent-session-card"]').first().locator(".pc-when")).toHaveText("4 分钟前");
+  await page.goto("/?mockLocale=en");
+  await expect(page.locator('[data-testid="recent-session-card"]').first().locator(".pc-when")).toHaveText("4m ago");
 });
 
 test("right panel keeps actions and the active tab visible when tabs overflow", async ({ page }) => {
@@ -15651,8 +15847,8 @@ test("Windows uses the integrated title bar without covering the project landing
   await page.goto("/");
 
   await expect(page.locator(".window-titlebar")).toBeVisible();
-  await expect(page.getByTestId("window-brand-title")).toHaveText("wisp science");
-  await expect(page).toHaveTitle("wisp science");
+  await expect(page.getByTestId("window-brand-title")).toHaveText("Wisp Science");
+  await expect(page).toHaveTitle("Wisp Science");
   await expect(page.getByRole("button", { name: "Minimize" })).toBeVisible();
   await expect(page.getByTestId("window-maximize")).toBeVisible();
   await expect(page.locator("#titlebar-maximize")).toHaveAttribute("aria-label", "Maximize");
@@ -15765,24 +15961,24 @@ test("window title includes the open project name (#1017)", async ({ browser }) 
   await page.addInitScript(tauriMock);
   await page.goto("/");
 
-  await expect(page.getByTestId("window-brand-title")).toHaveText("wisp science");
-  await expect(page).toHaveTitle("wisp science");
+  await expect(page.getByTestId("window-brand-title")).toHaveText("Wisp Science");
+  await expect(page).toHaveTitle("Wisp Science");
 
   await page.locator(".proj-card-main").first().click();
   await expect(newSessionButton(page)).toBeVisible();
-  await expect(page.getByTestId("window-brand-title")).toHaveText("wisp science \u2014 wisp-science");
-  await expect(page).toHaveTitle("wisp science \u2014 wisp-science");
+  await expect(page.getByTestId("window-brand-title")).toHaveText("Wisp Science \u2014 wisp-science");
+  await expect(page).toHaveTitle("Wisp Science \u2014 wisp-science");
 
   await page.locator(".proj-switch").click();
   await page.locator(".proj-menu").getByRole("button", { name: "Other project" }).click();
   await expect(page.locator(".proj-name")).toHaveText("Other project");
-  await expect(page.getByTestId("window-brand-title")).toHaveText("wisp science \u2014 Other project");
-  await expect(page).toHaveTitle("wisp science \u2014 Other project");
+  await expect(page.getByTestId("window-brand-title")).toHaveText("Wisp Science \u2014 Other project");
+  await expect(page).toHaveTitle("Wisp Science \u2014 Other project");
 
   await page.getByRole("button", { name: "Back to projects" }).click();
   await expect(page.locator(".projects-screen")).toBeVisible();
-  await expect(page.getByTestId("window-brand-title")).toHaveText("wisp science");
-  await expect(page).toHaveTitle("wisp science");
+  await expect(page.getByTestId("window-brand-title")).toHaveText("Wisp Science");
+  await expect(page).toHaveTitle("Wisp Science");
 
   await context.close();
 });
@@ -16040,6 +16236,47 @@ test("new project form enables Create after name and folder are set", async ({ p
   await expect(create).toBeEnabled();
 });
 
+test("new project form says what is missing and offers a folder beside the workspace", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "New project" }).click();
+  const form = page.getByRole("dialog").filter({ has: page.locator("#new-project-name") });
+  const create = form.getByRole("button", { name: "Create" });
+  const missing = form.getByTestId("new-project-missing");
+  await expect(create).toBeDisabled();
+  await expect(missing).toHaveText("Enter a project name to continue.");
+  await expect(form.getByTestId("new-project-suggested-dir")).toHaveCount(0);
+
+  await form.locator("#new-project-name").pressSequentially("Liver: atlas");
+  await expect(missing).toHaveText("Choose a folder for the project files to continue.");
+  const suggestion = form.getByTestId("new-project-suggested-dir");
+  // The default workspace lives at /mock/root, so the sibling is /mock/<name>,
+  // with the colon replaced because Windows rejects it in folder names.
+  await expect(suggestion).toContainText("Suggested: /mock/Liver- atlas");
+  await expect(create).toBeDisabled();
+  await suggestion.getByRole("button", { name: "Use this folder" }).click();
+  await expect(form.locator(".pn-dir .path")).toHaveText("/mock/Liver- atlas");
+  await expect(missing).toHaveCount(0);
+  await expect(suggestion).toHaveCount(0);
+  await create.click();
+  await expect.poll(() => lastInvokeArgs(page, "create_project")).toMatchObject({
+    name: "Liver: atlas",
+    workspaceDir: "/mock/Liver- atlas",
+  });
+});
+
+test("standard layout toggle lists the folders it creates before a folder is chosen", async ({ page }) => {
+  await page.goto("/?mockLocale=zh");
+  await page.getByRole("button", { name: "新建项目" }).click();
+  const form = page.getByRole("dialog").filter({ has: page.locator("#new-project-name") });
+  await expect(form.locator(".pn-dir .path")).toHaveText("");
+  await expect(form.locator(".pn-layout .ps-hint")).toHaveText(/在项目目录中创建以下文件夹/);
+  const dirs = form.getByTestId("standard-layout-dirs").locator("code");
+  await expect(dirs).toHaveCount(14);
+  await expect(dirs.first()).toHaveText("data/raw/");
+  await expect(form.getByTestId("standard-layout-dirs")).toContainText("results/tables/");
+  await expect(form.getByTestId("standard-layout-dirs")).toContainText("literature/");
+});
+
 test("new project form reports an unreadable create_project response instead of staying open", async ({ page }) => {
   await page.goto("/?mockCreateProjectMalformed=1");
   await page.getByRole("button", { name: "New project" }).click();
@@ -16208,6 +16445,8 @@ test("project transfers stay in a lower-right progress card without blocking oth
   const projectCard = projectCards.first();
   const otherProjectCard = projectCards.nth(1);
   const exportProject = projectCard.getByRole("button", { name: "Export project" });
+  // Management actions stay hidden until the card is pointed at.
+  await projectCard.hover();
   await expect.poll(() => exportProject.evaluate((el) => Number.parseFloat(getComputedStyle(el).opacity))).toBeGreaterThan(0);
   await page.evaluate(() => (window as any).__delayNextProjectTransfer("export", 800));
   await exportProject.click();
@@ -16457,6 +16696,17 @@ test("remote access settings configure a cloud-drive sync folder", async ({ page
   await expect.poll(() => lastInvokeArgs(page, "set_settings")).toMatchObject({
     settings: { sync_backend: "folder", sync_folder: "/mock/root/new-project" },
   });
+});
+
+test("the Settings saved status clears itself from the title bar", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Session");
+  await expect(page.getByTestId("session-settings-pane")).toBeVisible();
+  await page.locator(".settings-footer").getByRole("button", { name: "Save" }).click();
+  const status = page.locator(".topbar .hint", { hasText: "Settings saved" });
+  await expect(status).toBeVisible();
+  // A success message is transient; it must not linger after leaving Settings.
+  await expect(status).toHaveCount(0, { timeout: 10_000 });
 });
 
 test("session settings save the maximum agent iterations", async ({ page }) => {
@@ -16946,7 +17196,10 @@ test("context-limit recovery offers three actions and owns the first Escape", as
   await expect(page.getByTestId("context-recovery-pause")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(modal).toHaveCount(0);
-  await expect(page.getByText(/maximum context length exceeded/)).toBeVisible();
+  // The card leads with the plain summary; the raw error is under Details.
+  const errorCard = page.locator(".finding.err").last();
+  await expect(errorCard.locator(".finding-title")).toHaveText("The conversation exceeds the model's context limit");
+  await expect(errorCard.getByTestId("error-details").locator("pre")).toContainText("maximum context length exceeded");
 
   await emitTauriEvent(page, "agent", overflow);
   await page.getByTestId("context-recovery-pause").click();
@@ -17010,11 +17263,99 @@ test("a leftover proxy connect error points at General Network settings", async 
 
   const card = page.locator(".finding.err");
   await expect(card).toBeVisible();
-  await expect(card.locator(".finding-title")).toContainText("via leftover HTTPS_PROXY=http://127.0.0.1:7890");
+  await expect(card.locator(".finding-title")).toHaveText("Could not reach the model API");
+  await expect(card.locator(".finding-raw pre")).toContainText("via leftover HTTPS_PROXY=http://127.0.0.1:7890");
+  await expect(card.getByTestId("error-open-settings")).toHaveText("Open network settings");
   await expect(card.locator(".finding-body")).toContainText("Settings → Network");
   await expect(card.locator(".finding-body")).not.toContainText("Settings → General → Network");
   await expect(card.locator(".finding-body")).toContainText("Direct");
   await expect(card.locator(".finding-body")).not.toContainText("Settings → Models");
+});
+
+const LOCAL_GATEWAY_REFUSED = "http: error sending request for url (http://127.0.0.1:3999/v1/chat/completions): client error (Connect): tcp connect error: Connection refused (os error 61)";
+
+for (const locale of ["en", "zh"] as const) {
+  test(`a stopped local gateway leads with a plain summary and offers model settings (${locale})`, async ({ page, context }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.goto(`/?mockLocale=${locale}`);
+    await page.locator(".proj-card-main").first().click();
+    await composer(page).fill("hello");
+    await composer(page).press("Enter");
+    await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible();
+    const frameId = String((await lastInvokeArgs(page, "send_message")).sessionId);
+
+    await emitTauriEvent(page, "agent", { kind: "Error", frame_id: frameId, message: LOCAL_GATEWAY_REFUSED });
+
+    const card = page.locator(".finding.err");
+    await expect(card.locator(".finding-title")).toHaveText(
+      locale === "zh" ? "本地模型网关 127.0.0.1:3999 没有运行" : "The local model gateway at 127.0.0.1:3999 is not running",
+    );
+    // The explanation names the local service, not a leftover proxy.
+    await expect(card.locator(".finding-body")).toContainText("Magpie");
+    await expect(card.locator(".finding-body")).toContainText("127.0.0.1:3999");
+    await expect(card.locator(".finding-body")).not.toContainText("HTTP_PROXY");
+
+    // The raw transport error is folded into Details until asked for.
+    const details = card.getByTestId("error-details");
+    const raw = details.locator("pre");
+    await expect(raw).toBeHidden();
+    await details.locator("summary").click();
+    await expect(details.locator("summary")).toHaveText(locale === "zh" ? "详情" : "Details");
+    await expect(raw).toBeVisible();
+    await expect(raw).toHaveText(LOCAL_GATEWAY_REFUSED);
+
+    // Copy still copies the raw error.
+    await page.evaluate(() => {
+      Object.defineProperty(navigator.clipboard, "writeText", {
+        configurable: true,
+        value: async (text: string) => { (window as any).__copiedErrorText = text; },
+      });
+    });
+    await card.getByRole("button", { name: locale === "zh" ? "复制" : "Copy", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__copiedErrorText)).toBe(LOCAL_GATEWAY_REFUSED);
+
+    // Resuming a failed request re-sends it, so the action reads Retry.
+    await expect(card.getByTestId("error-resume")).toHaveText(locale === "zh" ? "重试" : "Retry");
+
+    const openSettings = card.getByTestId("error-open-settings");
+    await expect(openSettings).toHaveText(locale === "zh" ? "打开模型设置" : "Open model settings");
+    await openSettings.click();
+    await expect(page.getByTestId("settings-nav-models")).toHaveClass(/active/);
+  });
+}
+
+test("a rejected API key offers model settings; an unclassified failure keeps Resume", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("hello");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible();
+  const frameId = String((await lastInvokeArgs(page, "send_message")).sessionId);
+
+  await emitTauriEvent(page, "agent", {
+    kind: "Error",
+    frame_id: frameId,
+    message: 'api: 401 {"error":{"message":"invalid x-api-key"}}',
+  });
+  const auth = page.locator(".finding.err").last();
+  await expect(auth.locator(".finding-title")).toHaveText("The API key was rejected");
+  await expect(auth.getByTestId("error-open-settings")).toHaveText("Open model settings");
+
+  await emitTauriEvent(page, "agent", { kind: "Error", frame_id: frameId, message: "stream ended without completion" });
+  const plain = page.locator(".finding.err").last();
+  await expect(plain.locator(".finding-title")).toHaveText("stream ended without completion");
+  await expect(plain.getByTestId("error-details")).toHaveCount(0);
+  await expect(plain.getByTestId("error-open-settings")).toHaveCount(0);
+  await expect(plain.getByTestId("error-resume")).toHaveText("Resume");
+});
+
+test("a failed send shows the plain summary in the status bar", async ({ page }) => {
+  await enterApp(page);
+  await page.evaluate((message) => { (window as any).__sendMessageError = message; }, LOCAL_GATEWAY_REFUSED);
+  await composer(page).fill("hello");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator(".topbar .hint")).toHaveText(
+    "Send failed: The local model gateway at 127.0.0.1:3999 is not running",
+  );
 });
 
 test("pet stays off until the user explicitly configures its directory", async ({ page }) => {
@@ -18280,7 +18621,7 @@ test("a ?project window opens straight into the project, skipping the landing (#
   await expect.poll(async () => page.evaluate(() =>
     ((window as any).__skillInvokeLog ?? []).some((c: any) => c.cmd === "open_project"),
   )).toBe(true);
-  await expect(page).toHaveTitle("wisp science \u2014 wisp-science");
+  await expect(page).toHaveTitle("Wisp Science \u2014 wisp-science");
 });
 
 test("specialists page configures the builtin Reader and saves a custom specialist", async ({ page }) => {
@@ -19172,8 +19513,10 @@ test("optional environment detection does not block first-run model setup", asyn
   await onboard.getByRole("button", { name: "Set up later" }).click();
   const environment = onboard.getByTestId("local-environment");
   await expect(environment).toContainText("local-env-setup");
-  await expect(environment.locator("dd")).toHaveCount(8);
-  await expect(environment.locator("dd").first()).toContainText("Not found");
+  // The guide lists only the everyday tools; the rest live in Settings.
+  await expect(environment.locator("dt")).toHaveText(["Python", "Rscript", "uv", "Node"]);
+  await expect(environment.locator("dd").first()).toContainText("Not found · optional");
+  await expect(environment.getByTestId("env-more-tools")).toContainText("Settings → General → Local environment");
   await expect(onboard.getByRole("button", { name: "Get started" })).toBeEnabled();
   const viewport = page.viewportSize()!;
   await expectInsideViewport(onboard.getByRole("button", { name: "Get started" }), viewport.width, viewport.height);
@@ -19186,6 +19529,8 @@ test("general settings show discovered paths and can recheck without installing"
   await enterApp(page);
   await openSettingsSection(page, "General");
   const environment = page.getByTestId("local-environment");
+  await expect(environment.locator("dt")).toHaveCount(8);
+  await expect(environment.getByTestId("env-more-tools")).toHaveCount(0);
   await expect(environment).toContainText("/mock/bin/python3");
   await expect(environment).toContainText("/mock/bin/Rscript");
   await expect(environment).toContainText("/mock/bin/uv");
@@ -19253,7 +19598,7 @@ for (const platform of ["Linux x86_64", "MacIntel"]) {
       await palette.getByText("Quick setup", { exact: true }).click();
       const setup = page.locator(".onboard-overlay");
       await expect(setup).toBeVisible();
-      await expect(setup.getByRole("heading", { name: "Welcome to wisp-science" })).toBeVisible();
+      await expect(setup.getByRole("heading", { name: "Welcome to Wisp Science" })).toBeVisible();
       await expect(setup.getByLabel("API key (stored in OS keyring)")).toHaveCount(0);
       await expect(setup.getByTestId("local-environment")).toHaveCount(0);
       // Immediate Escape closes the topmost setup page, preserving Settings.
@@ -19281,7 +19626,7 @@ test("quick setup above General follows the preview language and preserves its d
   await search.fill("快速配置");
   await search.press("Enter");
   const setup = page.locator(".onboard-overlay");
-  await expect(setup.getByRole("heading")).toHaveText("欢迎使用 wisp-science");
+  await expect(setup.getByRole("heading")).toHaveText("欢迎使用 Wisp Science");
   await page.keyboard.press("Escape");
   await expect(setup).toBeHidden();
   await expect(folder).toHaveValue("draft-workspace");
@@ -19294,21 +19639,21 @@ test("onboarding Enter advances once, respects composition and controls, and fin
   await expect(modal).toBeFocused();
   await page.keyboard.down("Enter");
   await expect(modal.locator(".onboard-dot.active")).toHaveCount(1);
-  await expect(modal.getByRole("heading")).toHaveText("What wisp-science can do");
+  await expect(modal.getByRole("heading")).toHaveText("What Wisp Science can do");
   await page.keyboard.down("Enter"); // Auto-repeat must not skip another page.
   await page.keyboard.up("Enter");
-  await expect(modal.getByRole("heading")).toHaveText("What wisp-science can do");
+  await expect(modal.getByRole("heading")).toHaveText("What Wisp Science can do");
   await modal.dispatchEvent("keydown", { key: "Enter", isComposing: true, bubbles: true });
   await modal.dispatchEvent("compositionend", { bubbles: true });
   await modal.dispatchEvent("keydown", { key: "Enter", keyCode: 229, bubbles: true });
   await page.keyboard.press("Shift+Enter");
-  await expect(modal.getByRole("heading")).toHaveText("What wisp-science can do");
+  await expect(modal.getByRole("heading")).toHaveText("What Wisp Science can do");
   // Native keyboard activation of Back still returns exactly one page.
   await modal.getByRole("button", { name: "Back", exact: true }).focus();
   await page.keyboard.press("Enter");
-  await expect(modal.getByRole("heading")).toHaveText("Welcome to wisp-science");
+  await expect(modal.getByRole("heading")).toHaveText("Welcome to Wisp Science");
   await page.keyboard.press("Enter");
-  await expect(modal.getByRole("heading")).toHaveText("What wisp-science can do");
+  await expect(modal.getByRole("heading")).toHaveText("What Wisp Science can do");
   await modal.locator(".row > .primary").focus();
   await page.keyboard.press("Enter");
   await expect(modal.getByRole("heading")).toHaveText("Set up your model");
@@ -19353,6 +19698,10 @@ test("onboarding keeps its backdrop and dialog mounted when navigating", async (
   for (const step of [1, 2, 3, 2, 1, 0]) {
     if (step < previousStep) {
       await page.keyboard.press("Escape");
+    } else if (previousStep === 2) {
+      // No key typed: Next waits for one, so the model step is skipped.
+      await expect(modal.locator(".row > .primary")).toBeDisabled();
+      await modal.getByRole("button", { name: "Set up later" }).click();
     } else {
       await modal.locator(".row > .primary").click();
     }
@@ -19386,8 +19735,8 @@ for (const locale of ["en", "zh"]) {
     await page.goto(`/?mockOnboarding=1&mockLocale=${locale}`);
     const modal = page.locator(".onboard");
     const titles = locale === "zh"
-      ? ["欢迎使用 wisp-science", "wisp-science 能做什么", "配置模型", "本地环境（可选）"]
-      : ["Welcome to wisp-science", "What wisp-science can do", "Set up your model", "Local environment (optional)"];
+      ? ["欢迎使用 Wisp Science", "Wisp Science 能做什么", "配置模型", "本地环境（可选）"]
+      : ["Welcome to Wisp Science", "What Wisp Science can do", "Set up your model", "Local environment (optional)"];
     const next = locale === "zh" ? "下一步" : "Next";
     for (let step = 0; step < 4; step++) {
       await expect(modal.getByRole("heading", { name: titles[step], exact: true })).toBeVisible();
@@ -19432,11 +19781,14 @@ test("local environment manual paths save, survive reopening, and preserve faile
   await modal.getByRole("button", { name: "Set up later" }).click();
   const env = modal.getByTestId("local-environment");
   await env.getByRole("button", { name: "Edit paths" }).click();
-  await expect(env.getByRole("textbox")).toHaveCount(8);
+  // The guide edits the four everyday tools; npm, sci, pixi and Cua Driver
+  // stay in Settings.
+  await expect(env.getByRole("textbox")).toHaveCount(4);
+  await expect(env.getByRole("textbox", { name: "npm", exact: true })).toHaveCount(0);
   await expect(env.getByRole("textbox", { name: "Python", exact: true })).toHaveValue("/mock/bin/python3");
   await env.getByRole("textbox", { name: "Python", exact: true }).fill("C:\\Custom Python\\python.exe");
   await expect(env.getByRole("textbox", { name: "Python", exact: true })).toBeFocused();
-  await env.getByRole("textbox", { name: "npm", exact: true }).fill("C:\\Program Files\\nodejs\\npm.cmd");
+  await env.getByRole("textbox", { name: "Node", exact: true }).fill("C:\\Program Files\\nodejs\\node.exe");
   await env.getByRole("textbox", { name: "uv", exact: true }).fill("");
   await page.evaluate(() => { (window as any).__failSaveLocalEnvironment = true; });
   await env.getByRole("button", { name: "Save paths" }).click();
@@ -19447,7 +19799,7 @@ test("local environment manual paths save, survive reopening, and preserve faile
   await expect(env.getByRole("textbox")).toHaveCount(0);
   await expect(env).toContainText("C:\\Custom Python\\python.exe");
   await expect.poll(() => lastInvokeArgs(page, "save_local_environment_paths")).toMatchObject({ paths: {
-    python_executable: "C:\\Custom Python\\python.exe", npm_executable: "C:\\Program Files\\nodejs\\npm.cmd", uv_executable: "",
+    python_executable: "C:\\Custom Python\\python.exe", node_executable: "C:\\Program Files\\nodejs\\node.exe", uv_executable: "",
   } });
   await env.getByRole("button", { name: "Check paths again" }).click();
   await expect(env).toContainText("C:\\Custom Python\\python.exe");
@@ -19532,7 +19884,9 @@ test("Generated folders stay open when another reply updates an existing artifac
   await page.keyboard.press("Space");
   await expect(output).toBeVisible();
   const newReply = page.locator(".msg.assistant", { hasText: "Result updated." });
-  await expect(newReply.locator(".generated-artifact-tree")).not.toBeVisible();
+  // A reply with a single output shows it expanded, folders included.
+  await expect(newReply.locator(".generated-artifact-tree")).toBeVisible();
+  await expect(newReply.locator('[data-artifact-name="output-0.csv"]')).toBeVisible();
   await page.locator("#chat-scroller").evaluate(el => el.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 })));
   await reply.locator(".message-artifacts").screenshot({ path: test.info().outputPath("generated-folders-after-update.png") });
 });

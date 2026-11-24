@@ -238,7 +238,10 @@
 }
 .ses-status-label.needs-you { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
 .ses-status-label.running { color: var(--clay); background: var(--clay-soft); }
+/* A finished reply nobody has opened: calmer than an approval wait. */
+.ses-status-label.new-reply { color: var(--info); background: var(--info-soft); }
 .side-attention-icon { display: inline-flex; flex: 0 0 auto; color: var(--warn); }
+.side-attention-item.new-reply .side-attention-icon { color: var(--info); }
 .side-attention-icon svg { width: 16px; height: 16px; }
 .side-item:hover { background: var(--bg-elev); color: var(--text); }
 button.side-item { width: 100%; text-align: left; background: transparent; border: 1px solid transparent; font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); cursor: pointer; }
@@ -295,6 +298,8 @@ button.session-select-mark:disabled { cursor: default; opacity: .4; }
 .ses-live svg { animation: ses-spin var(--agent-orbit-duration) linear infinite; }
 .ses-attention { color: var(--agent-waiting); filter: drop-shadow(0 0 4px color-mix(in srgb, var(--agent-waiting) 45%, transparent)); }
 .ses-attention svg { animation: ses-breathe var(--agent-pulse-duration) var(--agent-motion-ease) infinite; }
+.side-item.ses.new-reply .ses-attention { color: var(--info); filter: none; }
+.side-item.ses.new-reply .ses-attention svg { animation: none; }
 .side-item-wrap { position: relative; min-width: 0; }
 /* Row menus are revealed only on hover/keyboard focus — including the active
    session — so the list reads as plain titles at rest. Opacity (not display)

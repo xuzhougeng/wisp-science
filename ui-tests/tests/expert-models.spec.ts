@@ -13,6 +13,9 @@ for (const locale of ["en", "zh"]) {
     await page.getByTestId("settings-nav-models").click();
     const row = page.locator(".settings-list-row").filter({ hasText: "opus-4.8" });
     await row.click();
+    // The expert role lives in the collapsed Advanced section.
+    const advanced = page.getByTestId("model-advanced-section").locator(":scope > summary");
+    await advanced.click();
     const toggle = page.getByTestId("use-for-expert");
     await expect(toggle).not.toBeChecked();
     await toggle.check();
@@ -21,6 +24,7 @@ for (const locale of ["en", "zh"]) {
     await expect.poll(async () => (await profiles(page)).find((p: any) => p.id === "opus").use_for_expert).toBe(true);
     expect((await profiles(page)).find((p: any) => p.active).id).toBe("default");
     await row.click();
+    await advanced.click();
     await expect(toggle).toBeChecked();
     await toggle.uncheck();
     await page.locator(".model-form").getByRole("button", { name: locale === "zh" ? "保存" : "Save", exact: true }).click();

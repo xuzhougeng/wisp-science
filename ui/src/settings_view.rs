@@ -25,6 +25,20 @@ use serde_wasm_bindgen::to_value;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use wasm_bindgen::JsValue;
 
+/// Disconnects Magpie; the personal model profiles apply again after a restart.
+const MAGPIE_DISCONNECT_COMMAND: &str = "magpie wisp-science default";
+
+/// Editing a field clears its Save / Test connection error mark.
+fn clear_invalid(form: &mut ModelForm, field: &str) {
+    form.invalid_fields.retain(|known| known != field);
+}
+
+/// A fetched model list belongs to the Base URL it came from.
+fn clear_endpoint_models(form: &mut ModelForm) {
+    form.endpoint_models.clear();
+    form.endpoint_models_status = None;
+}
+
 fn session_identity_enabled(form: &ModelForm) -> bool {
     form.send_session_id.unwrap_or_else(|| {
         web_sys::Url::new(&join_api_url(&form.api_url, &form.endpoint_suffix))
@@ -2234,6 +2248,7 @@ pub(super) fn SettingsView(
     test_reviewer_form: Callback<web_sys::MouseEvent>,
     set_subagent_model: Callback<String>,
     validate_model_form: Callback<web_sys::MouseEvent>,
+    fetch_endpoint_models: Callback<()>,
     start_specialist_chat: Callback<web_sys::MouseEvent>,
     refresh_conns: Callback<()>,
     refresh_skills: Callback<()>,
@@ -2357,6 +2372,63 @@ pub(super) fn SettingsView(
             form.model,
         ))
     });
+    // Selectable efforts and where they come from: the exact catalog entry
+    // (true), else the levels the endpoint's own model list reported (false).
+    let form_efforts = create_memo(move |_| {
+        if let Some(values) = form_model_efforts.get() {
+            return Some((true, values));
+        }
+        model_form.with(|form| {
+            form.as_ref()
+                .filter(|form| !form.endpoint_efforts.is_empty())
+                .map(|form| (false, form.endpoint_efforts.clone()))
+        })
+    });
+    let field_invalid = move |field: &str| {
+        model_form.with(|form| {
+            form.as_ref()
+                .is_some_and(|form| form.invalid_fields.iter().any(|known| known == field))
+        })
+    };
+    let local_gateway = create_memo(move |_| {
+        model_form.with(|form| {
+            form.as_ref()
+                .is_some_and(|form| crate::text::is_loopback_api_url(&form.api_url))
+        })
+    });
+    // Only with suggestions: a `list` attribute turns the Model ID textbox
+    // into a combobox for assistive technology.
+    let has_model_suggestions = create_memo(move |_| {
+        model_form.with(|form| {
+            form.as_ref()
+                .is_some_and(|form| !form.endpoint_models.is_empty())
+        })
+    });
+    // "Fetch models" beside Model ID: `GET {base}/models`, offered as the
+    // Model ID inputs' suggestions (one shared datalist).
+    let fetch_models_button = move || {
+        view! {
+            <button type="button" class="model-fetch-btn" data-testid="model-fetch-models"
+                title=move || t(locale.get(), "models.fetch_hint")
+                disabled=move || settings_busy.get() || model_form.with(|f| f.as_ref().is_some_and(|f| f.endpoint_models_busy))
+                on:click=move |_| fetch_endpoint_models.call(())>
+                {compose_icon("refresh")}
+                <span>{move || t(locale.get(), if model_form.with(|f| f.as_ref().is_some_and(|f| f.endpoint_models_busy)) { "models.fetching" } else { "models.fetch" })}</span>
+            </button>
+        }
+    };
+    let model_id_suggestions = move || {
+        view! {
+            <datalist id="model-id-suggestions">
+                {move || model_form.with(|form| form.as_ref().map(|form| form.endpoint_models.iter().map(|entry| {
+                    view! { <option value=entry.id.clone()></option> }
+                }).collect_view()))}
+            </datalist>
+            {move || model_form.with(|form| form.as_ref().and_then(|form| form.endpoint_models_status.clone())).map(|(ok, text)| view! {
+                <span class="hint span-2 model-fetch-status" class:fail=!ok data-testid="model-fetch-status" role="status">{text}</span>
+            })}
+        }
+    };
     let model_form_is_edit =
         create_memo(move |_| model_form.get().is_some_and(|form| form.id.is_some()));
     // The chat/image/video fields must also keep their DOM nodes while values
@@ -3342,7 +3414,7 @@ pub(super) fn SettingsView(
                         </div>
                         </div>
                         <div class="row general-update-actions">
-                                <span class="settings-version">{concat!("wisp-science v", env!("CARGO_PKG_VERSION"))}</span>
+                                <span class="settings-version">{concat!("Wisp Science v", env!("CARGO_PKG_VERSION"))}</span>
                                 <button type="button" disabled=move || settings_busy.get() on:click=move |ev| check_updates.call(ev)>{move || t(locale.get(), "settings.check_updates")}</button>
                         </div>
                         </section>
@@ -4569,9 +4641,16 @@ pub(super) fn SettingsView(
                                     <div class="settings-form-grid">
                                         <Show when=move || model_form.get().is_some_and(|f| !is_managed_subscription(&f.provider))>
                                         <label class="span-2">{move || t(locale.get(), "settings.api_url")}
-                                            <input aria-describedby="model-api-url-hint"
+                                            <input aria-describedby="model-api-url-hint" id="model-form-api-url"
+                                                placeholder=move || t(locale.get(), "settings.api_url_ph")
+                                                class:invalid=move || field_invalid("api_url")
+                                                attr:aria-invalid=move || field_invalid("api_url").then_some("true")
                                                 prop:value=move || model_form.get().map(|f| f.api_url.clone()).unwrap_or_default()
-                                                on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.api_url = event_target_input(&ev).value(); }) /></label>
+                                                on:input=move |ev| model_form.update(|o| if let Some(o)=o {
+                                                    o.api_url = event_target_input(&ev).value();
+                                                    clear_invalid(o, "api_url");
+                                                    clear_endpoint_models(o);
+                                                }) /></label>
                                         <span id="model-api-url-hint" class="hint span-2" data-testid="model-api-url-hint">
                                             {move || t(locale.get(), "settings.tip")}
                                         </span>
@@ -4599,6 +4678,8 @@ pub(super) fn SettingsView(
                                                 view! {
                                                     <label class="span-2">{move || t(locale.get(), "settings.api_key")}
                                                         <input type="password" id="model-form-api-key" prop:value=move || model_form_key.get()
+                                                            class:invalid=move || field_invalid("api_key")
+                                                            attr:aria-invalid=move || field_invalid("api_key").then_some("true")
                                                             placeholder=move || {
                                                                 let Some(id) = model_form.get().and_then(|f| f.id) else { return String::new(); };
                                                                 if models.get().iter().any(|m| m.id == id && m.has_api_key) {
@@ -4608,7 +4689,13 @@ pub(super) fn SettingsView(
                                                                 }
                                                             }
                                                             autocomplete="new-password"
-                                                            on:input=move |ev| model_form_key.set(event_target_input(&ev).value()) /></label>
+                                                            on:input=move |ev| {
+                                                                model_form_key.set(event_target_input(&ev).value());
+                                                                model_form.update(|o| if let Some(o)=o { clear_invalid(o, "api_key"); });
+                                                            } /></label>
+                                                    {move || local_gateway.get().then(|| view! {
+                                                        <span class="hint span-2" data-testid="model-api-key-local-hint">{t(locale.get(), "settings.api_key_local_hint")}</span>
+                                                    })}
                                                 }.into_view()
                                             }
                                         }}
@@ -4650,12 +4737,18 @@ pub(super) fn SettingsView(
                                             </select>
                                         </label>
                                         </Show>
+                                        <div class="model-id-field">
                                         <label>{move || t(locale.get(), "settings.model")}
                                             <input prop:value=move || model_form.get().map(|f| f.model.clone()).unwrap_or_default()
+                                                id="model-form-model" attr:list=move || has_model_suggestions.get().then_some("model-id-suggestions")
+                                                class:invalid=move || field_invalid("model")
+                                                attr:aria-invalid=move || field_invalid("model").then_some("true")
                                                 placeholder=move || t(locale.get(), "settings.model_ph")
                                                 on:input=move |ev| {
                                                     model_form.update(|o| if let Some(o)=o {
                                                         o.model = event_target_input(&ev).value();
+                                                        clear_invalid(o, "model");
+                                                        crate::app_support::sync_endpoint_facts(o);
                                                         o.image_generation_capable = is_gemini_provider(&o.provider);
                                                         if is_gemini_provider(&o.provider) || is_image_generation_model(&o.model) {
                                                             o.restore_chat_model = false;
@@ -4673,17 +4766,32 @@ pub(super) fn SettingsView(
                                                     });
                                                     apply_catalog_limits(model_form, model_catalog_limits);
                                                 } /></label>
-                                        <Show when=move || model_form.get().is_some_and(|f| !is_managed_subscription(&f.provider))><label>{move || t(locale.get(), "settings.endpoint_suffix")}
-                                            <input data-testid="model-endpoint-suffix"
-                                                prop:value=move || model_form.get().map(|f| f.endpoint_suffix.clone()).unwrap_or_default()
-                                                placeholder=move || t(locale.get(), "settings.endpoint_suffix_ph")
-                                                on:input=move |ev| model_form.update(|o| if let Some(o)=o {
-                                                    o.endpoint_suffix = event_target_input(&ev).value();
-                                                }) /></label></Show>
+                                            <Show when=move || model_form.get().is_some_and(|f| !is_managed_subscription(&f.provider))>
+                                                {fetch_models_button()}
+                                            </Show>
+                                        </div>
                                         <label>{move || t(locale.get(), "settings.label")}
                                             <input prop:value=move || model_form.get().map(|f| f.label.clone()).unwrap_or_default()
                                                 placeholder=move || t(locale.get(), "settings.label_ph")
                                                 on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.label = event_target_input(&ev).value(); }) /></label>
+                                        {model_id_suggestions()}
+                                    </div>
+                                    <details class="model-advanced-section" data-testid="model-advanced-section">
+                                    <summary>
+                                        <span class="model-advanced-title">{move || t(locale.get(), "models.advanced")}</span>
+                                        <span class="hint">{move || t(locale.get(), "models.advanced_hint")}</span>
+                                    </summary>
+                                    <div class="settings-form-grid">
+                                        <Show when=move || model_form.get().is_some_and(|f| !is_managed_subscription(&f.provider))><label class="span-2">{move || t(locale.get(), "settings.endpoint_suffix")}
+                                            <input data-testid="model-endpoint-suffix" id="model-form-endpoint-suffix"
+                                                class:invalid=move || field_invalid("endpoint_suffix")
+                                                attr:aria-invalid=move || field_invalid("endpoint_suffix").then_some("true")
+                                                prop:value=move || model_form.get().map(|f| f.endpoint_suffix.clone()).unwrap_or_default()
+                                                placeholder=move || t(locale.get(), "settings.endpoint_suffix_ph")
+                                                on:input=move |ev| model_form.update(|o| if let Some(o)=o {
+                                                    o.endpoint_suffix = event_target_input(&ev).value();
+                                                    clear_invalid(o, "endpoint_suffix");
+                                                }) /></label></Show>
                                         {move || {
                                             let (image, video) = model_form_media_kind.get();
                                             if video {
@@ -4897,6 +5005,7 @@ pub(super) fn SettingsView(
                                                 attr:max=move || model_catalog_limits.get().map(|d| d.max_tokens.to_string())
                                                 on:input=move|ev| model_form.update(|o| if let Some(o)=o {
                                                     o.max_tokens = dom_value(&ev).parse().unwrap_or(0);
+                                                    o.max_tokens_edited = true;
                                                 })
                                                 prop:value=move || model_form.get().map(|f| f.max_tokens.to_string()).unwrap_or_else(|| "8192".into()) />
                                         </label>
@@ -4905,6 +5014,7 @@ pub(super) fn SettingsView(
                                                 attr:max=move || model_catalog_limits.get().map(|d| d.context_window.to_string())
                                                 on:input=move|ev| model_form.update(|o| if let Some(o)=o {
                                                     o.context_window = dom_value(&ev).parse().unwrap_or(0);
+                                                    o.context_window_edited = true;
                                                 })
                                                 prop:value=move || model_form.get().map(|f| f.context_window.to_string()).unwrap_or_else(|| "128000".into()) />
                                         </label>
@@ -4921,7 +5031,7 @@ pub(super) fn SettingsView(
                                             {move || {
                                                 let form = model_form.get();
                                                 let current = form.as_ref().map(|f| f.reasoning_effort.clone()).unwrap_or_default();
-                                                let values = form_model_efforts.get().unwrap_or_default();
+                                                let values = form_efforts.get().map(|(_, values)| values).unwrap_or_default();
                                                 let unverified = !current.is_empty() && !values.contains(&current);
                                                 let loc = locale.get();
                                                 view! {
@@ -4948,10 +5058,10 @@ pub(super) fn SettingsView(
                                         // accessible name, so getByLabel("Model") would match it (#e2e).
                                         <span id="model-reasoning-hint" class="hint effort-hint">{move || {
                                             let loc = locale.get();
-                                            match form_model_efforts.get() {
-                                                Some(list) if list.is_empty() => t(loc, "settings.reasoning_effort.unsupported_hint").to_string(),
-                                                Some(list) => tf(loc, "settings.reasoning_effort.known_hint", &[("list", &list.iter().map(|v| crate::effort_display_label(loc, v)).collect::<Vec<_>>().join(" / "))]),
-                                                None => t(loc, "settings.reasoning_effort.unknown_hint").to_string(),
+                                            match form_efforts.get() {
+                                                Some((true, list)) if list.is_empty() => t(loc, "settings.reasoning_effort.unsupported_hint").to_string(),
+                                                Some((catalog, list)) if !list.is_empty() => tf(loc, if catalog { "settings.reasoning_effort.known_hint" } else { "settings.reasoning_effort.endpoint_hint" }, &[("list", &list.iter().map(|v| crate::effort_display_label(loc, v)).collect::<Vec<_>>().join(" / "))]),
+                                                _ => t(loc, "settings.reasoning_effort.unknown_hint").to_string(),
                                             }
                                         }}</span>
                                         </div>
@@ -5071,6 +5181,7 @@ pub(super) fn SettingsView(
                                         }}
                                     </div>
                                     <Show when=move || model_form.get().is_some_and(|f| !is_managed_subscription(&f.provider))>{model_proxy_route(model_form, models)}{model_advanced_options(locale, model_form)}</Show>
+                                    </details>
                                     <Show when=move || model_form.get().is_some_and(|f| f.restore_chat_model)>
                                         <p class="hint" data-testid="restore-chat-hint">{move || t(locale.get(), "settings.restore_chat_hint")}</p>
                                     </Show>
@@ -5092,7 +5203,10 @@ pub(super) fn SettingsView(
                                     <p class="hint" data-testid="provider-byok-hint">{move || t(locale.get(), "models.byok_hint")}</p>
                                     <div class="settings-form-grid">
                                         <label class="span-2">{move || t(locale.get(), "settings.api_url")}
-                                            <input aria-describedby="model-api-url-hint" data-testid="provider-api-url"
+                                            <input aria-describedby="model-api-url-hint" data-testid="provider-api-url" id="model-form-api-url"
+                                                placeholder=move || t(locale.get(), "settings.api_url_ph")
+                                                class:invalid=move || field_invalid("api_url")
+                                                attr:aria-invalid=move || field_invalid("api_url").then_some("true")
                                                 prop:value=move || model_form.get().map(|f| f.api_url.clone()).unwrap_or_default()
                                                 on:input=move |ev| {
                                                     let url = event_target_input(&ev).value();
@@ -5102,6 +5216,8 @@ pub(super) fn SettingsView(
                                                         } else {
                                                             o.api_url = url;
                                                         }
+                                                        clear_invalid(o, "api_url");
+                                                        clear_endpoint_models(o);
                                                     });
                                                 } /></label>
                                         <span id="model-api-url-hint" class="hint span-2" data-testid="model-api-url-hint">
@@ -5109,6 +5225,8 @@ pub(super) fn SettingsView(
                                         </span>
                                         <label class="span-2">{move || t(locale.get(), "settings.api_key")}
                                             <input type="password" id="model-form-api-key" data-testid="provider-api-key"
+                                                class:invalid=move || field_invalid("api_key")
+                                                attr:aria-invalid=move || field_invalid("api_key").then_some("true")
                                                 prop:value=move || model_form_key.get()
                                                 placeholder=move || {
                                                     let url = model_form.get().map(|f| f.api_url).unwrap_or_default();
@@ -5119,7 +5237,13 @@ pub(super) fn SettingsView(
                                                     }
                                                 }
                                                 autocomplete="new-password"
-                                                on:input=move |ev| model_form_key.set(event_target_input(&ev).value()) /></label>
+                                                on:input=move |ev| {
+                                                    model_form_key.set(event_target_input(&ev).value());
+                                                    model_form.update(|o| if let Some(o)=o { clear_invalid(o, "api_key"); });
+                                                } /></label>
+                                        {move || local_gateway.get().then(|| view! {
+                                            <span class="hint span-2" data-testid="model-api-key-local-hint">{t(locale.get(), "settings.api_key_local_hint")}</span>
+                                        })}
                                         {move || {
                                             let url = model_form.get().map(|f| f.api_url).unwrap_or_default();
                                             endpoint_has_stored_key(&models.get(), &url).then(|| view! {
@@ -5134,7 +5258,9 @@ pub(super) fn SettingsView(
                                         <div class="provider-models-head">
                                             <strong>{move || t(locale.get(), "models.entries")}</strong>
                                             <span class="hint">{move || t(locale.get(), "models.entries_hint")}</span>
+                                            {fetch_models_button()}
                                         </div>
+                                        <div class="settings-form-grid">{model_id_suggestions()}</div>
                                         <For
                                             each=move || model_form.get().map(|f| f.entries).unwrap_or_default()
                                             key=|entry| entry.row_id
@@ -5188,7 +5314,12 @@ pub(super) fn SettingsView(
                                                                 </select>
                                                             </label>
                                                             <label class="provider-model-id">{move || t(locale.get(), "settings.model")}
-                                                                <input data-testid="provider-model-id"
+                                                                <input data-testid="provider-model-id" attr:list=move || has_model_suggestions.get().then_some("model-id-suggestions")
+                                                                    attr:id=move || model_form.with(|f| f.as_ref().and_then(|f| f.entries.first().map(|e| e.row_id)))
+                                                                        .filter(|first| *first == row_id)
+                                                                        .map(|_| "model-form-model")
+                                                                    class:invalid=move || field_invalid("model")
+                                                                    attr:aria-invalid=move || field_invalid("model").then_some("true")
                                                                     prop:value=move || model_form.get()
                                                                         .and_then(|f| f.entries.into_iter().find(|e| e.row_id == row_id))
                                                                         .map(|e| e.model)
@@ -5197,6 +5328,7 @@ pub(super) fn SettingsView(
                                                                     on:input=move |ev| {
                                                                         let value = event_target_input(&ev).value();
                                                                         model_form.update(|o| if let Some(o)=o {
+                                                                            clear_invalid(o, "model");
                                                                             if let Some(e) = o.entries.iter_mut().find(|e| e.row_id == row_id) {
                                                                                 e.model = value;
                                                                                 if is_image_generation_model(&e.model) {
@@ -5230,6 +5362,9 @@ pub(super) fn SettingsView(
                                                                     } /></label>
                                                             <label class="provider-model-endpoint">{move || t(locale.get(), "settings.endpoint_suffix")}
                                                                 <input data-testid="provider-endpoint-suffix"
+                                                                    id=format!("provider-endpoint-suffix-{row_id}")
+                                                                    class:invalid=move || field_invalid(&format!("endpoint_suffix:{row_id}"))
+                                                                    attr:aria-invalid=move || field_invalid(&format!("endpoint_suffix:{row_id}")).then_some("true")
                                                                     prop:value=move || model_form.get()
                                                                         .and_then(|f| f.entries.into_iter().find(|e| e.row_id == row_id))
                                                                         .map(|e| e.endpoint_suffix)
@@ -5238,6 +5373,7 @@ pub(super) fn SettingsView(
                                                                     on:input=move |ev| {
                                                                         let value = event_target_input(&ev).value();
                                                                         model_form.update(|o| if let Some(o)=o {
+                                                                            clear_invalid(o, &format!("endpoint_suffix:{row_id}"));
                                                                             if let Some(e) = o.entries.iter_mut().find(|e| e.row_id == row_id) {
                                                                                 e.endpoint_suffix = value;
                                                                             }
@@ -5423,8 +5559,14 @@ pub(super) fn SettingsView(
                                             {move || t(locale.get(), "models.add_entry")}
                                         </button>
                                     </div>
-                                    {model_proxy_route(model_form, models)}
-                                    {model_advanced_options(locale, model_form)}
+                                    <details class="model-advanced-section" data-testid="model-advanced-section">
+                                        <summary>
+                                            <span class="model-advanced-title">{move || t(locale.get(), "models.advanced")}</span>
+                                            <span class="hint">{move || t(locale.get(), "models.advanced_network_hint")}</span>
+                                        </summary>
+                                        {model_proxy_route(model_form, models)}
+                                        {model_advanced_options(locale, model_form)}
+                                    </details>
                                     {move || model_form_msg.get().map(|(ok, text)| view! {
                                         <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
                                     })}
@@ -5715,9 +5857,22 @@ pub(super) fn SettingsView(
                                     // These profiles stay editable, but none of them runs
                                     // while Magpie is connected.
                                     {move || magpie_model.get().map(|magpie| view! {
-                                        <p class="hint" data-testid="models-magpie-notice">
-                                            {move || tf(locale.get(), "models.magpie_connected", &[("model", &magpie.label())])}
-                                        </p>
+                                        <div class="settings-callout settings-callout-info" role="note" data-testid="models-magpie-notice">
+                                            <span class="settings-callout-icon" aria-hidden="true">{compose_icon("info")}</span>
+                                            <div class="settings-callout-body">
+                                                <p>{move || tf(locale.get(), "models.magpie_connected", &[("model", &magpie.label())])}</p>
+                                                <p>{move || t(locale.get(), "models.magpie_disconnect")}</p>
+                                                <div class="settings-callout-command">
+                                                    <code data-testid="models-magpie-command">{MAGPIE_DISCONNECT_COMMAND}</code>
+                                                    <button type="button" class="settings-callout-copy" data-testid="models-magpie-copy"
+                                                        title=move || t(locale.get(), "models.magpie_copy")
+                                                        aria-label=move || t(locale.get(), "models.magpie_copy")
+                                                        on:click=move |_| crate::app_support::copy_text(MAGPIE_DISCONNECT_COMMAND.into())>
+                                                        {compose_icon("copy")}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
                                     })}
                                     <p class="hint" data-testid="acp-models-list-hint">{move || t(locale.get(), "models.acp_hint")}</p>
                                     <div class="model-preset-row" data-testid="model-presets">
@@ -5745,18 +5900,34 @@ pub(super) fn SettingsView(
                                         }).collect_view()}
                                     </div>
                                     <div class="settings-list">
-                                        <For each=move || { models.get().into_iter().filter(|m| !is_subscription_provider(&m.provider)).collect::<Vec<_>>() } key=|m| (m.id.clone(), m.active, m.use_for_expert) let:m>
+                                        <For each=move || { models.get().into_iter().filter(|m| !is_subscription_provider(&m.provider)).collect::<Vec<_>>() } key=|m| (m.id.clone(), m.active, m.use_for_expert, m.label.clone(), m.model.clone(), m.api_url.clone()) let:m>
                                             {
                                                 let pick_id = m.id.clone();
                                                 let del_id = m.id.clone();
-                                                let del_label = m.label.clone();
+                                                let del_label = m.display_label();
                                                 let edit = m.clone();
                                                 let is_active = m.active;
                                                 let is_chat_model = m.is_chat_model();
                                                 let can_delete = models.get().iter().any(|other| {
                                                     other.id != m.id && other.is_chat_model()
                                                 });
-                                                let show_sub = !m.model.is_empty() && m.model != m.label;
+                                                // A placeholder with no model or address yet must not look
+                                                // like a working default (fresh install).
+                                                let unconfigured = m.is_unconfigured();
+                                                let title = if unconfigured && m.display_label().is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(m.display_label())
+                                                };
+                                                let show_model = !m.model.trim().is_empty() && m.model.trim() != m.display_label();
+                                                // Rows on different API addresses can share a model id.
+                                                let host = endpoint_host(&m.api_url);
+                                                let sub = match (show_model, host.is_empty()) {
+                                                    (true, false) => Some(format!("{} · {host}", m.model.trim())),
+                                                    (true, true) => Some(m.model.trim().to_string()),
+                                                    (false, false) => Some(host.clone()),
+                                                    (false, true) => None,
+                                                };
                                                 let drag_id = m.id.clone();
                                                 let drag_cls = m.id.clone();
                                                 let enter_id = m.id.clone();
@@ -5764,7 +5935,10 @@ pub(super) fn SettingsView(
                                                 let over_cls = m.id.clone();
                                                 view! {
                                                     <div class="settings-list-row settings-list-row-link"
-                                                        class:settings-list-row-active=is_active
+                                                        data-testid="model-profile-row"
+                                                        class:settings-list-row-active=move || is_active && magpie_model.get().is_none()
+                                                        class:settings-list-row-inactive=move || magpie_model.get().is_some()
+                                                        class:settings-list-row-unconfigured=unconfigured
                                                         class:dragging=move || drag_model.get().as_deref() == Some(drag_cls.as_str())
                                                         class:model-drag-over=move || drop_model.get().as_deref() == Some(over_cls.as_str())
                                                         attr:draggable="true"
@@ -5822,7 +5996,10 @@ pub(super) fn SettingsView(
                                                         <span class="settings-list-grip" aria-hidden="true" title=move || t(locale.get(), "models.reorder")>"\u{283F}"</span>
                                                         <div class="settings-list-main">
                                                             <span class="settings-list-title">
-                                                                {m.label.clone()}
+                                                                {match title.clone() {
+                                                                    Some(title) => title.into_view(),
+                                                                    None => view! { <span class="settings-list-untitled">{move || t(locale.get(), "models.untitled")}</span> }.into_view(),
+                                                                }}
                                                                 {m.use_for_vision.then(|| view! { <span class="settings-cap-badge">{move || t(locale.get(), "models.capability.vision")}</span> })}
                                                                 {m.use_for_expert.then(|| view! { <span class="settings-cap-badge" data-testid="expert-role-badge">{move || t(locale.get(), "models.capability.expert")}</span> })}
                                                                 {(m.image_generation_capable || m.use_for_image_generation || is_gemini_provider(&m.provider) || is_image_generation_model(&m.model)).then(|| view! {
@@ -5835,12 +6012,25 @@ pub(super) fn SettingsView(
                                                                     <span class="settings-cap-badge">{move || t(locale.get(), "models.capability.video")}</span>
                                                                 })}
                                                             </span>
-                                                            {show_sub.then(|| view! {
-                                                                <span class="settings-list-sub">{m.model.clone()}</span>
-                                                            })}
+                                                            {if unconfigured {
+                                                                view! {
+                                                                    <span class="settings-list-sub" data-testid="model-not-configured-hint">{move || t(locale.get(), "models.not_configured_hint")}</span>
+                                                                }.into_view()
+                                                            } else {
+                                                                sub.clone().map(|sub| view! {
+                                                                    <span class="settings-list-sub" data-testid="model-profile-sub" title=m.api_url.clone()>{sub}</span>
+                                                                }).into_view()
+                                                            }}
                                                         </div>
                                                         <div class="settings-list-actions">
-                                                            {is_active.then(|| view! {
+                                                            {unconfigured.then(|| view! {
+                                                                <span class="settings-model-unconfigured" data-testid="model-not-configured">{compose_icon("circle-alert")}{move || t(locale.get(), "models.not_configured")}</span>
+                                                            })}
+                                                            {move || magpie_model.get().is_some().then(|| view! {
+                                                                <span class="settings-model-inactive" data-testid="model-not-in-effect"
+                                                                    title=move || t(locale.get(), "models.not_in_effect_hint")>{move || t(locale.get(), "models.not_in_effect")}</span>
+                                                            })}
+                                                            {move || (is_active && !unconfigured && magpie_model.get().is_none()).then(|| view! {
                                                                 <span class="settings-model-default">{compose_icon("check")}{move || t(locale.get(), "models.default")}</span>
                                                             })}
                                                             {(can_delete && !is_active).then(|| { let id = del_id.clone(); view! {
@@ -5853,7 +6043,7 @@ pub(super) fn SettingsView(
                                                                         }));
                                                                     }>{compose_icon("close")}</button>
                                                             }})}
-                                                            {(!is_active && is_chat_model).then(|| { let id = pick_id.clone(); view! {
+                                                            {move || (!is_active && is_chat_model && magpie_model.get().is_none()).then(|| { let id = pick_id.clone(); view! {
                                                                 <button class="settings-list-use" type="button"
                                                                     disabled=move || settings_busy.get()
                                                                     on:click=move |ev| {

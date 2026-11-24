@@ -608,7 +608,7 @@ async fn capability_mcp_counts(store: &Store, project: &ActiveProject) -> Capabi
 pub(super) async fn get_onboarding_state(
     state: State<'_, AppState>,
 ) -> Result<OnboardingState, String> {
-    let (_, _, _, api_key) = load_settings(&state.store).await;
+    let (provider, api_url, model, api_key) = load_settings(&state.store).await;
     let done = state
         .store
         .get_setting("onboarding_done")
@@ -618,7 +618,9 @@ pub(super) async fn get_onboarding_state(
         .is_some();
     Ok(OnboardingState {
         show: !done,
-        has_api_key: !api_key.is_empty(),
+        // A local gateway that needs no key is set up too; otherwise the
+        // "model not set up" notice would nag users who can already chat.
+        has_api_key: models::model_access_ready(&provider, &api_url, &model, &api_key),
     })
 }
 

@@ -1,7 +1,7 @@
 use crate::app_support::{
-    allow_drop, bucket_sessions_by_date, compose_icon, drag_session_id, load_view_pref,
-    nest_branch_sessions, save_view_pref, start_conversation_drag, start_folder_drag,
-    AvailableUpdate, FolderModal,
+    allow_drop, attention_label, attention_reason_key, bucket_sessions_by_date, compose_icon,
+    drag_session_id, load_view_pref, nest_branch_sessions, save_view_pref, start_conversation_drag,
+    start_folder_drag, AvailableUpdate, FolderModal,
 };
 use crate::bindings::is_mac;
 use crate::dto::*;
@@ -184,6 +184,10 @@ pub(super) struct SidebarState {
     pub(super) running: RwSignal<HashSet<String>>,
     /// Sessions blocked on a tool-approval / permission card (#327).
     pub(super) attention: RwSignal<HashSet<String>>,
+    /// Sessions the backend reports as blocked on an approval (every
+    /// project). Needs-you rows outside this and `attention` are unread
+    /// finished replies, labelled "New reply".
+    pub(super) awaiting_sessions: RwSignal<HashSet<String>>,
     /// All saved sessions needing attention, including replies outside the
     /// sidebar's loaded history page. Shared with the topbar inbox.
     pub(super) inbox_sessions: RwSignal<Vec<SessionSearchInfo>>,
@@ -260,6 +264,7 @@ pub(super) fn Sidebar(
         active_session,
         running,
         attention,
+        awaiting_sessions,
         inbox_sessions,
         rename_session_input,
         rename_session_target,
@@ -338,6 +343,11 @@ pub(super) fn Sidebar(
                 .collect::<HashSet<_>>()
         })
     });
+    // Needs-you rows not blocked on an approval are finished replies nobody
+    // has opened yet: they read "New reply", not "Needs you".
+    let awaits_approval = move |id: &str| {
+        attention.with(|ids| ids.contains(id)) || awaiting_sessions.with(|ids| ids.contains(id))
+    };
     let selected_sessions = create_rw_signal::<HashSet<String>>(HashSet::new());
     // The last row clicked while selecting; a Shift-click extends from it.
     let select_anchor = create_rw_signal::<Option<String>>(None);
@@ -722,15 +732,20 @@ pub(super) fn Sidebar(
                             } else {
                                 session.title
                             };
+                            let new_reply = !awaits_approval(&id);
+                            let (label_key, label_class) =
+                                attention_label(SessionStatusKind::NeedsYou, new_reply);
+                            let reason = t(loc, attention_reason_key(!new_reply));
                             view! {
                                 <button type="button" class="side-item side-attention-item"
+                                    class:new-reply=new_reply
                                     data-testid="sidebar-attention-session" data-session-id=session.id
                                     class:active=move || active_session.get().as_deref() == Some(active_id.as_str())
-                                    title=format!("{} · {}", title, t(loc, "sess_status.needs_you"))
+                                    title=format!("{} · {}", title, reason)
                                     on:click=move |_| load_session.call(id.clone())>
                                     <span class="side-attention-icon" aria-hidden="true">{compose_icon("circle-alert")}</span>
                                     <span class="ses-title">{title}</span>
-                                    <span class="ses-status-label needs-you">{t(loc, "sess_status.needs_you")}</span>
+                                    <span class=format!("ses-status-label {label_class}")>{t(loc, label_key)}</span>
                                 </button>
                             }
                         }).collect_view();
@@ -808,6 +823,11 @@ pub(super) fn Sidebar(
                                 None
                             }
                         });
+                        let id_reply = id.clone();
+                        let new_reply = Signal::derive(move || {
+                            session_status.get() == Some(SessionStatusKind::NeedsYou)
+                                && !awaits_approval(&id_reply)
+                        });
                         let id_drag = id.clone();
                         let id_dragcls = id.clone();
                         let id_selected = id.clone();
@@ -845,12 +865,13 @@ pub(super) fn Sidebar(
                                     class:branch-session=is_branch
                                     title=move || session_status.get().map_or_else(
                                         || title_tooltip.clone(),
-                                        |status| format!("{} · {}", title_tooltip, t(locale.get(), status.i18n_key())),
+                                        |status| format!("{} · {}", title_tooltip, t(locale.get(), attention_label(status, new_reply.get()).0)),
                                     )
                                     aria-description=kind_label
                                     class:active=move || active_session.get().as_deref() == Some(id_active.as_str())
                                     class:running=move || running.get().contains(&id_running)
                                     class:attention=move || session_status.get() == Some(SessionStatusKind::NeedsYou)
+                                    class:new-reply=move || new_reply.get()
                                     class:dragging=move || drag_session.get().as_deref() == Some(id_dragcls.as_str())
                                     class:selecting=move || selecting_sessions.get()
                                     class:selected=move || selected_sessions.get().contains(&id_selected)
@@ -923,7 +944,7 @@ pub(super) fn Sidebar(
                                         <span class="ses-live" title=move || t(locale.get(), "sess_status.running")>
                                             {compose_icon("loader")}
                                         </span>
-                                        <span class="ses-attention" title=move || t(locale.get(), "sess_status.needs_you")>
+                                        <span class="ses-attention" title=move || t(locale.get(), attention_label(SessionStatusKind::NeedsYou, new_reply.get()).0)>
                                             {compose_icon("circle-alert")}
                                         </span>
                                         {kind.map(|(icon, label)| view! {
@@ -932,10 +953,13 @@ pub(super) fn Sidebar(
                                     </span>
                                     <span class="ses-initial" aria-hidden="true">{initial}</span>
                                     <span class="ses-title">{title}</span>
-                                    {move || session_status.get().map(|status| view! {
-                                        <span class=format!("ses-status-label {}", status.css())>
-                                            {t(locale.get(), status.i18n_key())}
-                                        </span>
+                                    {move || session_status.get().map(|status| {
+                                        let (key, class) = attention_label(status, new_reply.get());
+                                        view! {
+                                            <span class=format!("ses-status-label {class}")>
+                                                {t(locale.get(), key)}
+                                            </span>
+                                        }
                                     })}
                                 </button>
                                 {nest}
