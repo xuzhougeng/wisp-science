@@ -3992,7 +3992,7 @@ test("Ctrl+P command palette runs commands and switches themes", async ({ page }
 test("privacy mode hides selected projects and recent sessions, then restores them", async ({ page }) => {
   await pinNonMacPlatform(page);
   await page.goto("/");
-  const privateProject = page.locator(".proj-card", { hasText: "wisp-science" });
+  const privateProject = page.locator(".proj-card:not(.proj-recent)", { hasText: "wisp-science" });
   const otherProject = page.locator(".proj-card", { hasText: "Other project" });
   await expect(privateProject).toBeVisible();
   await expect(page.getByTestId("recent-session-card")).toHaveCount(2);
@@ -4051,7 +4051,7 @@ test("a saved host privacy choice takes precedence over a stale window, and refr
     localStorage.setItem("wisp-privacy-mode-projects", "[]");
   });
   await page.goto("/");
-  const privateCard = page.locator(".proj-card", { hasText: "wisp-science" });
+  const privateCard = page.locator(".proj-card:not(.proj-recent)", { hasText: "wisp-science" });
   await expect(page.locator(".proj-card", { hasText: "Other project" })).toBeVisible();
   await expect(privateCard).toHaveCount(0);
   await expect(page.getByTestId("recent-session-card")).toHaveCount(0);
@@ -4069,7 +4069,7 @@ test("a saved host privacy choice takes precedence over a stale window, and refr
 
 test("privacy mode select all toggles every project at once", async ({ page }) => {
   await page.goto("/");
-  const privateProject = page.locator(".proj-card", { hasText: "wisp-science" });
+  const privateProject = page.locator(".proj-card:not(.proj-recent)", { hasText: "wisp-science" });
   const otherProject = page.locator(".proj-card", { hasText: "Other project" });
   await expect(privateProject).toBeVisible();
   await expect(otherProject).toBeVisible();
@@ -16445,6 +16445,8 @@ test("project transfers stay in a lower-right progress card without blocking oth
   const projectCard = projectCards.first();
   const otherProjectCard = projectCards.nth(1);
   const exportProject = projectCard.getByRole("button", { name: "Export project" });
+  // Management actions stay hidden until the card is pointed at.
+  await projectCard.hover();
   await expect.poll(() => exportProject.evaluate((el) => Number.parseFloat(getComputedStyle(el).opacity))).toBeGreaterThan(0);
   await page.evaluate(() => (window as any).__delayNextProjectTransfer("export", 800));
   await exportProject.click();
