@@ -146,7 +146,9 @@ pub(crate) fn ProjectsScreen(
             let awaiting = serde_wasm_bindgen::from_value::<Vec<String>>(awaiting)
                 .map(|ids| ids.into_iter().collect::<HashSet<_>>())
                 .unwrap_or_default();
-            if awaiting_backend.with_untracked(|current| current != &awaiting) {
+            // The screen may be gone by now (a project was opened while this
+            // was in flight); reading a disposed signal would panic.
+            if awaiting_backend.try_with_untracked(|current| current != &awaiting) == Some(true) {
                 awaiting_backend.set(awaiting);
             }
             let dm = invoke("list_demos", JsValue::UNDEFINED).await;

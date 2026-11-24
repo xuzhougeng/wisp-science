@@ -159,7 +159,7 @@ test("a reply's model badge names the Magpie model, not the personal default", a
   await page.locator("#composer-input").fill("badge check");
   await page.getByRole("button", { name: "Send", exact: true }).click();
   const reply = page.locator(".msg.assistant").last();
-  await expect(reply).toContainText("badge check");
+  await expect(reply).toContainText("Hello from mock wisp-science.");
   await expect(reply.locator(".role-model")).toHaveText(MAGPIE);
 });
 
@@ -176,10 +176,11 @@ test("the backend's usage label re-stamps the running reply's badge", async ({ p
   const emit = (event: Record<string, unknown>) =>
     page.evaluate(payload => (window as any).__tauriEmit("agent", payload), { frame_id: frameId, ...event });
   await emit({ kind: "Text", delta: "Answered." });
-  const badge = page.locator(".msg.assistant").last().locator(".role-model");
-  await expect(badge).not.toHaveText("Magpie · gateway/served");
   await emit({ kind: "Usage", model: "Magpie · gateway/served", input: 10, output: 2, ctx_tokens: 12, max_context: 128000 });
-  await expect(badge).toHaveText("Magpie · gateway/served");
+  // The streaming row carries no badge; it appears once the reply settles.
   await page.evaluate(() => (window as any).__finishPendingTurn());
-  await expect(badge).toHaveText("Magpie · gateway/served");
+  const reply = page.locator(".msg.assistant").last();
+  await expect(reply).toContainText("Answered.");
+  // No Magpie connection here, so only the usage label can produce this text.
+  await expect(reply.locator(".role-model")).toHaveText("Magpie · gateway/served");
 });

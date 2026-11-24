@@ -6752,7 +6752,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                   preview: "rm -f normal_draws.csv && ls -a",
                 });
               }, 50);
-              return fid;
+              // The turn stays running: send_message resolving ends it.
+              return await new Promise<string>(() => {});
             }
             if (String(arg("message") ?? "").includes("NEEDCONFIRM")) {
               const longBody = Array.from({ length: 120 }, (_, i) => `rm -rf /mock/path/line-${i}`).join("\n");

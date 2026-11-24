@@ -14821,8 +14821,13 @@ fn App() -> impl IntoView {
                                     }
                                     // Usage is metadata for the whole reply, not
                                     // a boundary that closes the live step run.
+                                    // Neither is the approval card for the call
+                                    // this run is blocked on: the run stays live
+                                    // and its header reads "Awaiting approval".
                                     let live = busy_now && (j > last || list[j..=last].iter().all(|item| {
-                                        renders_nothing(item) || matches!(item, ChatItem::Usage { .. })
+                                        renders_nothing(item)
+                                            || matches!(item, ChatItem::Usage { .. })
+                                            || awaits_approval(item)
                                     }));
                                     let mut h = std::collections::hash_map::DefaultHasher::new();
                                     for idx in &indices { (idx, list[*idx].fingerprint()).hash(&mut h); }

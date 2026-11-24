@@ -10089,6 +10089,8 @@ test("image crop stays highlighted until it is added to chat", async ({ page }) 
   await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
   const image = page.locator(".artifact-modal .rp-img");
   await expect(image).toBeVisible();
+  // The modal opens fitted; the 1×1 mock image needs 100% width to drag on.
+  await page.locator(".artifact-modal").getByRole("button", { name: "Reset zoom" }).click();
 
   // Toggle crop mode → the capture layer appears.
   await page.getByRole("button", { name: "Select a region to ask about" }).click();
@@ -10130,6 +10132,8 @@ test("image region comments become numbered pins and a revision request", async 
   await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
   const image = page.locator(".artifact-modal .rp-img");
   await expect(image).toBeVisible();
+  // The modal opens fitted; the 1×1 mock image needs 100% width to drag on.
+  await page.locator(".artifact-modal").getByRole("button", { name: "Reset zoom" }).click();
 
   await page.getByRole("button", { name: "Select a region to ask about" }).click();
   const box = (await image.boundingBox())!;
@@ -11017,13 +11021,14 @@ test("API access reuses a stored key for the same Base URL", async ({ page }) =>
   await expect(page.getByTestId("provider-separate-key-hint"))
     .toContainText("Paste a different key");
   await page.getByRole("button", { name: "Save" }).click();
+  // Both default models are saved, the landing one first, neither with a key.
   await expect.poll(async () => {
-    const args = await lastInvokeArgs(page, "save_model");
-    return args ? { ...args, key: args.key ?? null } : null;
-  }).toMatchObject({
-    key: null,
-    profile: { model: "deepseek-v4-flash" },
-  });
+    const calls = await invokeArgsList(page, "save_model");
+    return calls.map((args) => ({ key: args.key ?? null, model: args.profile?.model }));
+  }).toEqual([
+    { key: null, model: "deepseek-v4-flash" },
+    { key: null, model: "deepseek-v4-pro" },
+  ]);
 });
 
 test("API access can paste a second key on the same Base URL", async ({ page }) => {
@@ -17189,7 +17194,10 @@ test("context-limit recovery offers three actions and owns the first Escape", as
   await expect(page.getByTestId("context-recovery-pause")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(modal).toHaveCount(0);
-  await expect(page.getByText(/maximum context length exceeded/)).toBeVisible();
+  // The card leads with the plain summary; the raw error is under Details.
+  const errorCard = page.locator(".finding.err").last();
+  await expect(errorCard.locator(".finding-title")).toHaveText("The conversation exceeds the model's context limit");
+  await expect(errorCard.getByTestId("error-details").locator("pre")).toContainText("maximum context length exceeded");
 
   await emitTauriEvent(page, "agent", overflow);
   await page.getByTestId("context-recovery-pause").click();
@@ -19688,6 +19696,10 @@ test("onboarding keeps its backdrop and dialog mounted when navigating", async (
   for (const step of [1, 2, 3, 2, 1, 0]) {
     if (step < previousStep) {
       await page.keyboard.press("Escape");
+    } else if (previousStep === 2) {
+      // No key typed: Next waits for one, so the model step is skipped.
+      await expect(modal.locator(".row > .primary")).toBeDisabled();
+      await modal.getByRole("button", { name: "Set up later" }).click();
     } else {
       await modal.locator(".row > .primary").click();
     }
@@ -19767,11 +19779,14 @@ test("local environment manual paths save, survive reopening, and preserve faile
   await modal.getByRole("button", { name: "Set up later" }).click();
   const env = modal.getByTestId("local-environment");
   await env.getByRole("button", { name: "Edit paths" }).click();
-  await expect(env.getByRole("textbox")).toHaveCount(8);
+  // The guide edits the four everyday tools; npm, sci, pixi and Cua Driver
+  // stay in Settings.
+  await expect(env.getByRole("textbox")).toHaveCount(4);
+  await expect(env.getByRole("textbox", { name: "npm", exact: true })).toHaveCount(0);
   await expect(env.getByRole("textbox", { name: "Python", exact: true })).toHaveValue("/mock/bin/python3");
   await env.getByRole("textbox", { name: "Python", exact: true }).fill("C:\\Custom Python\\python.exe");
   await expect(env.getByRole("textbox", { name: "Python", exact: true })).toBeFocused();
-  await env.getByRole("textbox", { name: "npm", exact: true }).fill("C:\\Program Files\\nodejs\\npm.cmd");
+  await env.getByRole("textbox", { name: "Node", exact: true }).fill("C:\\Program Files\\nodejs\\node.exe");
   await env.getByRole("textbox", { name: "uv", exact: true }).fill("");
   await page.evaluate(() => { (window as any).__failSaveLocalEnvironment = true; });
   await env.getByRole("button", { name: "Save paths" }).click();
@@ -19782,7 +19797,7 @@ test("local environment manual paths save, survive reopening, and preserve faile
   await expect(env.getByRole("textbox")).toHaveCount(0);
   await expect(env).toContainText("C:\\Custom Python\\python.exe");
   await expect.poll(() => lastInvokeArgs(page, "save_local_environment_paths")).toMatchObject({ paths: {
-    python_executable: "C:\\Custom Python\\python.exe", npm_executable: "C:\\Program Files\\nodejs\\npm.cmd", uv_executable: "",
+    python_executable: "C:\\Custom Python\\python.exe", node_executable: "C:\\Program Files\\nodejs\\node.exe", uv_executable: "",
   } });
   await env.getByRole("button", { name: "Check paths again" }).click();
   await expect(env).toContainText("C:\\Custom Python\\python.exe");
