@@ -2474,8 +2474,16 @@ button.workflow-graph-port.output {
 }
 .provider-models-head {
   display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.provider-models-title {
+  display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 .provider-models-head strong {
   font-size: calc(13px * var(--ui-font-scale, 1));
@@ -2782,9 +2790,40 @@ button.workflow-graph-port.output {
 .settings-pane .model-advanced-section > summary .hint { margin: 0; }
 .model-id-field { display: flex; align-items: flex-end; gap: 8px; min-width: 0; }
 .model-id-field > label { flex: 1; min-width: 0; }
-.model-fetch-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.model-fetch-btn svg { width: 14px; height: 14px; }
-.provider-models-head .model-fetch-btn { align-self: flex-start; margin-top: 4px; }
+/* "Fetch models": a quiet secondary action. Beside Model ID it matches the
+   input's height; in the provider "Models" header it is a compact header action. */
+.model-fetch-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease, color .12s ease;
+}
+.model-fetch-btn svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--text-faint); transition: color .12s ease; }
+.model-fetch-btn:hover:not(:disabled) { border-color: var(--text-faint); background: var(--bg-sunken); color: var(--text); }
+.model-fetch-btn:hover:not(:disabled) svg { color: var(--clay); }
+.model-fetch-btn:focus-visible { outline: none; border-color: var(--clay); box-shadow: 0 0 0 3px var(--focus-ring); }
+.model-fetch-btn:disabled { cursor: default; }
+.model-fetch-btn:disabled:not(.busy) { opacity: .5; }
+.model-fetch-btn.busy svg { color: var(--clay); animation: model-fetch-spin .8s linear infinite; }
+@keyframes model-fetch-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .model-fetch-btn.busy svg { animation: none; } }
+.model-id-field .model-fetch-btn { font-size: calc(14px * var(--ui-font-scale, 1)); }
+.provider-models-head .model-fetch-btn {
+  padding: 6px 11px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+}
 .model-fetch-status.fail { color: var(--err); }
 .model-form input.invalid {
   border-color: var(--err);

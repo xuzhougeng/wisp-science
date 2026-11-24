@@ -2410,6 +2410,8 @@ pub(super) fn SettingsView(
         view! {
             <button type="button" class="model-fetch-btn" data-testid="model-fetch-models"
                 title=move || t(locale.get(), "models.fetch_hint")
+                class:busy=move || model_form.with(|f| f.as_ref().is_some_and(|f| f.endpoint_models_busy))
+                aria-busy=move || model_form.with(|f| f.as_ref().is_some_and(|f| f.endpoint_models_busy)).to_string()
                 disabled=move || settings_busy.get() || model_form.with(|f| f.as_ref().is_some_and(|f| f.endpoint_models_busy))
                 on:click=move |_| fetch_endpoint_models.call(())>
                 {compose_icon("refresh")}
@@ -5256,8 +5258,10 @@ pub(super) fn SettingsView(
                                     <div class="provider-models" data-testid="provider-models">
                                         <p class="hint" id="provider-expert-hint">{move || t(locale.get(), "settings.expert_hint")}</p>
                                         <div class="provider-models-head">
-                                            <strong>{move || t(locale.get(), "models.entries")}</strong>
-                                            <span class="hint">{move || t(locale.get(), "models.entries_hint")}</span>
+                                            <div class="provider-models-title">
+                                                <strong>{move || t(locale.get(), "models.entries")}</strong>
+                                                <span class="hint">{move || t(locale.get(), "models.entries_hint")}</span>
+                                            </div>
                                             {fetch_models_button()}
                                         </div>
                                         <div class="settings-form-grid">{model_id_suggestions()}</div>
