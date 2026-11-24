@@ -1661,9 +1661,77 @@ pub(crate) fn is_separator(line: &str) -> bool {
 }
 
 pub(crate) fn parse_csv_line(line: &str) -> Vec<String> {
-    line.split(',')
-        .map(|c| c.trim().trim_matches('"').to_string())
-        .collect()
+    parse_delimited_line(line, ',')
+}
+
+/// The column delimiter of a CSV/TSV text, read from its header line: a tab
+/// when the header has one, a semicolon for the European CSV spelling (no
+/// commas, some semicolons), else a comma.
+pub(crate) fn detect_delimiter(header: &str) -> char {
+    if header.contains('\t') {
+        '\t'
+    } else if !header.contains(',') && header.contains(';') {
+        ';'
+    } else {
+        ','
+    }
+}
+
+/// One delimited row. Double-quoted cells may hold the delimiter, and `""`
+/// inside quotes is a literal quote. Cells are trimmed; a leading BOM is dropped.
+pub(crate) fn parse_delimited_line(line: &str, delimiter: char) -> Vec<String> {
+    let line = line.strip_prefix('\u{feff}').unwrap_or(line);
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    let mut cells = Vec::new();
+    let mut cell = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' if in_quotes && chars.peek() == Some(&'"') => {
+                cell.push('"');
+                chars.next();
+            }
+            '"' => in_quotes = !in_quotes,
+            ch if ch == delimiter && !in_quotes => {
+                cells.push(cell.trim().to_string());
+                cell.clear();
+            }
+            ch => cell.push(ch),
+        }
+    }
+    cells.push(cell.trim().to_string());
+    cells
+}
+
+#[cfg(test)]
+mod delimited_tests {
+    use super::{detect_delimiter, parse_csv_line, parse_delimited_line};
+
+    #[test]
+    fn detects_tab_semicolon_and_comma_headers() {
+        assert_eq!(detect_delimiter("panel\tcelltype\tAth"), '\t');
+        assert_eq!(detect_delimiter("gene;log2fc;padj"), ';');
+        assert_eq!(detect_delimiter("gene,log2fc,padj"), ',');
+        assert_eq!(detect_delimiter("gene"), ',');
+    }
+
+    #[test]
+    fn splits_tsv_rows_into_cells() {
+        assert_eq!(
+            parse_delimited_line("Regulatory Genes\tMe\tCYCB2;3\tAT1G20610", '\t'),
+            ["Regulatory Genes", "Me", "CYCB2;3", "AT1G20610"]
+        );
+    }
+
+    #[test]
+    fn quoted_cells_keep_delimiters_and_escaped_quotes() {
+        assert_eq!(
+            parse_csv_line("\u{feff}\"a, b\",\"say \"\"hi\"\"\", c\r"),
+            ["a, b", "say \"hi\"", "c"]
+        );
+        assert_eq!(parse_csv_line("x,,y"), ["x", "", "y"]);
+    }
 }
 
 /// A `.ipynb` cell, flattened to what the preview actually draws.

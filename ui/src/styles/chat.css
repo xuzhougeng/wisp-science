@@ -37,11 +37,18 @@
 /* The file's sub-header under the tab strip: a quiet path line plus flat
    icon buttons, so it reads as part of the toolbar rather than a second
    boxed bar. */
-.center-file-head { position: sticky; top: -16px; z-index: 1; display: flex; align-items: center; gap: 4px; min-height: 36px; margin: -16px -20px 16px; padding: 0 10px 0 20px; border-bottom: 1px solid var(--border); background: var(--bg-app); color: var(--text-faint); font-family: var(--font-mono); font-size: calc(11px * var(--ui-font-scale, 1)); white-space: nowrap; }
-.center-file-head > span:first-child { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* The preview scrolls inside a frame whose bottom row is the file's status
+   bar: kind icon, path and snapshot badge on the left, flat actions on the
+   right. Outside the scroller, so it never covers content or scrolls away. */
+.center-file-frame { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
+.center-file-frame > .center-file-preview { flex: 1 1 auto; min-height: 0; }
+.center-file-head { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 2px 8px 2px 14px; border-top: 1px solid var(--border); background: var(--bg-app); color: var(--text-faint); font-size: calc(11.5px * var(--ui-font-scale, 1)); white-space: nowrap; }
+.center-file-kind { display: inline-flex; flex: 0 0 auto; color: var(--text-faint); }
+.center-file-kind svg { width: 14px; height: 14px; }
+.center-file-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--text-muted); }
 .center-file-head .spacer { flex: 1; }
-.center-file-btn { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 28px; height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: var(--radius-xs); background: transparent; color: var(--text-muted); font-family: var(--font-sans); font-size: calc(12px * var(--ui-font-scale, 1)); cursor: pointer; transition: background .12s ease, color .12s ease; }
-.center-file-btn svg { width: 15px; height: 15px; }
+.center-file-btn { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 26px; height: 26px; padding: 0 8px; border: 1px solid transparent; border-radius: var(--radius-xs); background: transparent; color: var(--text-muted); font-family: var(--font-sans); font-size: calc(12px * var(--ui-font-scale, 1)); cursor: pointer; transition: background .12s ease, color .12s ease; }
+.center-file-btn svg { width: 14px; height: 14px; }
 /* Toggled state is a tint, not the filled primary button. */
 .center-file-head .center-file-btn.primary { border-color: transparent; background: var(--clay-soft); color: var(--clay-strong); }
 .center-file-snapshot-badge { flex: 0 0 auto; padding: 1px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-faint); font-family: var(--font-sans); font-size: calc(10px * var(--ui-font-scale, 1)); font-weight: 600; letter-spacing: .02em; }
@@ -54,25 +61,24 @@
    top-left, interactive console bottom-left, variables top-right, plots
    bottom-right. Selected-code execution remains available from the quote
    menu; the console prompt runs typed code against the same bound runtime. */
-.center-file-runtime { flex: 0 0 auto; max-width: 220px; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--bg-elev); color: var(--text); font-family: var(--font-sans); font-size: calc(12px * var(--ui-font-scale, 1)); cursor: pointer; }
-.center-file-runtime-preview { display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; padding-bottom: 0; }
+.center-file-runtime { flex: 0 0 auto; max-width: 220px; height: 26px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--bg-elev); color: var(--text); font-family: var(--font-sans); font-size: calc(12px * var(--ui-font-scale, 1)); cursor: pointer; }
+.center-file-runtime-preview { display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; padding-bottom: 0; }
 /* Quadrant tracks: 5px divider tracks carry the drag handles, and the custom
    properties are written by the divider drags in main.rs. */
 .center-file-runtime-preview.runtime-panel-open {
   grid-template-columns: minmax(0, 1fr) 5px minmax(240px, var(--runtime-right-w, 34%));
-  grid-template-rows: auto minmax(0, 1fr) 5px minmax(120px, var(--runtime-bottom-h, 32%));
+  grid-template-rows: minmax(0, 1fr) 5px minmax(120px, var(--runtime-bottom-h, 32%));
 }
-.center-file-runtime-preview .center-file-head { position: static; grid-column: 1 / -1; }
 .center-file-runtime-preview > :is(.rp-code, .rp-code-editor) { min-height: 0; height: auto; max-height: none; }
-.center-file-runtime-preview.runtime-panel-open > :is(.rp-code, .rp-code-editor) { grid-column: 1; grid-row: 2; }
-.center-runtime-col-resizer { position: relative; grid-column: 2; grid-row: 2 / 5; cursor: col-resize; }
+.center-file-runtime-preview.runtime-panel-open > :is(.rp-code, .rp-code-editor) { grid-column: 1; grid-row: 1; }
+.center-runtime-col-resizer { position: relative; grid-column: 2; grid-row: 1 / 4; cursor: col-resize; }
 .center-runtime-col-resizer::after { content: ""; position: absolute; inset-block: 0; left: 2px; width: 1px; background: var(--border); transition: background .12s ease; }
 .center-runtime-col-resizer:hover::after { background: var(--clay); }
-.center-runtime-row-resizer { position: relative; grid-column: 1 / -1; grid-row: 3; cursor: row-resize; }
+.center-runtime-row-resizer { position: relative; grid-column: 1 / -1; grid-row: 2; cursor: row-resize; }
 .center-runtime-row-resizer::after { content: ""; position: absolute; inset-inline: 0; top: 2px; height: 1px; background: var(--border); transition: background .12s ease; }
 .center-runtime-row-resizer:hover::after { background: var(--clay); }
 .center-file-console { display: flex; min-height: 0; flex-direction: column; border-top: 1px solid var(--border); background: var(--bg-app); }
-.runtime-panel-open > .center-file-console { grid-column: 1; grid-row: 4; margin: 0 0 0 -20px; border-top: 0; }
+.runtime-panel-open > .center-file-console { grid-column: 1; grid-row: 3; margin: 0 0 0 -20px; border-top: 0; }
 .center-file-console-head { display: flex; align-items: center; gap: 8px; padding: 5px 16px; border-bottom: 1px solid var(--border); color: var(--text-faint); font-family: var(--font-mono); font-size: calc(11px * var(--ui-font-scale, 1)); }
 .center-file-console-head .spacer { flex: 1; }
 .center-file-console-head .center-file-btn { display: flex; padding: 2px 6px; }
@@ -87,8 +93,8 @@
 .center-file-console-run { display: inline-flex; min-height: 30px; flex: 0 0 auto; align-items: center; gap: 5px; padding: 5px 9px; border: 1px solid var(--clay); border-radius: var(--radius-xs); background: var(--clay); color: var(--on-clay); font: 600 calc(11px * var(--ui-font-scale, 1))/1 var(--font-sans); cursor: pointer; }
 .center-file-console-run:disabled { cursor: default; opacity: .45; }
 .center-file-console-run svg { width: 13px; height: 13px; }
-.center-runtime-environment { grid-column: 3; grid-row: 2; display: flex; min-width: 0; min-height: 0; flex-direction: column; margin: 0 -20px 0 0; overflow: hidden; border-left: 1px solid var(--border); background: var(--bg-app); }
-.center-runtime-plots { grid-column: 3; grid-row: 4; display: flex; min-width: 0; min-height: 0; flex-direction: column; margin: 0 -20px 0 0; overflow: hidden; border-left: 1px solid var(--border); background: var(--bg-app); }
+.center-runtime-environment { grid-column: 3; grid-row: 1; display: flex; min-width: 0; min-height: 0; flex-direction: column; margin: 0 -20px 0 0; overflow: hidden; border-left: 1px solid var(--border); background: var(--bg-app); }
+.center-runtime-plots { grid-column: 3; grid-row: 3; display: flex; min-width: 0; min-height: 0; flex-direction: column; margin: 0 -20px 0 0; overflow: hidden; border-left: 1px solid var(--border); background: var(--bg-app); }
 .center-runtime-plots-head { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 5px 10px 5px 12px; border-bottom: 1px solid var(--border); color: var(--text-faint); font-family: var(--font-mono); font-size: calc(11px * var(--ui-font-scale, 1)); }
 .center-runtime-plots-head .spacer { flex: 1; }
 .center-runtime-plots-head .center-file-btn { display: flex; padding: 2px 6px; }
@@ -120,10 +126,6 @@
   overflow: hidden;
   padding: 0;
 }
-.center-file-preview:not(.center-file-runtime-preview):is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) .center-file-head {
-  position: static;
-  margin: 0;
-}
 .center-file-preview:not(.center-file-runtime-preview):is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) > .preview-trunc-note {
   margin: 8px 16px 0;
 }
@@ -145,8 +147,7 @@
 .center-file-preview:is([data-preview-kind="structure"], [data-preview-kind="fasta"], [data-preview-kind="docx"], [data-preview-kind="xlsx"], [data-preview-kind="pptx"]) > .rp-heavy { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }
 .center-file-preview[data-preview-kind="structure"] .rp-3dmol { flex: 1 1 auto; min-height: 0; height: auto; }
 .center-file-preview[data-preview-kind="fasta"] .rp-fasta-wrap { flex: 1 1 auto; min-height: 0; max-height: none; }
-.center-file-preview.center-mcp-app-preview { display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; padding: 0; }
-.center-file-preview.center-mcp-app-preview .center-file-head { position: static; margin: 0; }
+.center-file-preview.center-mcp-app-preview { display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; padding: 0; }
 .center-mcp-app-shell { min-width: 0; min-height: 0; width: 100%; height: 100%; display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; }
 .center-mcp-app-shell.has-toolbar { grid-template-rows: auto minmax(0, 1fr); }
 .center-mcp-app-toolbar { min-width: 0; display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--border); background: var(--bg-elev); }
@@ -160,9 +161,6 @@
 .center-file-preview[data-preview-kind="docx"] { padding: 0; }
 .center-file-preview[data-preview-kind="docx"] .rp-docx { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .center-file-preview:is([data-preview-kind="xlsx"], [data-preview-kind="pptx"]) { padding: 0; }
-/* These kinds zero the pane padding, so the head's negative margins — sized to
-   cancel that padding — would shove it out of the pane and clip it. */
-.center-file-preview:is([data-preview-kind="docx"], [data-preview-kind="xlsx"], [data-preview-kind="pptx"]) .center-file-head { margin: 0; }
 .center-file-preview:is([data-preview-kind="xlsx"], [data-preview-kind="pptx"]) :is(.rp-xlsx, .rp-pptx) { flex: 1 1 auto; min-height: 0; }
 /* .rp-pdf's sunken card is right-pane chrome, where it frames a thumbnail. In
    the center it wraps the whole document instead, so the page reads as a card
@@ -190,7 +188,7 @@
   --chat-col-max: 100%;
 }
 .center.split > .topbar { grid-area: topbar; }
-.center.split > .center-file-preview { grid-area: preview; }
+.center.split > .center-file-frame { grid-area: preview; }
 .center-split-resizer { display: none; }
 .center.split > .center-split-resizer {
   display: block; grid-area: resizer; position: relative; cursor: col-resize; background: transparent;

@@ -92,7 +92,7 @@ test('beside the conversation, Ctrl/Cmd+A follows where the user last pointed', 
   await openCenter(page, 'METHODS.md');
   const preview = page.locator('.center-file-preview');
   await expect(preview.locator('h1')).toHaveText('Methods overview');
-  await preview.locator('[data-center-split]').click();
+  await page.locator('[data-center-split]').click();
   await expect(page.locator('.chat-stage')).toBeVisible();
 
   // Pointing at the conversation leaves the document alone.

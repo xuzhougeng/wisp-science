@@ -13907,6 +13907,7 @@ fn App() -> impl IntoView {
                     .flatten();
                 let console_file = path.clone();
                 view! {
+                    <div class="center-file-frame">
                     <div
                         class=if run_language.is_some() {
                             "center-file-preview center-file-runtime-preview"
@@ -13924,161 +13925,6 @@ fn App() -> impl IntoView {
                             center_runtime_right_w.get(),
                             center_runtime_bottom_h.get(),
                         ))>
-                        <div class="center-file-head">
-                            <span>{
-                                let mcp_label = is_mcp_app.then_some(label);
-                                move || {
-                                    if let Some(label) = mcp_label.clone() {
-                                        label
-                                    } else {
-                                        center_preview_heading(
-                                            &heading_path,
-                                            &heading_name,
-                                            &heading_display,
-                                            snapshot_workspace_path.get().as_deref(),
-                                        )
-                                    }
-                                }
-                            }</span>
-                            {(artifact_version_id_path(&path).is_some()
-                                || artifact_id_path(&path).is_some())
-                                .then(|| view! {
-                                    <span class="center-file-snapshot-badge">
-                                        {move || t(locale.get(), "center.snapshot")}
-                                    </span>
-                                })}
-                            <div class="spacer"></div>
-                            {move || snapshot_workspace_path.get().map(|workspace_path| {
-                                let open_path = workspace_path.clone();
-                                view! {
-                                    <button type="button" class="center-file-btn" data-open-editor=""
-                                        title=move || t(locale.get(), "center.open_editor")
-                                        aria-label=move || t(locale.get(), "center.open_editor")
-                                        on:click=move |_| {
-                                            let tab = CenterFileTab::from_path(open_path.clone());
-                                            center_files.update(|files| {
-                                                if !files.iter().any(|file| file.path == open_path) {
-                                                    files.push(tab.clone());
-                                                }
-                                            });
-                                            center_file.set(Some(open_path.clone()));
-                                        }>
-                                        {compose_icon("code")}
-                                        <span>{move || t(locale.get(), "center.open_editor")}</span>
-                                    </button>
-                                }
-                            })}
-                            // Bind this script to a runtime. The editor can run a
-                            // selection or the whole saved file; this control only
-                            // chooses which process those actions talk to.
-                            {run_language.map(|language| {
-                                let bind_path = path.clone();
-                                let options = create_memo(move |_| {
-                                    runtime_binding_options(&execution_contexts.get(), language)
-                                });
-                                // None = no context can host this language, so
-                                // there is nothing to inspect or run selections in.
-                                let bound = create_memo({
-                                    let path = path.clone();
-                                    move |_| {
-                                        let stored = center_runtime_binding.get().get(&path).cloned();
-                                        resolve_runtime_binding(&options.get(), stored.as_deref())
-                                    }
-                                });
-                                view! {
-                                  {move || bound.get().map(|bound_id| {
-                                    let bind_path = bind_path.clone();
-                                    let inspect_context = bound_id.clone();
-                                    view! {
-                                    <select class="center-file-runtime"
-                                        title=move || t(locale.get(), "runtime.bind")
-                                        aria-label=move || t(locale.get(), "runtime.bind")
-                                        // dom_value, not event_target_value: the
-                                        // latter only casts input/textarea and
-                                        // reads a <select> as "".
-                                        on:change=move |ev| {
-                                            let context_id = dom_value(&ev);
-                                            center_runtime_binding.update(|bindings| {
-                                                bindings.insert(bind_path.clone(), context_id.clone());
-                                            });
-                                            if center_runtime_panel.get_untracked() {
-                                                if let Some(project) = project_info.get_untracked() {
-                                                    let ready = runtime_infos.get_untracked().iter().any(|runtime| {
-                                                        runtime.key.project_id == project.id
-                                                            && runtime.key.context_id == context_id
-                                                            && runtime.key.language == language
-                                                            && runtime.status == "ready"
-                                                    });
-                                                    if ready {
-                                                        inspect_runtime_objects(
-                                                            runtime_binding_state_key(&project.id, &context_id, language),
-                                                            project.id,
-                                                            context_id,
-                                                            language.to_string(),
-                                                            locale,
-                                                            runtime_object_states,
-                                                            runtime_infos,
-                                                        );
-                                                    }
-                                                }
-                                            }
-                                        }>
-                                        {options.get().into_iter().map(|(id, label)| {
-                                            let selected = bound_id == id;
-                                            view! {
-                                                <option value=id selected=selected>
-                                                    {format!("{} · {label}", language_display(language))}
-                                                </option>
-                                            }
-                                        }).collect_view()}
-                                    </select>
-                                    <button type="button" class="center-file-btn" data-runtime-panel=""
-                                        class:primary=move || center_runtime_panel.get()
-                                        title=move || t(locale.get(), "runtime.toggle_panel")
-                                        aria-label=move || t(locale.get(), "runtime.toggle_panel")
-                                        on:click=move |_| {
-                                            let opening = !center_runtime_panel.get_untracked();
-                                            center_runtime_panel.set(opening);
-                                            if !opening {
-                                                return;
-                                            }
-                                            let Some(project) = project_info.get_untracked() else {
-                                                return;
-                                            };
-                                            let ready = runtime_infos.get_untracked().iter().any(|runtime| {
-                                                runtime.key.project_id == project.id
-                                                    && runtime.key.context_id == inspect_context
-                                                    && runtime.key.language == language
-                                                    && runtime.status == "ready"
-                                            });
-                                            if ready {
-                                                inspect_runtime_objects(
-                                                    runtime_binding_state_key(&project.id, &inspect_context, language),
-                                                    project.id,
-                                                    inspect_context.clone(),
-                                                    language.to_string(),
-                                                    locale,
-                                                    runtime_object_states,
-                                                    runtime_infos,
-                                                );
-                                            }
-                                        }>{compose_icon("runtime-panel")}</button>
-                                    }
-                                  })}
-                                }
-                            })}
-                            // Split the center: document left, the main conversation
-                            // right. Collapses the right pane so the two share its width.
-                            <button type="button" class="center-file-btn" data-center-split=""
-                                class:primary=move || center_split.get()
-                                aria-pressed=move || center_split.get().to_string()
-                                title=move || t(locale.get(), "center.split")
-                                aria-label=move || t(locale.get(), "center.split")
-                                on:click=move |_| {
-                                    center_split.update(|on| *on = !*on);
-                                    if center_split.get_untracked() { show_right.set(false); }
-                                }>{compose_icon("split")}</button>
-                        </div>
                         {if let Some(language) = run_language.filter(|_| !is_mcp_app) {
                             // R/Python sources are directly editable; everything
                             // else keeps the read-only preview.
@@ -14272,6 +14118,166 @@ fn App() -> impl IntoView {
                                     }></div>
                             })
                         })}
+                    </div>
+                        <div class="center-file-head center-file-status" data-testid="center-file-status">
+                            <div class="center-file-kind" aria-hidden="true">{compose_icon(artifact_kind_icon(&kind))}</div>
+                            <span class="center-file-path">{
+                                let mcp_label = is_mcp_app.then_some(label);
+                                move || {
+                                    if let Some(label) = mcp_label.clone() {
+                                        label
+                                    } else {
+                                        center_preview_heading(
+                                            &heading_path,
+                                            &heading_name,
+                                            &heading_display,
+                                            snapshot_workspace_path.get().as_deref(),
+                                        )
+                                    }
+                                }
+                            }</span>
+                            {(artifact_version_id_path(&path).is_some()
+                                || artifact_id_path(&path).is_some())
+                                .then(|| view! {
+                                    <span class="center-file-snapshot-badge">
+                                        {move || t(locale.get(), "center.snapshot")}
+                                    </span>
+                                })}
+                            <div class="spacer"></div>
+                            {move || snapshot_workspace_path.get().map(|workspace_path| {
+                                let open_path = workspace_path.clone();
+                                view! {
+                                    <button type="button" class="center-file-btn" data-open-editor=""
+                                        title=move || t(locale.get(), "center.open_editor")
+                                        aria-label=move || t(locale.get(), "center.open_editor")
+                                        on:click=move |_| {
+                                            let tab = CenterFileTab::from_path(open_path.clone());
+                                            center_files.update(|files| {
+                                                if !files.iter().any(|file| file.path == open_path) {
+                                                    files.push(tab.clone());
+                                                }
+                                            });
+                                            center_file.set(Some(open_path.clone()));
+                                        }>
+                                        {compose_icon("code")}
+                                        <span>{move || t(locale.get(), "center.open_editor")}</span>
+                                    </button>
+                                }
+                            })}
+                            // Bind this script to a runtime. The editor can run a
+                            // selection or the whole saved file; this control only
+                            // chooses which process those actions talk to.
+                            {run_language.map(|language| {
+                                let bind_path = path.clone();
+                                let options = create_memo(move |_| {
+                                    runtime_binding_options(&execution_contexts.get(), language)
+                                });
+                                // None = no context can host this language, so
+                                // there is nothing to inspect or run selections in.
+                                let bound = create_memo({
+                                    let path = path.clone();
+                                    move |_| {
+                                        let stored = center_runtime_binding.get().get(&path).cloned();
+                                        resolve_runtime_binding(&options.get(), stored.as_deref())
+                                    }
+                                });
+                                view! {
+                                  {move || bound.get().map(|bound_id| {
+                                    let bind_path = bind_path.clone();
+                                    let inspect_context = bound_id.clone();
+                                    view! {
+                                    <select class="center-file-runtime"
+                                        title=move || t(locale.get(), "runtime.bind")
+                                        aria-label=move || t(locale.get(), "runtime.bind")
+                                        // dom_value, not event_target_value: the
+                                        // latter only casts input/textarea and
+                                        // reads a <select> as "".
+                                        on:change=move |ev| {
+                                            let context_id = dom_value(&ev);
+                                            center_runtime_binding.update(|bindings| {
+                                                bindings.insert(bind_path.clone(), context_id.clone());
+                                            });
+                                            if center_runtime_panel.get_untracked() {
+                                                if let Some(project) = project_info.get_untracked() {
+                                                    let ready = runtime_infos.get_untracked().iter().any(|runtime| {
+                                                        runtime.key.project_id == project.id
+                                                            && runtime.key.context_id == context_id
+                                                            && runtime.key.language == language
+                                                            && runtime.status == "ready"
+                                                    });
+                                                    if ready {
+                                                        inspect_runtime_objects(
+                                                            runtime_binding_state_key(&project.id, &context_id, language),
+                                                            project.id,
+                                                            context_id,
+                                                            language.to_string(),
+                                                            locale,
+                                                            runtime_object_states,
+                                                            runtime_infos,
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }>
+                                        {options.get().into_iter().map(|(id, label)| {
+                                            let selected = bound_id == id;
+                                            view! {
+                                                <option value=id selected=selected>
+                                                    {format!("{} · {label}", language_display(language))}
+                                                </option>
+                                            }
+                                        }).collect_view()}
+                                    </select>
+                                    <button type="button" class="center-file-btn" data-runtime-panel=""
+                                        class:primary=move || center_runtime_panel.get()
+                                        title=move || t(locale.get(), "runtime.toggle_panel")
+                                        aria-label=move || t(locale.get(), "runtime.toggle_panel")
+                                        on:click=move |_| {
+                                            let opening = !center_runtime_panel.get_untracked();
+                                            center_runtime_panel.set(opening);
+                                            if !opening {
+                                                return;
+                                            }
+                                            let Some(project) = project_info.get_untracked() else {
+                                                return;
+                                            };
+                                            let ready = runtime_infos.get_untracked().iter().any(|runtime| {
+                                                runtime.key.project_id == project.id
+                                                    && runtime.key.context_id == inspect_context
+                                                    && runtime.key.language == language
+                                                    && runtime.status == "ready"
+                                            });
+                                            if ready {
+                                                inspect_runtime_objects(
+                                                    runtime_binding_state_key(&project.id, &inspect_context, language),
+                                                    project.id,
+                                                    inspect_context.clone(),
+                                                    language.to_string(),
+                                                    locale,
+                                                    runtime_object_states,
+                                                    runtime_infos,
+                                                );
+                                            }
+                                        }>{compose_icon("runtime-panel")}</button>
+                                    }
+                                  })}
+                                }
+                            })}
+                            // Split the center: document left, the main conversation
+                            // right. Collapses the right pane so the two share its width.
+                            <button type="button" class="center-file-btn" data-center-split=""
+                                class:primary=move || center_split.get()
+                                aria-pressed=move || center_split.get().to_string()
+                                title=move || t(locale.get(), "center.split")
+                                aria-label=move || t(locale.get(), "center.split")
+                                on:click=move |_| {
+                                    center_split.update(|on| *on = !*on);
+                                    if center_split.get_untracked() { show_right.set(false); }
+                                }>
+                                {compose_icon("chat")}
+                                <span>{move || t(locale.get(), "center.split_short")}</span>
+                            </button>
+                        </div>
                     </div>
                 }
             })}

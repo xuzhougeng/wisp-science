@@ -9,6 +9,13 @@ const TEXT_PREVIEW_MAX_LINES: usize = 8_000;
 pub(crate) fn table_view(table: &TableData, locale: Locale) -> impl IntoView {
     let total = table.rows.len();
     let truncated = total > 500;
+    let columns = table
+        .rows
+        .iter()
+        .map(Vec::len)
+        .chain(std::iter::once(table.headers.len()))
+        .max()
+        .unwrap_or(0);
     let copy = table_data_to_tsv(table);
     let headers: Vec<String> = table.headers.iter().map(|h| md_inline_to_html(h)).collect();
     let rows: Vec<Vec<String>> = table
@@ -20,6 +27,9 @@ pub(crate) fn table_view(table: &TableData, locale: Locale) -> impl IntoView {
     view! {
         <div class="tbl-card">
             <div class="tbl-head">
+                <span class="tbl-note tbl-size" data-testid="table-size">
+                    {tf(locale, "artifact.meta.table", &[("rows", &total.to_string()), ("cols", &columns.to_string())])}
+                </span>
                 {truncated.then(|| view! {
                     <span class="tbl-note">{tf(locale, "table.rows_note", &[("total", &total.to_string())])}</span>
                 })}
@@ -117,8 +127,12 @@ pub(crate) fn parse_csv_text(text: &str) -> Option<TableData> {
     if lines.is_empty() {
         return None;
     }
-    let headers = parse_csv_line(lines[0]);
-    let rows: Vec<Vec<String>> = lines[1..].iter().map(|l| parse_csv_line(l)).collect();
+    let delimiter = crate::text::detect_delimiter(lines[0]);
+    let headers = crate::text::parse_delimited_line(lines[0], delimiter);
+    let rows: Vec<Vec<String>> = lines[1..]
+        .iter()
+        .map(|l| crate::text::parse_delimited_line(l, delimiter))
+        .collect();
     Some(TableData { headers, rows })
 }
 

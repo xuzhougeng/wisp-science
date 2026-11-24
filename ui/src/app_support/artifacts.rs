@@ -87,8 +87,16 @@ pub(crate) fn extract_markdown_protos(out: &mut Vec<ProtoArtifact>, s: &str) {
         if lang == "csv" || lang == "tsv" {
             let lines: Vec<&str> = body.lines().collect();
             if let Some(header) = lines.first() {
-                let headers = parse_csv_line(header);
-                let rows = lines[1..].iter().map(|line| parse_csv_line(line)).collect();
+                let delimiter = if lang == "tsv" {
+                    '\t'
+                } else {
+                    crate::text::detect_delimiter(header)
+                };
+                let headers = crate::text::parse_delimited_line(header, delimiter);
+                let rows = lines[1..]
+                    .iter()
+                    .map(|line| crate::text::parse_delimited_line(line, delimiter))
+                    .collect();
                 out.push(ProtoArtifact::Csv(Rc::new(TableData { headers, rows })));
             }
         } else if lang == "fasta" || lang == "fa" {
