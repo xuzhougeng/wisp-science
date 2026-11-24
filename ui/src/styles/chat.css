@@ -577,6 +577,10 @@
   .topbar .topbar-overflow .transcript-view-toggle button { width: auto; padding: 0 10px; }
   .topbar .topbar-overflow .transcript-view-label { display: inline; }
 }
+/* A file alone in the center: the conversation's tools step aside and only
+   the panel button (which brings the conversation in) stays. */
+.topbar .topbar-actions.file-view > .topbar-overflow,
+.topbar .topbar-actions.file-view > .topbar-more-btn { display: none; }
 
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center;

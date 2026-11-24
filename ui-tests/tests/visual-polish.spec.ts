@@ -336,6 +336,18 @@ test("an open file keeps flat tabs, a quiet sub-header, and one header rule", as
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
   await page.getByTestId("right-launcher-artifacts").click();
+  // An open right pane tints the toolbar toggle neutrally, not with the accent.
+  const toggle = page.getByRole("button", { name: "Toggle panel" });
+  const toggleColors = await toggle.evaluate((el) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--clay)";
+    document.body.append(probe);
+    const accent = getComputedStyle(probe).color;
+    probe.remove();
+    return { color: getComputedStyle(el).color, accent };
+  });
+  expect(toggleColors.color).not.toBe(toggleColors.accent);
+
   await page.locator('.rp-tile[data-artifact-name="report.md"]').click({ button: "right" });
   await page.getByRole("button", { name: "Open in center" }).click();
   const preview = page.locator('.center-file-preview[data-file-path="report.md"]');
@@ -360,20 +372,7 @@ test("an open file keeps flat tabs, a quiet sub-header, and one header rule", as
   expect(tabs.file.width).toBeLessThanOrEqual(201);
   expect(tabs.rightActive).toBe("none");
 
-  // An open right pane tints the toolbar toggle neutrally, not with the accent.
-  const toggle = page.getByRole("button", { name: "Toggle panel" });
-  const toggleColors = await toggle.evaluate((el) => {
-    const probe = document.createElement("span");
-    probe.style.color = "var(--clay)";
-    document.body.append(probe);
-    const accent = getComputedStyle(probe).color;
-    probe.remove();
-    return { color: getComputedStyle(el).color, accent };
-  });
-  expect(toggleColors.color).not.toBe(toggleColors.accent);
-
-  // The file status bar sits under the preview and uses flat buttons;
-  // pressing split tints it. Its chat icon differs from the panel toggle's.
+  // The file status bar sits under the preview.
   const status = page.getByTestId("center-file-status");
   // Layout boxes, not bounding boxes: the preview's entry animation
   // translates it for a moment, which skews getBoundingClientRect.
@@ -382,20 +381,28 @@ test("an open file keeps flat tabs, a quiet sub-header, and one header rule", as
     return !!bar?.matches("[data-testid=center-file-status]")
       && bar.offsetTop >= (el as HTMLElement).offsetTop + (el as HTMLElement).offsetHeight - 1;
   })).toBe(true);
-  const split = status.locator("[data-center-split]");
-  await expect(split.locator('svg[data-icon="chat"]')).toHaveCount(1);
-  await expect(split).toHaveAttribute("aria-pressed", "false");
-  await expect(split).toHaveAccessibleName("Chat beside the document");
-  const flat = await split.evaluate((el) => {
-    const style = getComputedStyle(el);
-    return { border: style.borderTopColor, background: style.backgroundColor };
-  });
-  expect(flat.border).toBe("rgba(0, 0, 0, 0)");
-  expect(flat.background).toBe("rgba(0, 0, 0, 0)");
-  await split.click();
-  await expect(split).toHaveAttribute("aria-pressed", "true");
-  const pressedBorder = await split.evaluate((el) => getComputedStyle(el).borderTopColor);
-  expect(pressedBorder).toBe("rgba(0, 0, 0, 0)");
+
+  // A file alone hides the conversation's toolbar tools; the one panel button
+  // left brings the conversation in, so the status bar has no second one.
+  await expect(status.locator("[data-center-split]")).toHaveCount(0);
+  await expect(page.getByTestId("share-topbar")).toBeHidden();
+  await expect(page.getByTestId("trajectory-topbar")).toBeHidden();
+  await expect(page.getByTestId("archive-topbar")).toBeHidden();
+  const chatToggle = page.getByTestId("topbar-panel-toggle");
+  await expect(chatToggle).toHaveAttribute("data-center-split", "");
+  await expect(chatToggle).toHaveAccessibleName("Chat beside the document");
+  await expect(chatToggle).toHaveAttribute("aria-pressed", "false");
+  await expect(chatToggle.locator('svg[data-icon="panel"]')).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Toggle panel" })).toHaveCount(0);
+  await chatToggle.click();
+  await expect(chatToggle).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".chat")).toBeVisible();
+  // With the conversation back, its tools come back too.
+  // (Inline or folded into "more", depending on the pane's width.)
+  await expect(page.locator(".topbar-actions")).not.toHaveClass(/file-view/);
+  await expect(page.getByTestId("share-topbar")).toHaveCount(1);
+  await chatToggle.click();
+  await expect(page.locator(".chat")).toBeHidden();
 
   // The sidebar header rule runs edge to edge, level with the topbar rule.
   const rules = await page.evaluate(() => {
