@@ -372,8 +372,14 @@ test("an open file keeps flat tabs, a quiet sub-header, and one header rule", as
   });
   expect(toggleColors.color).not.toBe(toggleColors.accent);
 
-  // The file sub-header uses flat icon buttons; pressing split tints it.
-  const split = preview.locator("[data-center-split]");
+  // The file status bar sits under the preview and uses flat buttons;
+  // pressing split tints it. Its chat icon differs from the panel toggle's.
+  const status = page.getByTestId("center-file-status");
+  const previewBox = (await preview.boundingBox())!;
+  const statusBox = (await status.boundingBox())!;
+  expect(statusBox.y).toBeGreaterThanOrEqual(previewBox.y + previewBox.height - 1);
+  const split = status.locator("[data-center-split]");
+  await expect(split.locator('svg[data-icon="chat"]')).toHaveCount(1);
   await expect(split).toHaveAttribute("aria-pressed", "false");
   await expect(split).toHaveAccessibleName("Chat beside the document");
   const flat = await split.evaluate((el) => {

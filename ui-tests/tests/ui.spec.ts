@@ -5827,7 +5827,8 @@ test("Generated artifacts survive follow-up tool commentary and ignore mentioned
   await modal.getByRole("button", { name: "Open in center" }).click();
   const preview = page.locator('.center-file-preview[data-file-path="/mock/root/results/new.png"]');
   await expect(preview).toBeVisible();
-  await expect(preview.locator(".center-file-head > span").first()).toHaveText("results/new.png");
+  // The file path lives in the status bar under the preview.
+  await expect(page.getByTestId("center-file-status").locator(".center-file-path")).toHaveText("results/new.png");
 });
 
 test("links inside the artifact modal preview never navigate the app", async ({ page }) => {
@@ -9918,7 +9919,7 @@ test("center split keeps the same conversation beside the open document", async 
 
   // Split → the conversation comes back beside the document and the right pane
   // folds away so the two share its width.
-  await preview.locator("[data-center-split]").click();
+  await page.locator("[data-center-split]").click();
   await expect(chat).toBeVisible();
   await expect(composer(page)).toBeVisible();
   await expect(page.locator(".rightpane")).toHaveCount(0);
@@ -9957,7 +9958,7 @@ test("center split keeps the same conversation beside the open document", async 
   await expect(chat.getByText("open report.md")).toBeVisible();
 
   // Toggling off restores the document-only view.
-  await preview.locator("[data-center-split]").click();
+  await page.locator("[data-center-split]").click();
   await expect(chat).toBeHidden();
 });
 
@@ -15654,10 +15655,11 @@ test("bound Python resources open their immutable code preview", async ({ page }
   await expect(page.locator('.center-tab[data-center-path="artifact-version:resource-version-python"]'))
     .toContainText("random_walk_demo.py");
   const preview = page.locator(".center-file-preview");
-  await expect(preview.locator(".center-file-head > span").first())
+  const status = page.getByTestId("center-file-status");
+  await expect(status.locator(".center-file-path"))
     .toHaveText("analysis/scripts/random_walk_demo.py");
-  await expect(preview.locator(".center-file-head")).not.toContainText("artifact-version:");
-  await expect(preview.locator(".center-file-snapshot-badge")).toHaveText("Snapshot");
+  await expect(status).not.toContainText("artifact-version:");
+  await expect(status.locator(".center-file-snapshot-badge")).toHaveText("Snapshot");
   const pythonCode = preview.locator(".rp-code-body code");
   await expect(pythonCode).toHaveClass(/language-python/);
   await expect(pythonCode.locator(".hljs-string")).toHaveText("'random walk'");
@@ -15690,9 +15692,10 @@ test("bound R resources open their immutable code preview", async ({ page }) => 
   await expect(page.locator('.center-tab[data-center-path="artifact-version:resource-version-r"]'))
     .toContainText("plot.R");
   const preview = page.locator(".center-file-preview");
-  await expect(preview.locator(".center-file-head > span").first()).toHaveText("analysis/plot.R");
-  await expect(preview.locator(".center-file-head")).not.toContainText("artifact-version:");
-  await expect(preview.locator(".center-file-snapshot-badge")).toHaveText("Snapshot");
+  const status = page.getByTestId("center-file-status");
+  await expect(status.locator(".center-file-path")).toHaveText("analysis/plot.R");
+  await expect(status).not.toContainText("artifact-version:");
+  await expect(status.locator(".center-file-snapshot-badge")).toHaveText("Snapshot");
   const rCode = preview.locator(".rp-code-body code");
   await expect(rCode).toHaveClass(/language-r/);
   await expect(rCode.locator(".hljs-string")).toHaveText('"data"');
@@ -15726,7 +15729,7 @@ test("bound BibTeX resources open their immutable text preview", async ({ page }
     .toContainText("references.bib");
   await expect(page.locator(".center-file-preview"))
     .toContainText("@article{wisp");
-  await expect(page.locator(".center-file-preview [data-open-editor]")).toHaveCount(0);
+  await expect(page.locator(".center-file-frame [data-open-editor]")).toHaveCount(0);
   await expect.poll(() => lastInvokeArgs(page, "read_artifact_version"))
     .toMatchObject({ versionId: "resource-version-bib" });
 });
