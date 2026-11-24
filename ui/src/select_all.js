@@ -39,7 +39,10 @@ export function select_document_text() {
   // Nothing pointed at (the tab strip, the sidebar, a fresh open): a center
   // document that fills the center is the obvious target. Split beside the
   // conversation, the user has to have pointed at the document.
-  const center = document.querySelector("main.center:not(.split) > [data-select-scope]");
+  // The center document sits in `.center-file-frame` beside its status bar.
+  const center = document.querySelector(
+    "main.center:not(.split) > .center-file-frame > [data-select-scope], main.center:not(.split) > [data-select-scope]",
+  );
   const region = [pointed, center].find((candidate) => candidate && onTop(candidate));
   if (!region) return false;
   const target = region.querySelector("[data-select-all]");

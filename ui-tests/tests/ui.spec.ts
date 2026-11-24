@@ -15668,7 +15668,7 @@ test("bound Python resources open their immutable code preview", async ({ page }
   await expect(pythonCode).toHaveClass(/language-python/);
   await expect(pythonCode.locator(".hljs-string")).toHaveText("'random walk'");
   await expect(preview).toContainText("SEED = 42");
-  await preview.getByRole("button", { name: "Open in editor" }).click();
+  await page.getByTestId("center-file-status").getByRole("button", { name: "Open in editor" }).click();
   await expect(page.locator('.center-tab[data-center-path="analysis/scripts/random_walk_demo.py"]'))
     .toHaveClass(/active/);
   await expect(page.locator(".center-file-preview")).toHaveClass(/center-file-runtime-preview/);
@@ -15709,7 +15709,7 @@ test("bound R resources open their immutable code preview", async ({ page }) => 
     if (!code) return 0;
     return code.getBoundingClientRect().height / element.getBoundingClientRect().height;
   })).toBeGreaterThan(0.75);
-  await preview.getByRole("button", { name: "Open in editor" }).click();
+  await page.getByTestId("center-file-status").getByRole("button", { name: "Open in editor" }).click();
   await expect(page.locator('.center-tab[data-center-path="analysis/plot.R"]')).toHaveClass(/active/);
   await expect(page.locator(".center-file-preview")).toHaveClass(/center-file-runtime-preview/);
   await expect(page.locator(".center-file-preview .rp-code-editor")).toBeVisible();
