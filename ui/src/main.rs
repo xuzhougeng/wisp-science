@@ -2560,6 +2560,23 @@ fn App() -> impl IntoView {
     });
     let sel_artifact = create_rw_signal(0usize);
     let show_art_preview = create_rw_signal(false);
+    // While a preview is open the artifact list folds to one bar above it;
+    // opening another preview folds it again.
+    let art_list_open = create_rw_signal(false);
+    // The preview panel rises from below once per open. Artifact updates
+    // re-render the pane mid-turn, so the animation is keyed to this flag
+    // rather than to the element mounting.
+    let art_sheet_entering = create_rw_signal(false);
+    let open_art_preview = move |index: usize| {
+        sel_artifact.set(index);
+        art_list_open.set(false);
+        art_sheet_entering.set(true);
+        show_art_preview.set(true);
+        set_timeout(
+            move || art_sheet_entering.set(false),
+            std::time::Duration::from_millis(320),
+        );
+    };
     let modal_artifact = create_rw_signal(None::<ModalArtifact>); // (path, name, kind)
                                                                   // Background output updates change navigation, not the mounted viewer.
                                                                   // Reading `artifacts` in the modal's render closure remounts the image and
@@ -2908,8 +2925,7 @@ fn App() -> impl IntoView {
                 modal_artifact.set(Some((path.clone(), a.name.clone(), kind.clone())));
             } else {
                 ensure_right_tab(RightTab::Artifacts, show_right, open_right_tabs, right_tab);
-                sel_artifact.set(idx);
-                show_art_preview.set(true);
+                open_art_preview(idx);
             }
         }
     });
@@ -18100,8 +18116,7 @@ fn App() -> impl IntoView {
                                                             return;
                                                         }
                                                     }
-                                                    sel_artifact.set(i);
-                                                    show_art_preview.set(true);
+                                                    open_art_preview(i);
                                                 }>
                                                 <span class="rp-tile-text">
                                                     <span class="rp-tile-name">{name}</span>
@@ -18137,8 +18152,22 @@ fn App() -> impl IntoView {
                                     }.into_view()
                                 }).collect_view();
                                 let arts_for_view = arts.clone();
+                                let art_total = arts.len().to_string();
                                 view! {
-                                    <div class="rp-artifacts-body" class:preview-hidden=move || !show_art_preview.get()>
+                                    <div class="rp-artifacts-body" class:preview-hidden=move || !show_art_preview.get()
+                                        class:list-collapsed=move || show_art_preview.get() && !art_list_open.get()>
+                                        {move || show_art_preview.get().then(|| {
+                                            let art_total = art_total.clone();
+                                            view! {
+                                                <button type="button" class="rp-art-list-toggle" data-testid="artifact-list-toggle"
+                                                    aria-expanded=move || art_list_open.get().to_string()
+                                                    on:click=move |_| art_list_open.update(|open| *open = !*open)>
+                                                    <span class="rp-art-list-toggle-caret">{compose_icon("chevron-down")}</span>
+                                                    <span class="rp-art-list-toggle-label">{move || t(locale.get(), "right.all_artifacts")}</span>
+                                                    <span class="rp-art-group-count">{art_total}</span>
+                                                </button>
+                                            }
+                                        })}
                                         <div class="rp-tiles" class:grid=move || rp_grid.get()>{tile_groups}</div>
                                         {move || show_art_preview.get().then(|| {
                                             let arts = arts_for_view.clone();
@@ -18152,7 +18181,7 @@ fn App() -> impl IntoView {
                                                 None
                                             };
                                             view! {
-                                                <div class="rp-view" data-preview-kind=cur.kind>
+                                                <div class="rp-view" class:entering=move || art_sheet_entering.get_untracked() data-preview-kind=cur.kind>
                                                     <div class="rp-view-head">
                                                         <span class=format!("rp-badge {}", cur.kind)>{cur.kind.to_string()}</span>
                                                         <span class="rp-view-name">{cur.name.clone()}</span>
